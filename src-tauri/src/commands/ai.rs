@@ -1,6 +1,142 @@
 use crate::owl::DbExecutor;
 use crate::owl::{self, Individual, Object, Triple};
+use chrono::{DateTime, SecondsFormat, Utc};
 use tauri::{AppHandle, Emitter, Manager, State};
+
+#[derive(Debug, PartialEq)]
+struct ParameterCounts {
+    total: Option<u64>,
+    active: Option<u64>,
+}
+
+fn parse_parameter_quantity(token: &str, following: Option<&str>) -> Option<u64> {
+    let token = token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.');
+    let (number, multiplier) = match token.chars().last()?.to_ascii_lowercase() {
+        'k' => (&token[..token.len() - 1], 1_000_f64),
+        'm' => (&token[..token.len() - 1], 1_000_000_f64),
+        'b' => (&token[..token.len() - 1], 1_000_000_000_f64),
+        't' => (&token[..token.len() - 1], 1_000_000_000_000_f64),
+        _ => {
+            let unit = following?.trim_matches(|c: char| !c.is_ascii_alphabetic());
+            let multiplier = match unit.to_ascii_lowercase().as_str() {
+                "thousand" => 1_000_f64,
+                "million" => 1_000_000_f64,
+                "billion" => 1_000_000_000_f64,
+                "trillion" => 1_000_000_000_000_f64,
+                _ => return None,
+            };
+            (token, multiplier)
+        }
+    };
+    let value = number.parse::<f64>().ok()? * multiplier;
+    (value.is_finite() && value > 0.0 && value.fract() == 0.0 && value <= u64::MAX as f64)
+        .then_some(value as u64)
+}
+
+fn parse_parameter_counts(description: &str) -> ParameterCounts {
+    let parsed = description
+        .split(|character| matches!(character, ',' | ';' | '\n'))
+        .map(parse_parameter_counts_segment)
+        .collect::<Vec<_>>();
+    ParameterCounts {
+        total: unique(parsed.iter().filter_map(|counts| counts.total).collect()),
+        active: unique(parsed.iter().filter_map(|counts| counts.active).collect()),
+    }
+}
+
+fn openrouter_context_length(value: Option<u64>) -> Result<Option<i64>, String> {
+    value
+        .map(i64::try_from)
+        .transpose()
+        .map_err(|_| "OpenRouter context length exceeds the supported range".to_string())
+}
+
+fn openrouter_price_per_million(value: Option<f64>) -> Option<f64> {
+    value
+        .filter(|price| price.is_finite() && *price >= 0.0)
+        .map(|price| price * 1_000_000.0)
+}
+
+fn parse_parameter_counts_segment(description: &str) -> ParameterCounts {
+    let tokens: Vec<&str> = description.split_whitespace().collect();
+    let mut totals = Vec::new();
+    let mut actives = Vec::new();
+
+    for (index, token) in tokens.iter().enumerate() {
+        let (quantity, consumed_unit) = if index + 1 < tokens.len() {
+            match parse_parameter_quantity(token, Some(tokens[index + 1])) {
+                Some(value)
+                    if !token
+                        .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.')
+                        .chars()
+                        .last()
+                        .is_some_and(|c| {
+                            matches!(c.to_ascii_lowercase(), 'k' | 'm' | 'b' | 't')
+                        }) =>
+                {
+                    (Some(value), 1)
+                }
+                Some(value) => (Some(value), 0),
+                None => (None, 0),
+            }
+        } else {
+            (parse_parameter_quantity(token, None), 0)
+        };
+        let Some(quantity) = quantity else { continue };
+        let start = index.saturating_sub(2);
+        let end = (index + consumed_unit + 4).min(tokens.len());
+        let context = tokens[start..end]
+            .iter()
+            .enumerate()
+            .map(|(offset, word)| {
+                (
+                    start + offset,
+                    word.trim_matches(|c: char| !c.is_ascii_alphabetic())
+                        .to_ascii_lowercase(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let parameter_is_nearby = context
+            .iter()
+            .filter(|(_, word)| {
+                matches!(
+                    word.as_str(),
+                    "parameter" | "parameters" | "param" | "params"
+                )
+            })
+            .any(|(position, _)| index.abs_diff(*position) <= 3);
+        if !parameter_is_nearby {
+            continue;
+        }
+        let mut labels = context
+            .iter()
+            .filter(|(_, word)| word == "total" || word == "active")
+            .map(|(label_index, word)| (index.abs_diff(*label_index), word.as_str()))
+            .collect::<Vec<_>>();
+        labels.sort_by_key(|(distance, _)| *distance);
+        let nearest_distance = labels.first().map(|(distance, _)| *distance);
+        let nearest_labels: Vec<&str> = labels
+            .iter()
+            .take_while(|(distance, _)| Some(*distance) == nearest_distance)
+            .map(|(_, label)| *label)
+            .collect();
+        match nearest_labels.as_slice() {
+            ["total"] => totals.push(quantity),
+            ["active"] => actives.push(quantity),
+            _ => {}
+        }
+    }
+
+    ParameterCounts {
+        total: unique(totals),
+        active: unique(actives),
+    }
+}
+
+fn unique(values: Vec<u64>) -> Option<u64> {
+    let first = *values.first()?;
+    values.iter().all(|value| *value == first).then_some(first)
+}
 
 #[tauri::command]
 #[allow(non_snake_case)]
@@ -46,24 +182,125 @@ pub async fn ai__list_openrouter_models(
         .map(|m| {
             let input_cost = m["pricing"]["prompt"]
                 .as_str()
-                .and_then(|s| s.parse::<f64>().ok())
-                .unwrap_or(0.0);
+                .and_then(|s| s.parse::<f64>().ok());
             let output_cost = m["pricing"]["completion"]
                 .as_str()
-                .and_then(|s| s.parse::<f64>().ok())
-                .unwrap_or(0.0);
+                .and_then(|s| s.parse::<f64>().ok());
+            let description = m["description"].as_str().unwrap_or_default();
+            let parameters = parse_parameter_counts(description);
+            let input_modalities = m["architecture"]["input_modalities"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let output_modalities = m["architecture"]["output_modalities"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let supported_parameters = m["supported_parameters"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let publisher = m["id"]
+                .as_str()
+                .and_then(|id| id.split_once('/').map(|(publisher, _)| publisher));
+            let supports_tools = supported_parameters
+                .iter()
+                .any(|parameter| parameter.as_str() == Some("tools"));
 
             serde_json::json!({
                 "id": m["id"].as_str().unwrap_or(""),
                 "name": m["name"].as_str().unwrap_or(""),
-                "contextLength": m["context_length"].as_u64().unwrap_or(0),
+                "publisher": publisher,
+                "description": description,
+                "contextLength": m["context_length"].as_u64(),
                 "inputCostPerToken": input_cost,
                 "outputCostPerToken": output_cost,
+                "inputModalities": input_modalities,
+                "outputModalities": output_modalities,
+                "supportedParameters": supported_parameters,
+                "parameterCountTotal": parameters.total,
+                "parameterCountActive": parameters.active,
+                "supportsTools": supports_tools,
             })
         })
         .collect();
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod openrouter_metadata_tests {
+    use super::{
+        openrouter_context_length, openrouter_price_per_million, parse_parameter_counts,
+        ParameterCounts,
+    };
+
+    #[test]
+    fn preserves_missing_and_explicit_zero_context_lengths() {
+        assert_eq!(openrouter_context_length(None).unwrap(), None);
+        assert_eq!(openrouter_context_length(Some(0)).unwrap(), Some(0));
+        assert_eq!(
+            openrouter_context_length(Some(128_000)).unwrap(),
+            Some(128_000)
+        );
+        assert!(openrouter_context_length(Some(u64::MAX)).is_err());
+    }
+
+    #[test]
+    fn preserves_missing_and_explicit_zero_prices() {
+        assert_eq!(openrouter_price_per_million(None), None);
+        assert_eq!(openrouter_price_per_million(Some(0.0)), Some(0.0));
+        assert_eq!(openrouter_price_per_million(Some(0.000_002)), Some(2.0));
+        assert_eq!(openrouter_price_per_million(Some(-0.1)), None);
+        assert_eq!(openrouter_price_per_million(Some(f64::INFINITY)), None);
+    }
+
+    #[test]
+    fn parses_explicit_total_and_active_parameter_counts() {
+        assert_eq!(
+            parse_parameter_counts("70B total parameters, 13B active parameters"),
+            ParameterCounts {
+                total: Some(70_000_000_000),
+                active: Some(13_000_000_000),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_explicit_word_units_and_reversed_labels() {
+        assert_eq!(
+            parse_parameter_counts("Total parameters: 1.5 billion; active parameters: 800 million"),
+            ParameterCounts {
+                total: Some(1_500_000_000),
+                active: Some(800_000_000),
+            }
+        );
+    }
+
+    #[test]
+    fn omits_unlabeled_or_conflicting_parameter_counts() {
+        assert_eq!(
+            parse_parameter_counts("A 70B parameter model with 13B active parameters"),
+            ParameterCounts {
+                total: None,
+                active: Some(13_000_000_000),
+            }
+        );
+        assert_eq!(
+            parse_parameter_counts("70B total parameters; 80B total parameters"),
+            ParameterCounts {
+                total: None,
+                active: None,
+            }
+        );
+        assert_eq!(
+            parse_parameter_counts("A GPT-4 model for coding"),
+            ParameterCounts {
+                total: None,
+                active: None,
+            }
+        );
+    }
 }
 
 #[tauri::command]
@@ -72,12 +309,16 @@ pub async fn ai__ensure_openrouter_model(
     service_iri: String,
     model_id: String,
     model_name: String,
-    context_length: u64,
-    input_cost_per_token: f64,
-    output_cost_per_token: f64,
+    context_length: Option<u64>,
+    input_cost_per_token: Option<f64>,
+    output_cost_per_token: Option<f64>,
     supports_tools: bool,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
+    let context_length = openrouter_context_length(context_length)?;
+    let input_price_per_million = openrouter_price_per_million(input_cost_per_token);
+    let output_price_per_million = openrouter_price_per_million(output_cost_per_token);
+
     executor
         .write(move |conn| {
             // Return existing IRI if this model was already registered for this service.
@@ -116,26 +357,28 @@ pub async fn ai__ensure_openrouter_model(
                     },
                 ),
                 Triple::new(&model_iri, "foundation:offeredBy", Object::Iri(service_iri)),
-                Triple::new(
+            ];
+            if let Some(context_length) = context_length {
+                props.push(Triple::new(
                     &model_iri,
                     "foundation:maxInputTokens",
-                    Object::Integer(context_length as i64),
-                ),
-            ];
+                    Object::Integer(context_length),
+                ));
+            }
 
             // estimate_call_cost reads price per million tokens, so convert from OR's per-token values
-            if input_cost_per_token > 0.0 {
+            if let Some(input_price_per_million) = input_price_per_million {
                 props.push(Triple::new(
                     &model_iri,
                     "foundation:inputPricePerMTok",
-                    Object::Number(input_cost_per_token * 1_000_000.0),
+                    Object::Number(input_price_per_million),
                 ));
             }
-            if output_cost_per_token > 0.0 {
+            if let Some(output_price_per_million) = output_price_per_million {
                 props.push(Triple::new(
                     &model_iri,
                     "foundation:outputPricePerMTok",
-                    Object::Number(output_cost_per_token * 1_000_000.0),
+                    Object::Number(output_price_per_million),
                 ));
             }
             if supports_tools {
@@ -163,131 +406,280 @@ pub async fn ai__ensure_openrouter_model(
 pub async fn ai__list_api_calls(
     from_ms: Option<i64>,
     to_ms: Option<i64>,
-    after_tx: Option<i64>,
+    cursor: Option<ApiCallCursor>,
     limit: Option<i64>,
     snapshot_tx: Option<i64>,
     executor: State<'_, DbExecutor>,
 ) -> Result<serde_json::Value, String> {
+    let page_size = limit.unwrap_or(100).clamp(1, 500) as usize;
+    let (range_start, range_end) = api_call_range(from_ms, to_ms)?;
+    let requested_snapshot = match cursor.as_ref() {
+        Some(cursor) => {
+            if cursor.from_ms != from_ms || cursor.to_ms != to_ms {
+                return Err("A continuation cursor requires the original date interval".to_string());
+            }
+            if snapshot_tx.is_some_and(|snapshot| snapshot != cursor.snapshot_tx) {
+                return Err("A continuation cursor requires its original snapshotTx".to_string());
+            }
+            Some(cursor.snapshot_tx)
+        }
+        None => match snapshot_tx {
+            Some(snapshot) => Some(snapshot),
+            None => None,
+        },
+    };
     executor
         .read(move |conn| {
-            let page_size = limit.unwrap_or(100).max(1).min(500);
-
-            let pinned_tx: i64 = match snapshot_tx {
-                Some(tx) => tx,
-                None => conn
-                    .query_row("SELECT COALESCE(MAX(tx), 0) FROM triples", [], |row| {
-                        row.get(0)
-                    })
-                    .map_err(|e| e.to_string())?,
+            let pinned_tx = match requested_snapshot {
+                Some(snapshot) => snapshot,
+                None => crate::owl::current_snapshot_tx(conn)?,
             };
-
-            let rows = owl::find_entities_with_property_keyset(
+            let result = owl::page_relation_by_datetime_as_of(
                 conn,
                 "rdf:type",
                 "foundation:AIAPICall",
-                after_tx,
-                page_size + 1,
-            )
-            .unwrap_or_default();
-
-            let has_more = rows.len() as i64 > page_size;
-            let rows: Vec<(String, i64)> = rows.into_iter().take(page_size as usize).collect();
-            let next_cursor: Option<i64> = if has_more {
-                rows.last().map(|(_, tx)| *tx)
+                pinned_tx,
+                "foundation:calledAt",
+                range_start.as_deref(),
+                range_end.as_deref(),
+                false,
+                cursor
+                    .as_ref()
+                    .map(|cursor| (cursor.order_key, cursor.iri.as_str())),
+                page_size as i64 + 1,
+                "foundation:hasStatus",
+                "foundation:calledAt",
+                "foundation:Status_1772596341042",
+                "foundation:Status_1772993026091",
+            )?;
+            let has_more = result.items.len() > page_size;
+            let page_items = result.items.into_iter().take(page_size).collect::<Vec<_>>();
+            let next_cursor = if has_more {
+                page_items.last().map(|item| ApiCallCursor {
+                    order_key: item.key_julian_day,
+                    iri: item.subject.clone(),
+                    snapshot_tx: pinned_tx,
+                    from_ms,
+                    to_ms,
+                })
             } else {
                 None
             };
+            let items: Vec<serde_json::Value> = page_items
+                .into_iter()
+                .filter_map(|row| {
+                    let iri = row.subject;
+                    let ind = Individual::get(conn, &iri).ok().flatten()?;
 
-            let items: Vec<serde_json::Value> =
-                rows.into_iter()
-                    .filter_map(|(iri, _tx)| {
-                        let ind = Individual::get(conn, &iri).ok().flatten()?;
+                    let called_at = ind
+                        .properties
+                        .iter()
+                        .find(|(k, _)| k == "foundation:calledAt")
+                        .and_then(|(_, v)| v.as_literal())
+                        .unwrap_or_default();
 
-                        let called_at = ind
-                            .properties
+                    let get_int = |prop: &str| {
+                        ind.properties
                             .iter()
-                            .find(|(k, _)| k == "foundation:calledAt")
-                            .and_then(|(_, v)| v.as_literal())
-                            .unwrap_or_default();
-
-                        if let (Some(from), Ok(ts)) =
-                            (from_ms, chrono::DateTime::parse_from_rfc3339(&called_at))
-                        {
-                            if ts.timestamp_millis() < from {
-                                return None;
-                            }
-                        }
-                        if let (Some(to), Ok(ts)) =
-                            (to_ms, chrono::DateTime::parse_from_rfc3339(&called_at))
-                        {
-                            if ts.timestamp_millis() > to {
-                                return None;
-                            }
-                        }
-
-                        let get_int = |prop: &str| {
-                            ind.properties
-                                .iter()
-                                .find(|(k, _)| k == prop)
-                                .and_then(|(_, v)| {
-                                    if let Object::Integer(n) = v {
-                                        Some(*n as u64)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or(0)
-                        };
-
-                        let get_num = |prop: &str| {
-                            ind.properties.iter().find(|(k, _)| k == prop).and_then(
-                                |(_, v)| match v {
-                                    Object::Number(n) => Some(*n),
-                                    Object::Literal { value, .. } => value.parse::<f64>().ok(),
-                                    _ => None,
-                                },
-                            )
-                        };
-
-                        let model = ind
-                            .properties
-                            .iter()
-                            .find(|(k, _)| k == "foundation:model")
-                            .and_then(|(_, v)| v.as_literal())
-                            .unwrap_or_default();
-
-                        let conv_iri = ind
-                            .properties
-                            .iter()
-                            .find(|(k, _)| k == "foundation:generatedByConversation")
+                            .find(|(k, _)| k == prop)
                             .and_then(|(_, v)| {
-                                if let Object::Iri(s) = v {
-                                    Some(s.clone())
+                                if let Object::Integer(n) = v {
+                                    Some(*n as u64)
                                 } else {
                                     None
                                 }
-                            });
+                            })
+                            .unwrap_or(0)
+                    };
 
-                        Some(serde_json::json!({
-                            "iri": iri,
-                            "model": model,
-                            "calledAt": called_at,
-                            "inputTokens": get_int("foundation:inputTokens"),
-                            "outputTokens": get_int("foundation:outputTokens"),
-                            "estimatedCost": get_num("foundation:estimatedCost"),
-                            "conversationIri": conv_iri,
-                        }))
-                    })
-                    .collect();
+                    let get_num = |prop: &str| {
+                        ind.properties
+                            .iter()
+                            .find(|(k, _)| k == prop)
+                            .and_then(|(_, v)| match v {
+                                Object::Number(n) => Some(*n),
+                                Object::Literal { value, .. } => value.parse::<f64>().ok(),
+                                _ => None,
+                            })
+                    };
+
+                    let model = ind
+                        .properties
+                        .iter()
+                        .find(|(k, _)| k == "foundation:model")
+                        .and_then(|(_, v)| v.as_literal())
+                        .unwrap_or_default();
+
+                    let conv_iri = ind
+                        .properties
+                        .iter()
+                        .find(|(k, _)| k == "foundation:generatedByConversation")
+                        .and_then(|(_, v)| {
+                            if let Object::Iri(s) = v {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
+                        });
+
+                    Some(serde_json::json!({
+                        "iri": iri,
+                        "model": model,
+                        "calledAt": called_at,
+                        "inputTokens": get_int("foundation:inputTokens"),
+                        "outputTokens": get_int("foundation:outputTokens"),
+                        "estimatedCost": get_num("foundation:estimatedCost"),
+                        "conversationIri": conv_iri,
+                    }))
+                })
+                .collect();
 
             Ok(serde_json::json!({
                 "items": items,
                 "next_cursor": next_cursor,
                 "has_more": has_more,
                 "snapshot_tx": pinned_tx,
+                "total_count": result.stats.total_count,
             }))
         })
         .await
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiCallCursor {
+    order_key: f64,
+    iri: String,
+    snapshot_tx: i64,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+}
+
+fn api_call_range(
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+) -> Result<(Option<String>, Option<String>), String> {
+    let start = from_ms
+        .map(|millis| {
+            DateTime::<Utc>::from_timestamp_millis(millis)
+                .map(|timestamp| timestamp.to_rfc3339_opts(SecondsFormat::Millis, true))
+                .ok_or_else(|| "fromMs is outside the supported date range".to_string())
+        })
+        .transpose()?;
+    let end = to_ms
+        .map(|millis| {
+            let exclusive_end = millis
+                .checked_add(1)
+                .ok_or_else(|| "toMs is outside the supported date range".to_string())?;
+            DateTime::<Utc>::from_timestamp_millis(exclusive_end)
+                .map(|timestamp| timestamp.to_rfc3339_opts(SecondsFormat::Millis, true))
+                .ok_or_else(|| "toMs is outside the supported date range".to_string())
+        })
+        .transpose()?;
+    Ok((start, end))
+}
+
+#[cfg(test)]
+mod api_call_history_tests {
+    use super::api_call_range;
+    use crate::owl::{self, Connection};
+
+    fn setup_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE transactions (id INTEGER PRIMARY KEY, origin TEXT, created_at INTEGER);
+             CREATE TABLE origins (id INTEGER PRIMARY KEY, name TEXT UNIQUE);
+             CREATE TABLE triples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, subject TEXT NOT NULL, predicate TEXT NOT NULL,
+                object TEXT, object_value TEXT, object_type TEXT NOT NULL, object_datatype TEXT,
+                object_language TEXT, object_number REAL, object_integer INTEGER, object_datetime INTEGER,
+                object_boolean INTEGER, tx INTEGER NOT NULL, origin_id INTEGER NOT NULL DEFAULT 1,
+                created_at INTEGER NOT NULL DEFAULT 0, retracted INTEGER NOT NULL DEFAULT 0,
+                is_current INTEGER NOT NULL DEFAULT 1
+             );",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn add_api_call(conn: &Connection, iri: &str, called_at: &str, tx: i64) {
+        conn.execute(
+            "INSERT INTO triples (subject,predicate,object,object_type,tx) VALUES (?1,'rdf:type','foundation:AIAPICall','iri',?3)",
+            rusqlite::params![iri, "foundation:AIAPICall", tx],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO triples (subject,predicate,object_value,object_type,object_datatype,tx) VALUES (?1,'foundation:calledAt',?2,'literal','xsd:dateTime',?3)",
+            rusqlite::params![iri, called_at, tx],
+        )
+        .unwrap();
+    }
+
+    fn page(
+        conn: &Connection,
+        snapshot_tx: i64,
+        range_start: Option<&str>,
+        range_end: Option<&str>,
+        after: Option<(f64, &str)>,
+        limit: i64,
+    ) -> owl::DateTimePage {
+        owl::page_relation_by_datetime_as_of(
+            conn,
+            "rdf:type",
+            "foundation:AIAPICall",
+            snapshot_tx,
+            "foundation:calledAt",
+            range_start,
+            range_end,
+            false,
+            after,
+            limit,
+            "foundation:hasStatus",
+            "foundation:calledAt",
+            "foundation:UnusedCompletedStatus",
+            "foundation:UnusedFailedStatus",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn empty_interval_returns_no_items_and_zero_count() {
+        let conn = setup_db();
+        add_api_call(&conn, "foundation:Call_1", "2026-11-04T12:00:00.000Z", 1);
+        let (start, end) =
+            api_call_range(Some(1_793_802_000_000), Some(1_793_801_000_000)).unwrap();
+        let result = page(&conn, 1, start.as_deref(), end.as_deref(), None, 10);
+        assert!(result.items.is_empty());
+        assert_eq!(result.stats.total_count, 0);
+    }
+
+    #[test]
+    fn first_page_and_continuation_keep_date_order_and_snapshot() {
+        let conn = setup_db();
+        add_api_call(&conn, "foundation:Call_1", "2026-11-04T10:00:00.000Z", 1);
+        add_api_call(&conn, "foundation:Call_2", "2026-11-04T11:00:00.000Z", 2);
+        add_api_call(&conn, "foundation:Call_3", "2026-11-04T12:00:00.000Z", 3);
+        let (start, end) = api_call_range(None, None).unwrap();
+        let first = page(&conn, 3, start.as_deref(), end.as_deref(), None, 2);
+        assert_eq!(first.stats.total_count, 3);
+        assert_eq!(first.items.len(), 2);
+        assert_eq!(first.items[0].subject, "foundation:Call_3");
+        assert_eq!(first.items[1].subject, "foundation:Call_2");
+
+        add_api_call(&conn, "foundation:Call_4", "2026-11-04T13:00:00.000Z", 4);
+        let last = first.items.last().unwrap();
+        let continuation = page(
+            &conn,
+            3,
+            start.as_deref(),
+            end.as_deref(),
+            Some((last.key_julian_day, last.subject.as_str())),
+            2,
+        );
+        assert_eq!(continuation.stats.total_count, 3);
+        assert_eq!(continuation.items.len(), 1);
+        assert_eq!(continuation.items[0].subject, "foundation:Call_1");
+    }
 }
 
 #[tauri::command]

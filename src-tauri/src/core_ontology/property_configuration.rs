@@ -1,6 +1,22 @@
 use crate::owl::{self, Connection, Object};
 use std::collections::{HashMap, HashSet};
 
+#[derive(Debug, Clone, Default)]
+pub struct PropertyPresentation {
+    pub mode: Option<String>,
+    pub language: Option<String>,
+}
+
+pub fn property_presentation(
+    conn: &Connection,
+    property_iri: &str,
+) -> owl::Result<PropertyPresentation> {
+    Ok(PropertyPresentation {
+        mode: owl::get_literal_property(conn, property_iri, "foundation:propertyPresentation")?,
+        language: owl::get_literal_property(conn, property_iri, "foundation:propertyLanguage")?,
+    })
+}
+
 pub const SECRET_MASK: &str = "••••••••";
 
 const ALWAYS_SECRET: &[&str] = &["foundation:credentialValue"];

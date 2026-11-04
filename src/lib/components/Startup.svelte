@@ -343,7 +343,7 @@
   }
 </script>
 
-<main class="container">
+<main class="startup-container">
   {#if folderConfigured === null}
     <p class="redirecting">Iniciando…</p>
 
@@ -540,7 +540,7 @@
           <h1 aria-live="polite" aria-atomic="true">{startupStage}</h1>
         </div>
 
-        <div class="startup-progress" aria-hidden="true"><span></span></div>
+        <div class="startup-progress" role="progressbar" aria-label="Progresso da inicialização"><span></span></div>
 
         <div class="startup-panel-footer">
           <span>PREPARANDO A SESSÃO</span>
@@ -564,11 +564,12 @@
 </main>
 
 <style>
-  .container {
+  .startup-container {
     display: flex;
     align-items: center;
     justify-content: center;
     height: 100%;
+    width: 100%;
     background: var(--color-black);
   }
 
@@ -597,7 +598,8 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-5);
-    width: min(var(--size-startup-panel-width), calc(100vw - var(--space-6) * 2));
+    width: calc(100% - var(--space-6) * 2);
+    min-width: 0;
     padding: var(--space-5);
     background: color-mix(in srgb, var(--color-surface-1) var(--opacity-widget-surface), transparent);
     backdrop-filter: blur(var(--blur-widget-surface));
@@ -624,7 +626,9 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: var(--space-3);
+    min-width: 0;
   }
 
   .startup-system-label,
@@ -641,6 +645,8 @@
     align-items: center;
     gap: var(--space-2);
     color: var(--color-interactive);
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   .startup-signal {
@@ -668,6 +674,7 @@
     color: var(--color-neutral-active);
     font-size: var(--type-heading);
     line-height: 1.4;
+    overflow-wrap: anywhere;
   }
 
   .startup-progress {
@@ -698,6 +705,19 @@
 
   @keyframes startup-sweep {
     to { left: 100%; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .startup-signal,
+    .startup-progress span {
+      animation: none;
+    }
+
+    .startup-progress span {
+      left: 0;
+      width: 100%;
+      opacity: 0.55;
+    }
   }
 
   .redirecting {

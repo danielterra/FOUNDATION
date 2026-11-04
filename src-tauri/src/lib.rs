@@ -13,7 +13,7 @@ pub use foundation_core::paths;
 pub use foundation_core::search;
 
 // `owl` is declared as a local module because the app crate adds two
-// tauri-dependent workers (formula_worker, query_worker) on top of the core.
+// tauri-dependent workers in the commands layer.
 pub mod owl;
 
 pub mod ai;
@@ -144,7 +144,11 @@ pub fn run() {
     let result = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .skip_initial_state("main")
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .manage(process_automation::scheduler::SchedulerState::new())
         .manage(process_automation::task_scheduler::TaskSchedulerState::new())
@@ -296,6 +300,7 @@ pub fn run() {
             commands::automation__run,
             commands::automation__find_for_types,
             commands::automation__get_execution,
+            commands::automation__list_executions,
             commands::task__delegate,
             commands::entity__resolve_iris,
             commands::local_model::setup__get_local_model_status,
@@ -316,6 +321,8 @@ pub fn run() {
             commands::settings__connect_claude_desktop,
             commands::settings__get_history_retention_days,
             commands::settings__set_history_retention_days,
+            commands::settings__get_chat_panel_visibility,
+            commands::settings__set_chat_panel_visibility,
             commands::recover_database,
             commands::datasync__list_sources,
             commands::datasync__run,

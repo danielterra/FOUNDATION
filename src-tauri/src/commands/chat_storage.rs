@@ -2000,7 +2000,7 @@ pub async fn log_api_call(
         .await
         .map(|call_iri| {
             if conversation_id.is_some() {
-                use crate::owl::formula_worker::{
+                use crate::commands::formula_worker::{
                     create_instance_recalc_jobs, FormulaWorker, WorkerCommand,
                 };
                 use tauri::Manager;
@@ -2008,16 +2008,13 @@ pub async fn log_api_call(
                     let worker_sender = worker.sender.clone();
                     let executor_clone = executor.clone();
                     tauri::async_runtime::spawn(async move {
-                        let job_ids = executor_clone
-                            .read(move |conn| {
-                                Ok(create_instance_recalc_jobs(
-                                    conn,
-                                    &call_iri,
-                                    "foundation:generatedByConversation",
-                                ))
-                            })
-                            .await
-                            .unwrap_or_default();
+                        let job_ids = create_instance_recalc_jobs(
+                            &executor_clone,
+                            &call_iri,
+                            "foundation:generatedByConversation",
+                        )
+                        .await
+                        .unwrap_or_default();
                         for job_id in job_ids {
                             let _ = worker_sender.try_send(WorkerCommand::Enqueue { job_id });
                         }

@@ -101,15 +101,25 @@ Tarefa: executar o Modo 2b (Costura) conforme a sua persona:
 Reporte de volta a esta skill conforme o "Relatório final — Modo 2b" da sua definição.
 ```
 
-### Passo 4 — Lidar com blockers vindos do architect
+### Passo 4 — Acionar QA imediatamente
 
-Se o `architect` em Modo 2b sinalizar blocker (build vermelho persistente, cobertura de AC incompleta, plano divergente), repasse ao usuário com o briefing pronto para a correção (que vem do architect) e aguarde decisão antes de continuar.
+Assim que a costura mover a US para Em Validação (QA), invoque o agente `qa` nesta mesma execução. Não deixe a validação como uma ação que o usuário precisa lembrar de pedir.
 
-### Passo 5 — Reportar ao usuário
+Prompt mínimo para QA:
 
-Repasse o relatório final do `architect` (Modo 2b) ao usuário tal qual, e acrescente um convite explícito:
+```
+ Valide a User Story <IRI> com base nos ACs atuais e na seção `## Como testar` do implementationPlan. Rode os checks requeridos e valide cada AC por evidência concreta. Persista o status e a evidência de cada AC assim que o resultado individual estiver confirmado; não espere o fim da suíte para atualizar ACs já decididos. Leia de volta via MCP cada status persistido. Ao encerrar a rodada, persista também o status do parent: Completed se todos os ACs passaram e os checks obrigatórios estão verdes; Mudança Pendente se um AC falhou e precisa de correção; Blocked se não for possível continuar sem ação externa ou se a evidência/changelog não persistirem. Em Blocked, registre a ação exata que destrava a validação. Use Em Validação (QA) somente enquanto a rodada de validação estiver ativa. Registre a evidência no changelog e confirme a entrada por readback; se a leitura direta estiver truncada, use busca pelo valor. Releia o parent e todos os ACs antes de reportar.
+```
 
-> "A US está em **Em Validação (QA)**. Acione o agente `qa` para validar pelos passos da seção `## Como testar` no `implementationPlan`."
+QA continua sendo o único responsável por validar e concluir; o implementador e o arquiteto não alteram status de AC.
+
+### Passo 5 — Lidar com blockers vindos do architect ou QA
+
+Se o `architect` em Modo 2b sinalizar blocker (build vermelho persistente, cobertura de AC incompleta, plano divergente), repasse ao usuário com o briefing pronto para a correção (que vem do architect) e aguarde decisão antes de continuar. Se QA devolver a US como Blocked ou Mudança Pendente, informe a causa e o próximo passo; não restaure o status sem remover o blocker e executar nova validação.
+
+### Passo 6 — Reportar ao usuário
+
+Repasse o relatório final do QA ao usuário, incluindo o status lido de volta da US e de cada AC. Se concluído, confirme que a US e todos os ACs estão Concluídos. Se bloqueado, informe a condição externa concreta e a ação necessária para retomar.
 
 Não faça commit nem push — `$code-commit` é skill separada e o usuário decide quando consolidar.
 
@@ -120,7 +130,7 @@ Não faça commit nem push — `$code-commit` é skill separada e o usuário dec
 - **NEVER** invoque o `architect` na esperança de que ele dispare os devs — o `architect` é sub-agente e NÃO pode invocar outros sub-agentes. Quem dispara é esta skill.
 - **NEVER** invoque o `ux` aqui — UX só entra no Planejamento. A spec dele já está no plano como contrato.
 - **NEVER** mova status, edite o `implementationPlan` ou rode `cargo`/`npm` aqui — tudo isso é responsabilidade do `architect` (status / plano) e dos devs (build).
-- **NEVER** mova direto para `Concluído` — quem fecha é o QA, depois da validação do usuário.
+- **NEVER** mova direto para `Concluído` — quem fecha é o QA depois de validar os critérios; só peça confirmação manual quando um AC realmente depender de uma observação do usuário.
 - **ALWAYS** respeite a ordem indicada pelo architect (paralelo vs sequencial).
 - **ALWAYS** passe a IRI da US aos agentes exatamente como o usuário forneceu — não troque por outra US "parecida".
 - **ALWAYS** passe ao Modo 2b os retornos dos devs **na íntegra** — o architect precisa do material bruto para validar builds, cobertura de AC e consolidar o `## Como testar`.

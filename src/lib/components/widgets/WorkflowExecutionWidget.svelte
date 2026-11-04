@@ -15,6 +15,7 @@
   let error = $state(null)
   let expandedStep = $state(null)
   let errorDismissed = $state(null)
+  let materializationByStep = $state(new Map())
 
   let unlisteners = []
   const entitySub = createEntitySubscription((event) => {
@@ -110,11 +111,45 @@
     }
   }
 
+  function describeMaterialization(progress) {
+    if (progress.status === 'failed') return progress.reason || 'Falha ao atualizar os dados necessários'
+    if (progress.status === 'cancelled') return progress.reason || 'Atualização dos dados cancelada'
+    if (progress.status === 'completed') return 'Dados atualizados'
+    if (progress.phase === 'query-properties') return 'Atualizando propriedades relacionadas'
+    return 'Atualizando propriedades calculadas'
+  }
+
+  function hasDeterminateProgress(progress) {
+    return progress.completedCount !== undefined
+      && progress.totalCount !== undefined
+      && progress.totalCount > 0
+      && progress.completedCount >= 0
+      && progress.completedCount <= progress.totalCount
+  }
+
+  function handleMaterializationProgress(event) {
+    const progress = event.payload
+    if (progress.executionIri !== entityId) return
+    if (!progress.phase) {
+      loadDetail()
+      return
+    }
+
+    const next = new Map(materializationByStep)
+    next.set(progress.stepIri, progress)
+    materializationByStep = next
+    loadDetail()
+  }
+
+  function handleExecutionFinished(event) {
+    if (event.payload.executionIri === entityId) loadDetail()
+  }
+
   async function openControlInstanceInspector() {
-    if (!detail?.control_instance_iri) return
+    if (!detail?.controlInstanceIri) return
     await invoke('widget_blackboard__add_widget', {
       widgetType: 'inspector',
-      entityId: detail.control_instance_iri,
+      entityId: detail.controlInstanceIri,
       content: null,
       position: null,
       size: null,
@@ -140,16 +175,8 @@
   onMount(async () => {
     await loadDetail()
 
-    const unlistenProgress = await listen('automation-step-progress', async (event) => {
-      if (event.payload.executionIri === entityId) {
-        await loadDetail()
-      }
-    })
-    const unlistenFinished = await listen('automation-execution-finished', async (event) => {
-      if (event.payload.executionIri === entityId) {
-        await loadDetail()
-      }
-    })
+    const unlistenProgress = await listen('automation-step-progress', handleMaterializationProgress)
+    const unlistenFinished = await listen('automation-execution-finished', handleExecutionFinished)
     const unlistenMessage = await listen('automation-step-message', (event) => {
       if (event.payload.executionIri !== entityId || !detail) return
       const { stepIri, role, content } = event.payload
@@ -175,7 +202,7 @@
 
 <WidgetContainer
   icon="play_circle"
-  title={detail?.process_label ?? 'Execution'}
+  title={detail?.processLabel ?? 'Execution'}
   {windowState}
   {onWindowStateChange}
   onClose={closeWidget}
@@ -192,10 +219,10 @@
     {#if detail}
       <span
         class="status-badge"
-        style="color: {detail.status_color ?? 'var(--color-neutral-disabled)'}"
+      style="color: {detail.statusColor ?? 'var(--color-neutral-disabled)'}"
       >
-        <span class="material-symbols-outlined status-icon" class:spinning={isInProgress(detail.status_label)}>{detail.status_icon ?? 'help'}</span>
-        <span class="status-label">{detail.status_label}</span>
+        <span class="material-symbols-outlined status-icon" class:spinning={isInProgress(detail.statusLabel)}>{detail.statusIcon ?? 'help'}</span>
+        <span class="status-label">{detail.statusLabel}</span>
       </span>
     {/if}
   {/snippet}
@@ -211,39 +238,51 @@
         <p>{error}</p>
       </div>
     {:else if detail}
-      {#if detail.error_message && errorDismissed !== detail.error_message}
+      {#if detail.errorMessage && errorDismissed !== detail.errorMessage}
         <div class="execution-error">
           <span class="material-symbols-outlined">error</span>
-          <span class="error-message-text">{detail.error_message}</span>
-          <Button variant="ghost" size="icon" class="error-dismiss-btn" aria-label="Dispensar erro" onclick={() => errorDismissed = detail.error_message} title="Dismiss"><span class="material-symbols-outlined">close</span></Button>
+          <span class="error-message-text">{detail.errorMessage}</span>
+          <Button variant="ghost" size="icon" class="error-dismiss-btn" aria-label="Dispensar erro" onclick={() => errorDismissed = detail.errorMessage} title="Dismiss"><span class="material-symbols-outlined">close</span></Button>
         </div>
       {/if}
 
       {#if detail.steps.length === 0}
         <div class="center-state muted">Nenhum passo registrado ainda…</div>
       {:else}
-        <div class="steps" role="list" aria-live="polite" aria-atomic="false" aria-label="Passos da execução">
+        <div class="steps" role="list" aria-label="Passos da execução">
           {#each detail.steps as step (step.iri)}
             {@const isExpanded = expandedStep === step.iri}
-            {@const duration = formatDuration(step.started_at, step.finished_at)}
+            {@const duration = formatDuration(step.startedAt, step.finishedAt)}
+            {@const materialization = materializationByStep.get(step.iri)}
             <div class="step" class:expanded={isExpanded} role="listitem">
               <Button
                 variant="ghost"
                 class="step-header"
                 aria-expanded={isExpanded}
-                aria-label={step.node_label}
+                aria-label={materialization ? `${step.nodeLabel}. ${describeMaterialization(materialization)}` : step.nodeLabel}
                 onclick={() => expandedStep = isExpanded ? null : step.iri}
                 onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); expandedStep = isExpanded ? null : step.iri } }}
               >
                 <span
                   class="material-symbols-outlined step-icon"
-                  class:spinning={isInProgress(step.status_label)}
-                  style="color: {step.status_color ?? 'var(--color-neutral-disabled)'}"
-                >{step.status_icon ?? 'radio_button_unchecked'}</span>
-                <span class="material-symbols-outlined step-type-icon">{nodeIcon(step.node_type)}</span>
-                <span class="step-label">{step.node_label}</span>
+                  class:spinning={isInProgress(step.statusLabel)}
+                  style="color: {step.statusColor ?? 'var(--color-neutral-disabled)'}"
+                >{step.statusIcon ?? 'radio_button_unchecked'}</span>
+                <span class="material-symbols-outlined step-type-icon">{nodeIcon(step.nodeType)}</span>
+                <span class="step-label">{step.nodeLabel}</span>
+                {#if materialization}
+                  <span class="materialization-phase" aria-live="off">
+                    <span class="material-symbols-outlined" class:spinning={materialization.status === 'waiting' || materialization.status === 'running'}>
+                      {materialization.status === 'failed' ? 'error' : materialization.status === 'cancelled' ? 'cancel' : 'sync'}
+                    </span>
+                    <span role="status" aria-live="polite">{describeMaterialization(materialization)}</span>
+                    {#if hasDeterminateProgress(materialization)}
+                      <span>{materialization.completedCount}/{materialization.totalCount}</span>
+                    {/if}
+                  </span>
+                {/if}
                 <span class="step-duration">{duration ?? ''}</span>
-                {#if (step.refs?.length > 0) || step.summary || step.error || step.messages.length > 0}
+                {#if step.executionOutput?.length > 0 || step.executionSummary || step.stepError || step.messages.length > 0}
                   <span class="material-symbols-outlined step-chevron" class:rotated={isExpanded}>
                     expand_more
                   </span>
@@ -252,21 +291,29 @@
 
               {#if isExpanded}
                 <div class="step-detail">
-                  {#if step.error}
-                    <div class="detail-section error-section">
-                      <span class="detail-label">Error</span>
-                      <pre class="detail-content error-text">{step.error}</pre>
+                  {#if step.inputContext}
+                    <div class="detail-section">
+                      <span class="detail-label">Entrada</span>
+                      <pre class="detail-content">{step.inputContext}</pre>
                     </div>
                   {/if}
-                  {#if (step.refs?.length > 0) || step.summary}
+                  {#if step.stepError}
+                    <div class="detail-section error-section">
+                      <span class="detail-label">Erro</span>
+                      <pre class="detail-content error-text">{step.stepError}</pre>
+                    </div>
+                  {/if}
+                  {#if step.executionOutput?.length > 0 || step.executionSummary}
                     <div class="detail-section">
-                      <span class="detail-label">Resultado</span>
+                      <span class="detail-label">Saída</span>
                       <div class="detail-content detail-content-output">
-                        {#if step.refs?.length > 0}
-                          <MarkdownValue value={step.refs.join(' ')} {openEntityInspector} />
+                        {#if step.executionOutput?.length > 0}
+                          {#each step.executionOutput as output, outputIndex (outputIndex)}
+                            <MarkdownValue value={output} {openEntityInspector} />
+                          {/each}
                         {/if}
-                        {#if step.summary}
-                          <MarkdownValue value={step.summary} {openEntityInspector} />
+                        {#if step.executionSummary}
+                          <MarkdownValue value={step.executionSummary} {openEntityInspector} />
                         {/if}
                       </div>
                     </div>
@@ -274,7 +321,7 @@
                   {#if step.messages.length > 0}
                     {@const units = messagesToUnits(step.messages)}
                     <div class="detail-section">
-                      <span class="detail-label">Conversation</span>
+                      <span class="detail-label">Conversa</span>
                       <div class="messages">
                         {#each units as unit, i (i)}
                           <ChatMessageBubble {unit} />
@@ -282,11 +329,11 @@
                       </div>
                     </div>
                   {/if}
-                  {#if step.started_at}
+                  {#if step.startedAt}
                     <div class="detail-meta">
-                      <span>{formatTime(step.started_at)}</span>
-                      {#if step.finished_at}
-                        <span>→ {formatTime(step.finished_at)}</span>
+                      <span>{formatTime(step.startedAt)}</span>
+                      {#if step.finishedAt}
+                        <span>→ {formatTime(step.finishedAt)}</span>
                       {/if}
                     </div>
                   {/if}
@@ -299,7 +346,7 @@
     {/if}
   </div>
 
-  {#if detail?.control_instance_iri}
+  {#if detail?.controlInstanceIri}
     <div class="widget-footer">
       <Button variant="ghost" class="footer-btn" aria-label="Abrir inspetor da instância de controle" onclick={openControlInstanceInspector}>
         <span class="material-symbols-outlined">open_in_new</span>
@@ -442,6 +489,27 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .materialization-phase {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-inline-tight);
+    color: var(--color-transition);
+    font-size: var(--type-caption-compact);
+    min-width: 0;
+    max-width: 40%;
+  }
+
+  .materialization-phase .material-symbols-outlined {
+    font-size: var(--type-icon-small);
+    flex-shrink: 0;
+  }
+
+  .materialization-phase :global(span:not(.material-symbols-outlined)) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .step-duration {

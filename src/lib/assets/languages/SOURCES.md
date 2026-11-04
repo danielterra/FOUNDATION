@@ -1,0 +1,5 @@
+# Language logo assets
+
+- `rhai.svg` is the Rhai logo distributed by the official Rhai documentation site: https://rhai.rs/book/images/logo/rhai-logo-transparent-colour-black.svg. The Rhai crate lists its source code as dual-licensed MIT/Apache-2.0; no separate license statement for this logo asset was found.
+- `typescript.svg` is the unmodified `ts-logo-512.svg` from the official TypeScript design-assets archive: https://www.typescriptlang.org/branding/typescript-design-assets.zip. The branding page advises against using TypeScript logos in applications; this app use was explicitly authorized by the product owner.
+- `rust.svg` is the unmodified Rust programming language logo from the official rust-lang artwork repository: https://github.com/rust-lang/rust-artwork/blob/main/logo/rust-logo.svg. Rust Foundation distributes its logos under CC BY 4.0; this file is unchanged. Attribution: Rust Foundation — https://creativecommons.org/licenses/by/4.0/. Its separate trademark policy also applies.

@@ -8,6 +8,7 @@
   import PropertyEditForm from './PropertyEditForm.svelte';
   import RecurrenceEditor from './RecurrenceEditor.svelte';
   import { Input } from '$lib/components/ui/input';
+  import CodeEditor from './CodeEditor.svelte';
 
   let {
     detailGroup,
@@ -328,7 +329,21 @@
       </div>
     {:else}
       <div class="detail-value" class:calculated={detailGroup.isCalculated}>
-        {#if val.datatype === 'xsd:dateTime'}
+        {#if val.presentation === 'code'}
+          {#if editingKey === editKey(detailGroup.property, idx)}
+            <PropertyEditForm
+              propertyIri={detailGroup.property}
+              bind:draftValue
+              {saving}
+              codeLanguage={val.language}
+              fieldLabel={detailGroup.propertyLabel ?? detailGroup.property}
+              onsave={onSaveEdit}
+              oncancel={onCancelEdit}
+            />
+          {:else}
+            <CodeEditor value={val.value ?? ''} language={val.language} fieldLabel={detailGroup.propertyLabel ?? detailGroup.property} readonly />
+          {/if}
+        {:else if val.datatype === 'xsd:dateTime'}
           {#if editingKey === editKey(detailGroup.property, idx)}
             {@render dateEditor(detailGroup.property, 'datetime-local')}
           {:else}

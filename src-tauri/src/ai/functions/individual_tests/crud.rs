@@ -1,4 +1,5 @@
 use super::*;
+use crate::ai::functions::{execute_tool, ToolCall};
 use crate::owl::Individual;
 
 #[test]
@@ -22,6 +23,287 @@ fn test_update_thing_with_properties_updates_literal_property() {
     assert_eq!(
         result.result.unwrap()["iri"].as_str(),
         Some("foundation:Task_001")
+    );
+}
+
+#[test]
+fn add_property_values_persists_object_property_reference() {
+    let mut conn = setup_test_db();
+    Class::new("foundation:AcceptanceCriterion")
+        .assert(
+            &mut conn,
+            ClassType::OwlClass,
+            "Acceptance Criterion",
+            ICON_URL,
+            None,
+            "test",
+        )
+        .unwrap();
+    Class::new("foundation:UserStory")
+        .assert(
+            &mut conn,
+            ClassType::OwlClass,
+            "User Story",
+            ICON_URL,
+            None,
+            "test",
+        )
+        .unwrap();
+    Property::new("foundation:hasAcceptanceCriterion")
+        .assert(
+            &mut conn,
+            PropertyType::ObjectProperty,
+            "hasAcceptanceCriterion",
+            None,
+            &["foundation:UserStory"],
+            None,
+            Some("foundation:AcceptanceCriterion"),
+            "test",
+        )
+        .unwrap();
+    Individual::new("foundation:UserStory_object_property_add_test")
+        .assert(
+            &mut conn,
+            "foundation:UserStory",
+            "User Story",
+            ICON_URL,
+            "test",
+        )
+        .unwrap();
+    for suffix in ["a", "b", "c", "d", "e", "f"] {
+        Individual::new(&format!(
+            "foundation:AcceptanceCriterion_object_property_add_test_{suffix}"
+        ))
+        .assert(
+            &mut conn,
+            "foundation:AcceptanceCriterion",
+            "Acceptance Criterion",
+            ICON_URL,
+            "test",
+        )
+        .unwrap();
+    }
+
+    let initial_references: Vec<String> = ["a", "b", "c", "d", "e"]
+        .into_iter()
+        .map(|suffix| format!("foundation:AcceptanceCriterion_object_property_add_test_{suffix}"))
+        .collect();
+    let initial_result = execute_tool(
+        &mut conn,
+        &ToolCall {
+            name: "add_property_values".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:UserStory_object_property_add_test",
+                    "property_iri": "foundation:hasAcceptanceCriterion",
+                    "values": initial_references
+                }]
+            }),
+        },
+        None,
+        None,
+    );
+    assert!(
+        initial_result.success,
+        "initial add failed: {:?}",
+        initial_result.error
+    );
+
+    let result = execute_tool(
+        &mut conn,
+        &ToolCall {
+            name: "add_property_values".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:UserStory_object_property_add_test",
+                    "property_iri": "foundation:hasAcceptanceCriterion",
+                    "values": ["foundation:AcceptanceCriterion_object_property_add_test_f"]
+                }]
+            }),
+        },
+        None,
+        None,
+    );
+
+    assert!(result.success, "add failed: {:?}", result.error);
+    let story = Individual::get(&conn, "foundation:UserStory_object_property_add_test")
+        .unwrap()
+        .unwrap();
+    let visible_references: Vec<&str> = story
+        .properties
+        .iter()
+        .filter(|(property, _)| property == "foundation:hasAcceptanceCriterion")
+        .filter_map(|(_, value)| value.as_iri())
+        .collect();
+    assert_eq!(visible_references.len(), 5);
+    assert_eq!(
+        story
+            .forward_group_totals
+            .get("foundation:hasAcceptanceCriterion"),
+        Some(&6)
+    );
+    let all_references = crate::eavto::query::get_by_entity_predicate(
+        &conn,
+        "foundation:UserStory_object_property_add_test",
+        "foundation:hasAcceptanceCriterion",
+    )
+    .unwrap();
+    assert_eq!(all_references.triples.len(), 6);
+    assert!(all_references.triples.iter().any(|triple| {
+        triple.object.as_iri() == Some("foundation:AcceptanceCriterion_object_property_add_test_f")
+    }));
+    let search_result = search(
+        &conn,
+        &serde_json::json!({
+            "class_iri": "foundation:UserStory",
+            "filters": [{
+                "detail": "foundation:hasAcceptanceCriterion",
+                "value": "foundation:AcceptanceCriterion_object_property_add_test_f"
+            }]
+        }),
+    );
+    assert!(
+        search_result.success,
+        "search failed: {:?}",
+        search_result.error
+    );
+    assert!(search_result.result.unwrap()["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entity| entity["id"] == "foundation:UserStory_object_property_add_test"));
+}
+
+#[test]
+fn replace_property_values_persists_object_property_references() {
+    let mut conn = setup_test_db();
+    Class::new("foundation:AcceptanceCriterion")
+        .assert(
+            &mut conn,
+            ClassType::OwlClass,
+            "Acceptance Criterion",
+            ICON_URL,
+            None,
+            "test",
+        )
+        .unwrap();
+    Class::new("foundation:UserStory")
+        .assert(
+            &mut conn,
+            ClassType::OwlClass,
+            "User Story",
+            ICON_URL,
+            None,
+            "test",
+        )
+        .unwrap();
+    Property::new("foundation:hasAcceptanceCriterion")
+        .assert(
+            &mut conn,
+            PropertyType::ObjectProperty,
+            "hasAcceptanceCriterion",
+            None,
+            &["foundation:UserStory"],
+            None,
+            Some("foundation:AcceptanceCriterion"),
+            "test",
+        )
+        .unwrap();
+    Individual::new("foundation:UserStory_object_property_replace_test")
+        .assert(
+            &mut conn,
+            "foundation:UserStory",
+            "User Story",
+            ICON_URL,
+            "test",
+        )
+        .unwrap();
+    for suffix in ["a", "b", "c", "d", "e", "f"] {
+        Individual::new(&format!(
+            "foundation:AcceptanceCriterion_object_property_replace_test_{suffix}"
+        ))
+        .assert(
+            &mut conn,
+            "foundation:AcceptanceCriterion",
+            "Acceptance Criterion",
+            ICON_URL,
+            "test",
+        )
+        .unwrap();
+    }
+
+    let initial_references: Vec<String> = ["a", "b", "c", "d", "e"]
+        .into_iter()
+        .map(|suffix| {
+            format!("foundation:AcceptanceCriterion_object_property_replace_test_{suffix}")
+        })
+        .collect();
+    let initial_result = execute_tool(
+        &mut conn,
+        &ToolCall {
+            name: "add_property_values".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:UserStory_object_property_replace_test",
+                    "property_iri": "foundation:hasAcceptanceCriterion",
+                    "values": initial_references
+                }]
+            }),
+        },
+        None,
+        None,
+    );
+    assert!(
+        initial_result.success,
+        "initial add failed: {:?}",
+        initial_result.error
+    );
+
+    let replacement_references: Vec<String> = ["a", "b", "c", "d", "e", "f"]
+        .into_iter()
+        .map(|suffix| {
+            format!("foundation:AcceptanceCriterion_object_property_replace_test_{suffix}")
+        })
+        .collect();
+
+    let result = execute_tool(
+        &mut conn,
+        &ToolCall {
+            name: "replace_property_values".to_string(),
+            arguments: serde_json::json!({
+                "operations": [{
+                    "iri": "foundation:UserStory_object_property_replace_test",
+                    "property_iri": "foundation:hasAcceptanceCriterion",
+                    "values": replacement_references
+                }]
+            }),
+        },
+        None,
+        None,
+    );
+
+    assert!(result.success, "replace failed: {:?}", result.error);
+    let result = crate::eavto::query::get_by_entity_predicate(
+        &conn,
+        "foundation:UserStory_object_property_replace_test",
+        "foundation:hasAcceptanceCriterion",
+    )
+    .unwrap();
+    let references: Vec<&str> = result
+        .triples
+        .iter()
+        .filter_map(|triple| triple.object.as_iri())
+        .collect();
+    assert_eq!(
+        references,
+        [
+            "foundation:AcceptanceCriterion_object_property_replace_test_a",
+            "foundation:AcceptanceCriterion_object_property_replace_test_b",
+            "foundation:AcceptanceCriterion_object_property_replace_test_c",
+            "foundation:AcceptanceCriterion_object_property_replace_test_d",
+            "foundation:AcceptanceCriterion_object_property_replace_test_e",
+            "foundation:AcceptanceCriterion_object_property_replace_test_f"
+        ]
     );
 }
 

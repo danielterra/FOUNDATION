@@ -5,6 +5,64 @@ use tauri_plugin_opener::OpenerExt;
 use crate::owl::{DbExecutor, Individual, Object};
 
 const HISTORY_RETENTION_DAYS_SETTING_IRI: &str = "foundation:SoftwareSetting_1781110491934";
+const CHAT_PANEL_VISIBILITY_SETTING_IRI: &str = "foundation:SoftwareSetting_1793731193659";
+
+#[tauri::command]
+pub async fn settings__get_chat_panel_visibility(
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    executor
+        .read(|conn| {
+            let setting = Individual::get(conn, CHAT_PANEL_VISIBILITY_SETTING_IRI)
+                .map_err(|error| format!("Failed to read chat panel visibility: {error}"))?
+                .ok_or_else(|| "Chat panel visibility setting not found".to_string())?;
+
+            setting
+                .properties
+                .iter()
+                .find(|(predicate, _)| predicate == "foundation:settingValue")
+                .and_then(|(_, value)| value.as_literal())
+                .filter(|value| value == "open" || value == "closed")
+                .ok_or_else(|| {
+                    "Chat panel visibility setting must be 'open' or 'closed'".to_string()
+                })
+        })
+        .await
+}
+
+#[tauri::command]
+pub async fn settings__set_chat_panel_visibility(
+    visibility: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    if visibility != "open" && visibility != "closed" {
+        return Err("Chat panel visibility must be 'open' or 'closed'".to_string());
+    }
+
+    executor
+        .write(move |conn| {
+            let setting = Individual::get(conn, CHAT_PANEL_VISIBILITY_SETTING_IRI)
+                .map_err(|error| format!("Failed to read chat panel visibility setting: {error}"))?
+                .ok_or_else(|| "Chat panel visibility setting not found".to_string())?;
+
+            setting
+                .add_property(
+                    conn,
+                    "foundation:settingValue",
+                    vec![Object::Literal {
+                        value: visibility,
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    }],
+                    "settings",
+                )
+                .map_err(|error| format!("Failed to persist chat panel visibility: {error}"))?;
+
+            Ok(String::new())
+        })
+        .await?;
+    Ok(())
+}
 
 #[tauri::command]
 pub async fn settings__is_folder_configured(app: AppHandle) -> bool {

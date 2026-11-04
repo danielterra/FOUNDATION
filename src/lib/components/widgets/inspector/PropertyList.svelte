@@ -78,6 +78,8 @@
           sourceClassIcon: prop.sourceClassIcon,
           sourceClassIri: prop.sourceClass ?? null,
           datatype: prop.datatype,
+          presentation: prop.presentation ?? null,
+          language: prop.language ?? null,
           unit: prop.unit ?? null,
           rangeClassIri: prop.rangeClassIri,
           rangeClassLabel: prop.rangeClassLabel,
@@ -104,6 +106,8 @@
           valueIcon: prop.valueIcon,
           unitLabel: prop.unitLabel,
           datatype: prop.datatype,
+          presentation: prop.presentation ?? null,
+          language: prop.language ?? null,
           valueStatus: prop.valueStatus,
           formulaError: prop.formulaError ?? null,
           fileInfo: prop.fileInfo ?? null

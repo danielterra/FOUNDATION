@@ -4,7 +4,6 @@
   import { invoke } from '@tauri-apps/api/core';
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { createEntitySubscription } from '$lib/realtime/subscriptions';
-  import { openEntity } from '$lib/blackboard';
   import FilePreview from './inspector/FilePreview.svelte';
   import MetaFields from './inspector/MetaFields.svelte';
   import PropertyList from './inspector/PropertyList.svelte';
@@ -17,7 +16,7 @@
 
   let {
     entityId, widgetId, refreshKey = 0, windowState = 'normal',
-    onWindowStateChange, conversationIri = null
+    onWindowStateChange, onOpenEntityInspector = null, conversationIri = null
   } = $props();
 
   let entityData = $state(null);
@@ -537,7 +536,11 @@
   }
 
   async function openEntityInspector(entityIri) {
-    await openEntity(entityIri, conversationIri).catch(err => console.error('Failed to open entity:', err));
+    if (onOpenEntityInspector) {
+      await onOpenEntityInspector(entityIri);
+      return;
+    }
+    console.error('Entity inspector opener is unavailable.');
   }
 
   function openClassInspector(event) {
@@ -1109,8 +1112,8 @@
     white-space: normal;
     padding: 0;
     height: auto;
-    font-family: var(--font-body);
-    font-size: var(--type-body-compact);
+    font-family: var(--font-mono);
+    font-size: var(--type-overline);
     color: var(--text-secondary);
     letter-spacing: var(--tracking-hud-label);
     line-height: var(--line-height-hud-compact);

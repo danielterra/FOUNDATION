@@ -26,10 +26,109 @@
   type TaskNotification = TaskCompletedEvent & { id: number };
 
   const TASK_NOTIFICATION_DURATION_MS = 8000;
+  const AUTOMATION_SUCCESS_TOAST_DURATION_MS = 8000;
   const TOAST_SUMMARY_MAX_CHARS = 80;
+  const automationSuccessTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   function openTaskInspector(taskIri: string) {
     openEntity(taskIri, appState.activeConversationIri).catch(e => console.error('[toast] Failed to open entity:', e));
+  }
+
+  function openAutomationExecution(event: MouseEvent) {
+    const executionIri = (event.currentTarget as HTMLElement).dataset.executionIri;
+    if (!executionIri) return;
+    invoke('widget_blackboard__add_widget', {
+      widgetType: 'workflow_execution',
+      entityId: executionIri,
+      position: null,
+      size: null,
+      conversationId: appState.activeConversationIri,
+    }).catch(e => console.error('[toast] Failed to open widget:', e));
+  }
+
+  function dismissAutomationRun(event: MouseEvent) {
+    const executionIri = (event.currentTarget as HTMLElement).dataset.executionIri;
+    if (!executionIri) return;
+    const timer = automationSuccessTimers.get(executionIri);
+    if (timer) clearTimeout(timer);
+    automationSuccessTimers.delete(executionIri);
+    automationRuns = automationRuns.filter(run => run.executionIri !== executionIri);
+  }
+
+  function materializationDescription(run: AutomationRun) {
+    if (run.materializationStatus === 'failed') return run.reason || 'Falha ao atualizar os dados necessários';
+    if (run.materializationStatus === 'cancelled') return run.reason || 'Atualização dos dados cancelada';
+    if (run.materializationStatus === 'completed') return 'Dados atualizados';
+    if (run.phase === 'query-properties') return 'Atualizando propriedades relacionadas';
+    if (run.phase === 'calculated-properties') return 'Atualizando propriedades calculadas';
+    return 'Aguardando etapa';
+  }
+
+  function hasDeterminateProgress(run: AutomationRun) {
+    return run.completedCount !== undefined
+      && run.totalCount !== undefined
+      && run.totalCount > 0
+      && run.completedCount >= 0
+      && run.completedCount <= run.totalCount;
+  }
+
+  function handleAutomationStarted(event: { payload: AutomationExecutionEvent }) {
+    const { executionIri, processIri } = event.payload;
+    if (automationRuns.some(run => run.executionIri === executionIri)) return;
+    automationRuns = [...automationRuns, {
+      executionIri,
+      processIri,
+      currentStep: 'Preparando automação',
+      status: 'running',
+    }];
+  }
+
+  function handleAutomationStep(event: { payload: AutomationStepEvent }) {
+    const payload = event.payload;
+    automationRuns = automationRuns.map(run => {
+      if (run.executionIri !== payload.executionIri) return run;
+
+      if (payload.phase) {
+        return {
+          ...run,
+          currentStep: payload.nodeLabel ?? run.currentStep,
+          phase: payload.phase,
+          materializationStatus: payload.status as AutomationRun['materializationStatus'],
+          completedCount: payload.completedCount,
+          totalCount: payload.totalCount,
+          reason: payload.reason ?? payload.error,
+        };
+      }
+
+      return {
+        ...run,
+        currentStep: payload.nodeLabel ?? run.currentStep,
+        phase: undefined,
+        materializationStatus: undefined,
+        completedCount: undefined,
+        totalCount: undefined,
+        reason: undefined,
+        ...(payload.status === 'failed' && payload.error ? { error: payload.error } : {}),
+      };
+    });
+  }
+
+  function handleAutomationFinished(event: { payload: AutomationFinishedEvent }) {
+    const { executionIri, status, error } = event.payload;
+    const run = automationRuns.find(item => item.executionIri === executionIri);
+    if (!run || run.status !== 'running') return;
+
+    automationRuns = automationRuns.map(item => item.executionIri === executionIri
+      ? { ...item, status, error: error ?? item.error }
+      : item);
+
+    if (status === 'completed') {
+      const timer = setTimeout(() => {
+        automationSuccessTimers.delete(executionIri);
+        automationRuns = automationRuns.filter(item => item.executionIri !== executionIri);
+      }, AUTOMATION_SUCCESS_TOAST_DURATION_MS);
+      automationSuccessTimers.set(executionIri, timer);
+    }
   }
 
   let taskNotifications = $state<TaskNotification[]>([]);
@@ -40,15 +139,25 @@
     executionIri: string;
     stepIri: string;
     nodeIri: string;
-    nodeLabel: string;
-    status: 'started' | 'completed' | 'failed';
+    nodeLabel?: string;
+    status: 'started' | 'completed' | 'failed' | 'waiting' | 'running' | 'cancelled';
+    phase?: 'query-properties' | 'calculated-properties';
+    entityIri?: string;
+    propertyIri?: string;
+    completedCount?: number;
+    totalCount?: number;
+    reason?: string;
     error?: string;
   };
 
   type AutomationExecutionEvent = {
     processIri: string;
     executionIri: string;
-    status?: 'completed' | 'failed';
+  };
+
+  type AutomationFinishedEvent = {
+    executionIri: string;
+    status: 'completed' | 'failed' | 'cancelled';
     error?: string;
   };
 
@@ -56,8 +165,13 @@
     executionIri: string;
     processIri: string;
     currentStep: string;
-    status: 'running' | 'completed' | 'failed';
+    status: 'running' | 'completed' | 'failed' | 'cancelled';
     error?: string;
+    phase?: 'query-properties' | 'calculated-properties';
+    materializationStatus?: 'waiting' | 'running' | 'completed' | 'failed' | 'cancelled';
+    completedCount?: number;
+    totalCount?: number;
+    reason?: string;
   };
 
   let automationRuns = $state<AutomationRun[]>([]);
@@ -147,31 +261,9 @@
       retentionRunning = false;
     });
 
-    unlistenAutomationStarted = await listen<AutomationExecutionEvent>('automation-execution-started', (event) => {
-      const { executionIri, processIri } = event.payload;
-      automationRuns = [...automationRuns, { executionIri, processIri, currentStep: 'Starting…', status: 'running' }];
-    });
-
-    unlistenAutomationStep = await listen<AutomationStepEvent>('automation-step-progress', (event) => {
-      const { executionIri, nodeLabel, status, error } = event.payload;
-      automationRuns = automationRuns.map(r =>
-        r.executionIri === executionIri
-          ? { ...r, currentStep: nodeLabel, ...(status === 'failed' ? { status: 'failed', error } : {}) }
-          : r
-      );
-    });
-
-    unlistenAutomationFinished = await listen<AutomationExecutionEvent>('automation-execution-finished', (event) => {
-      const { executionIri, status, error } = event.payload;
-      automationRuns = automationRuns.map(r =>
-        r.executionIri === executionIri ? { ...r, status: status ?? 'completed', error } : r
-      );
-      if (status === 'completed') {
-        setTimeout(() => {
-          automationRuns = automationRuns.filter(r => r.executionIri !== executionIri);
-        }, 2500);
-      }
-    });
+    unlistenAutomationStarted = await listen<AutomationExecutionEvent>('automation-execution-started', handleAutomationStarted);
+    unlistenAutomationStep = await listen<AutomationStepEvent>('automation-step-progress', handleAutomationStep);
+    unlistenAutomationFinished = await listen<AutomationFinishedEvent>('automation-execution-finished', handleAutomationFinished);
 
     unlistenTaskCompleted = await listen<TaskCompletedEvent>('task-completed', (event) => {
       const id = ++taskNotifCounter;
@@ -263,6 +355,8 @@
   });
 
   onDestroy(() => {
+    for (const timer of automationSuccessTimers.values()) clearTimeout(timer);
+    automationSuccessTimers.clear();
     document.removeEventListener('click', handleLinkClick, true);
     unlistenTaskCompleted?.();
     unlistenRecalc?.();
@@ -290,39 +384,54 @@
 {#if automationRuns.length > 0 || retentionRunning || recalcJobs.length > 0 || taskNotifications.length > 0 || imapSyncs.length > 0 || imapExtractions.length > 0}
   <div class="toast-stack">
     {#each automationRuns as run (run.executionIri)}
-      <div
+      <section
         class="automation-toast"
         class:failed={run.status === 'failed'}
+        class:cancelled={run.status === 'cancelled'}
         class:done={run.status === 'completed'}
         class:running={run.status === 'running'}
-        role="button"
-        tabindex="0"
-        onclick={() => invoke('widget_blackboard__add_widget', { widgetType: 'workflow_execution', entityId: run.executionIri, position: null, size: null, conversationId: appState.activeConversationIri }).catch(e => console.error('[toast] Failed to open widget:', e))}
-        onkeydown={(e) => e.key === 'Enter' && invoke('widget_blackboard__add_widget', { widgetType: 'workflow_execution', entityId: run.executionIri, position: null, size: null, conversationId: appState.activeConversationIri }).catch(e => console.error('[toast] Failed to open widget:', e))}
       >
         {#if run.status === 'running'}
           <div class="toast-thinking"><ThinkingDots /></div>
         {:else}
           <span class="material-symbols-outlined toast-icon">
-            {run.status === 'completed' ? 'check_circle' : 'error'}
+            {run.status === 'completed' ? 'check_circle' : run.status === 'cancelled' ? 'cancel' : 'error'}
           </span>
         {/if}
         <div class="toast-body">
           {#if run.status === 'failed'}
-            <span class="toast-label">Automation failed: <strong>{run.currentStep}</strong></span>
+            <span class="toast-label" aria-live="polite" aria-atomic="true">Falha na automação: {run.currentStep}</span>
             {#if run.error}<span class="toast-error">{run.error}</span>{/if}
+          {:else if run.status === 'cancelled'}
+            <span class="toast-label" aria-live="polite" aria-atomic="true">Automação cancelada</span>
+            {#if run.error}<span class="toast-detail">{run.error}</span>{/if}
           {:else if run.status === 'completed'}
-            <span class="toast-label">Automation completed</span>
+            <span class="toast-label" aria-live="polite" aria-atomic="true">Automação concluída</span>
           {:else}
-            <span class="toast-label">Running: <strong>{run.currentStep}</strong></span>
+            <span class="toast-label" aria-live="polite" aria-atomic="true">{run.currentStep}</span>
+            {#if run.phase}
+              <span class="toast-detail" aria-live="polite" aria-atomic="true">{materializationDescription(run)}</span>
+              {#if run.materializationStatus === 'waiting' || run.materializationStatus === 'running'}
+                {#if hasDeterminateProgress(run)}
+                  <progress class="automation-progress" max={run.totalCount} value={run.completedCount} aria-label="Progresso da atualização dos dados"></progress>
+                  <span class="toast-detail">{run.completedCount} de {run.totalCount}</span>
+                {:else}
+                  <progress class="automation-progress" aria-label="Atualizando os dados necessários"></progress>
+                {/if}
+              {/if}
+              {#if run.reason}<span class="toast-error" aria-live="polite">{run.reason}</span>{/if}
+            {/if}
           {/if}
         </div>
+        <Button variant="ghost" class="automation-action-btn" data-execution-iri={run.executionIri} onclick={openAutomationExecution}>
+          Abrir execução
+        </Button>
         {#if run.status !== 'running'}
-          <Button variant="ghost" size="icon-sm" class="toast-close" onclick={(e) => { e.stopPropagation(); automationRuns = automationRuns.filter(r => r.executionIri !== run.executionIri); }}>
+          <Button variant="ghost" size="icon-sm" class="toast-close" data-execution-iri={run.executionIri} aria-label="Fechar aviso da automação" onclick={dismissAutomationRun}>
             <span class="material-symbols-outlined">close</span>
           </Button>
         {/if}
-      </div>
+      </section>
     {/each}
 
     {#if retentionRunning}
@@ -450,7 +559,7 @@
     min-width: var(--size-toast-min-width);
     max-width: var(--size-toast-max-width);
     pointer-events: auto;
-    cursor: pointer;
+    cursor: default;
     backdrop-filter: blur(var(--blur-widget-surface));
     box-shadow: 0 var(--size-toast-shadow-y) var(--size-toast-shadow-blur) color-mix(in srgb, var(--color-black) 55%, transparent);
     transition: background-color 160ms ease, border-color 160ms ease;
@@ -473,6 +582,10 @@
     border-top-color: var(--color-toast-error);
   }
 
+  .automation-toast.cancelled {
+    border-top-color: var(--color-warning);
+  }
+
   .automation-toast.done {
     border-top-color: var(--color-toast-complete);
   }
@@ -492,6 +605,7 @@
 
   .automation-toast.failed .toast-icon { color: var(--color-toast-error); }
   .automation-toast.done .toast-icon { color: var(--color-toast-complete); }
+  .automation-toast.cancelled .toast-icon { color: var(--color-warning); }
 
   .toast-body {
     display: flex;
@@ -534,6 +648,26 @@
     font-size: var(--type-body-compact);
     color: var(--text-danger);
     word-break: break-word;
+  }
+
+  :global([data-slot="button"].automation-action-btn) {
+    color: var(--color-interactive);
+    font-family: var(--font-body);
+    font-size: var(--type-label);
+    min-height: var(--size-touch-target);
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  :global([data-slot="button"].automation-action-btn:hover) {
+    background: color-mix(in srgb, var(--color-interactive) 15%, transparent);
+    color: var(--color-interactive-hover);
+  }
+
+  .automation-progress {
+    width: 100%;
+    height: var(--size-startup-progress-height);
+    accent-color: var(--color-transition);
   }
 
   :global([data-slot="button"].toast-close) {

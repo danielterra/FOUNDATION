@@ -1,3 +1,4 @@
+use chrono::NaiveDate;
 use chrono::Utc;
 use tauri::{AppHandle, Manager};
 use tokio::runtime::Handle;
@@ -12,6 +13,184 @@ use crate::owl::{
 use super::executor::{interpolate, split_iri_lines, ExecutionContext};
 
 type Result<T> = std::result::Result<T, String>;
+
+pub(crate) fn rhai_sha256_hex(input: rhai::ImmutableString) -> String {
+    crate::files::sha256_hex(input.as_bytes())
+}
+
+pub(crate) fn rhai_replace_text(
+    input: rhai::ImmutableString,
+    from: rhai::ImmutableString,
+    to: rhai::ImmutableString,
+) -> String {
+    input.replace(from.as_str(), to.as_str())
+}
+
+pub(crate) fn rhai_normalize_money(input: rhai::ImmutableString) -> String {
+    let value = input.trim().replace("R$", "").replace(' ', "");
+    let normalized = if value.contains(',') {
+        value.replace('.', "").replace(',', ".")
+    } else {
+        value
+    };
+    let (integer, fraction) = normalized.split_once('.').unwrap_or((&normalized, ""));
+    if integer.is_empty()
+        || !integer.chars().all(|ch| ch.is_ascii_digit())
+        || !fraction.chars().all(|ch| ch.is_ascii_digit())
+        || fraction.len() > 2
+        || normalized.matches('.').count() > 1
+    {
+        return String::new();
+    }
+    let integer = integer.trim_start_matches('0');
+    let integer = if integer.is_empty() { "0" } else { integer };
+    let fraction = match fraction.len() {
+        0 => "00".to_string(),
+        1 => format!("{}0", fraction),
+        _ => fraction.to_string(),
+    };
+    let canonical = format!("{}.{}", integer, fraction);
+    if canonical.parse::<f64>().unwrap_or(0.0) <= 0.0 {
+        String::new()
+    } else {
+        canonical
+    }
+}
+
+pub(crate) fn rhai_trim_text(input: rhai::ImmutableString) -> String {
+    input.trim().to_string()
+}
+
+pub(crate) fn rhai_escape_json_content(input: rhai::ImmutableString) -> String {
+    let serialized = serde_json::to_string(input.as_str()).unwrap_or_else(|_| "\"\"".to_string());
+    serialized
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or_default()
+        .to_string()
+}
+
+pub(crate) fn rhai_normalize_date(input: rhai::ImmutableString) -> String {
+    let value = input.trim();
+    NaiveDate::parse_from_str(value, "%d/%m/%Y")
+        .or_else(|_| NaiveDate::parse_from_str(value, "%Y-%m-%d"))
+        .map(|date| date.format("%Y-%m-%d").to_string())
+        .unwrap_or_default()
+}
+
+pub(crate) fn rhai_c6_source_key(
+    account_iri: rhai::ImmutableString,
+    date: rhai::ImmutableString,
+    direction: rhai::ImmutableString,
+    amount: rhai::ImmutableString,
+    title: rhai::ImmutableString,
+    description: rhai::ImmutableString,
+    ordinal: i64,
+) -> String {
+    let normalized_amount = normalize_source_amount(amount.as_str());
+    if normalized_amount.starts_with("invalid:") {
+        return String::new();
+    }
+    let fields = [
+        normalize_source_text(account_iri.as_str()),
+        normalize_source_text(date.as_str()),
+        normalize_source_text(direction.as_str()),
+        normalized_amount,
+        normalize_source_text(title.as_str()),
+        normalize_source_text(description.as_str()),
+        ordinal.to_string(),
+    ];
+    let canonical = fields
+        .iter()
+        .map(|field| format!("{}:{}", field.len(), field))
+        .collect::<Vec<_>>()
+        .join("|");
+    format!("c6:{}", crate::files::sha256_hex(canonical.as_bytes()))
+}
+
+fn normalize_source_text(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn normalize_source_amount(value: &str) -> String {
+    let normalized = value.trim().replace(',', ".");
+    let (integer, fraction) = normalized.split_once('.').unwrap_or((&normalized, ""));
+    if integer.is_empty()
+        || !integer.chars().all(|ch| ch.is_ascii_digit())
+        || !fraction.chars().all(|ch| ch.is_ascii_digit())
+        || fraction.len() > 2
+        || normalized.matches('.').count() > 1
+    {
+        return format!("invalid:{}", normalized);
+    }
+    let integer = integer.trim_start_matches('0');
+    let integer = if integer.is_empty() { "0" } else { integer };
+    let fraction = match fraction.len() {
+        0 => "00".to_string(),
+        1 => format!("{}0", fraction),
+        _ => fraction.to_string(),
+    };
+    format!("{}.{}", integer, fraction)
+}
+
+pub(crate) fn rhai_parse_csv_record(input: rhai::ImmutableString) -> String {
+    let result = parse_csv_record(input.as_str());
+    match result {
+        Ok(fields) => serde_json::json!({"success": true, "fields": fields}).to_string(),
+        Err(error) => serde_json::json!({"success": false, "error": error}).to_string(),
+    }
+}
+
+fn parse_csv_record(input: &str) -> Result<Vec<String>> {
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut chars = input.chars().peekable();
+    let mut quoted = false;
+    let mut quote_closed = false;
+
+    while let Some(ch) = chars.next() {
+        if quoted {
+            if ch == '"' {
+                if chars.peek() == Some(&'"') {
+                    field.push('"');
+                    chars.next();
+                } else {
+                    quoted = false;
+                    quote_closed = true;
+                }
+            } else {
+                field.push(ch);
+            }
+            continue;
+        }
+
+        match ch {
+            ',' => {
+                fields.push(std::mem::take(&mut field));
+                quote_closed = false;
+            }
+            '"' if field.trim().is_empty() && !quote_closed => {
+                field.clear();
+                quoted = true;
+            }
+            '\r' | '\n' if chars.peek().is_none() => {}
+            _ if quote_closed && ch.is_whitespace() => {}
+            _ if quote_closed => return Err("texto inesperado após campo entre aspas".to_string()),
+            _ => field.push(ch),
+        }
+    }
+
+    if quoted {
+        return Err("campo entre aspas não foi fechado".to_string());
+    }
+
+    fields.push(field);
+    Ok(fields)
+}
 
 pub async fn execute_code_task(
     app: &AppHandle,
@@ -248,6 +427,14 @@ pub(crate) fn run_script(
     let mut engine = rhai::Engine::new();
     engine.set_max_operations(1_000_000);
     engine.set_max_string_size(10 * 1024 * 1024);
+    engine.register_fn("sha256_hex", rhai_sha256_hex);
+    engine.register_fn("replace_text", rhai_replace_text);
+    engine.register_fn("normalize_money", rhai_normalize_money);
+    engine.register_fn("trim_text", rhai_trim_text);
+    engine.register_fn("escape_json_content", rhai_escape_json_content);
+    engine.register_fn("normalize_date", rhai_normalize_date);
+    engine.register_fn("c6_source_key", rhai_c6_source_key);
+    engine.register_fn("csv_parse_record", rhai_parse_csv_record);
 
     let dry_run = ctx.get("dryRun").map(|v| v == "true").unwrap_or(false);
 
@@ -519,6 +706,14 @@ mod tests {
     fn test_engine(ctx: ExecutionContext) -> rhai::Engine {
         let mut engine = rhai::Engine::new();
         engine.set_max_operations(1_000_000);
+        engine.register_fn("sha256_hex", rhai_sha256_hex);
+        engine.register_fn("replace_text", rhai_replace_text);
+        engine.register_fn("normalize_money", rhai_normalize_money);
+        engine.register_fn("trim_text", rhai_trim_text);
+        engine.register_fn("escape_json_content", rhai_escape_json_content);
+        engine.register_fn("normalize_date", rhai_normalize_date);
+        engine.register_fn("c6_source_key", rhai_c6_source_key);
+        engine.register_fn("csv_parse_record", rhai_parse_csv_record);
         engine.register_fn(
             "mcp",
             |_: rhai::ImmutableString, _: rhai::ImmutableString| -> String {
@@ -534,6 +729,97 @@ mod tests {
         });
         engine.register_fn("log", |_msg: rhai::ImmutableString| {});
         engine
+    }
+
+    #[test]
+    fn csv_record_parser_supports_quoted_commas_and_escaped_quotes() {
+        assert_eq!(
+            parse_csv_record(r#"2026-01-02,"Compra, mercado","Ele disse ""oi""""#).unwrap(),
+            vec![
+                "2026-01-02".to_string(),
+                "Compra, mercado".to_string(),
+                "Ele disse \"oi\"".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn csv_record_parser_rejects_unclosed_quotes() {
+        assert!(parse_csv_record("2026-01-02,\"incompleto").is_err());
+    }
+
+    #[test]
+    fn c6_source_key_is_stable_after_normalization_and_sensitive_to_occurrence() {
+        let first = rhai_c6_source_key(
+            " account  123 ".into(),
+            "2026-01-02".into(),
+            "debit".into(),
+            "0005,0".into(),
+            " MERCADO   CENTRAL ".into(),
+            " COMPRA,   CARTAO ".into(),
+            1,
+        );
+        let normalized = rhai_c6_source_key(
+            "account 123".into(),
+            "2026-01-02".into(),
+            "DEBIT".into(),
+            "5.00".into(),
+            "mercado central".into(),
+            "compra, cartao".into(),
+            1,
+        );
+        let duplicate = rhai_c6_source_key(
+            "account 123".into(),
+            "2026-01-02".into(),
+            "debit".into(),
+            "5.00".into(),
+            "mercado central".into(),
+            "compra, cartao".into(),
+            2,
+        );
+        assert_eq!(first, normalized);
+        assert_ne!(first, duplicate);
+        assert!(first.starts_with("c6:sha256:"));
+        assert_eq!(
+            rhai_c6_source_key(
+                "account".into(),
+                "2026-01-02".into(),
+                "debit".into(),
+                "5.123".into(),
+                "title".into(),
+                "description".into(),
+                1,
+            ),
+            ""
+        );
+    }
+
+    #[test]
+    fn sha256_helper_returns_prefixed_digest() {
+        assert_eq!(
+            rhai_sha256_hex("abc".into()),
+            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn c6_money_normalizer_handles_decimal_and_grouping_separators() {
+        assert_eq!(rhai_normalize_money("12,50".into()), "12.50");
+        assert_eq!(rhai_normalize_money("1.234,5".into()), "1234.50");
+        assert_eq!(rhai_normalize_money("1234.50".into()), "1234.50");
+        assert_eq!(rhai_normalize_money("12,345".into()), "");
+    }
+
+    #[test]
+    fn json_content_escaper_omits_surrounding_quotes_and_escapes_content() {
+        assert_eq!(rhai_escape_json_content("a\"b".into()), "a\\\"b");
+    }
+
+    #[test]
+    fn bank_date_normalizer_rejects_invalid_dates() {
+        assert_eq!(rhai_normalize_date("02/11/2026".into()), "2026-11-02");
+        assert_eq!(rhai_normalize_date("2026-11-02".into()), "2026-11-02");
+        assert_eq!(rhai_normalize_date("31/02/2026".into()), "");
     }
 
     #[test]

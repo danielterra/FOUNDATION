@@ -179,8 +179,8 @@ pub(super) fn run_atomic(
     }
 }
 
-fn dispatch_formula_recalcs(conn: &Connection, app: &tauri::AppHandle) {
-    use crate::owl::formula_worker::{FormulaWorker, WorkerCommand};
+fn dispatch_formula_recalcs(_conn: &Connection, app: &tauri::AppHandle) {
+    use crate::commands::formula_worker::{FormulaWorker, WorkerCommand};
     use tauri::Manager;
 
     let worker = match app.try_state::<FormulaWorker>() {
@@ -192,22 +192,37 @@ fn dispatch_formula_recalcs(conn: &Connection, app: &tauri::AppHandle) {
         }
     };
 
-    for property_iri in take_property_recalcs() {
-        if let Some(job_id) =
-            crate::owl::formula_worker::cancel_and_create_property_job(conn, &property_iri)
-        {
-            let _ = worker.sender.try_send(WorkerCommand::Enqueue { job_id });
+    let properties = take_property_recalcs();
+    let instances = take_instance_recalcs();
+    let executor = match app.try_state::<crate::owl::DbExecutor>() {
+        Some(executor) => executor.inner().clone(),
+        None => return,
+    };
+    let sender = worker.sender.clone();
+    tauri::async_runtime::spawn(async move {
+        for property_iri in properties {
+            match crate::commands::formula_worker::cancel_and_create_property_job(
+                &executor,
+                &property_iri,
+            )
+            .await
+            {
+                Ok(job_id) => {
+                    let _ = sender.try_send(WorkerCommand::Enqueue { job_id });
+                }
+                Err(error) => crate::commands::log_backend(
+                    "error",
+                    &format!(
+                        "Failed to enqueue formula property recalculation {property_iri}: {error}"
+                    ),
+                ),
+            }
         }
-    }
-
-    for (instance_iri, changed_property_iri) in take_instance_recalcs() {
-        let job_ids = crate::owl::formula_worker::create_instance_recalc_jobs(
-            conn,
-            &instance_iri,
-            &changed_property_iri,
-        );
-        for job_id in job_ids {
-            let _ = worker.sender.try_send(WorkerCommand::Enqueue { job_id });
+        for (instance_iri, changed_property_iri) in instances {
+            match crate::commands::formula_worker::create_instance_recalc_jobs(&executor, &instance_iri, &changed_property_iri).await {
+                Ok(job_ids) => for job_id in job_ids { let _ = sender.try_send(WorkerCommand::Enqueue { job_id }); },
+                Err(error) => crate::commands::log_backend("error", &format!("Failed to enqueue formula instance recalculation for {instance_iri}: {error}")),
+            }
         }
-    }
+    });
 }

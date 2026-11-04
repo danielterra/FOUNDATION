@@ -4,6 +4,7 @@
 - ALWAYS update this file immediately when user corrects you or states a preference.
 - NEVER use project memory files (`memory/`, `MEMORY.md`). ALL project learnings, feedback and preferences live in THIS file (`AGENTS.md`) as the repository source of truth.
 - ALWAYS respond to the user in Portuguese.
+- ALWAYS keep progress updates short and direct.
 - ALWAYS ask one validation item at a time, NEVER several at once. Use structured input when available for optional choices; when an answer is required to proceed, ask one concise plain-text question.
 - ALWAYS create a new branch when starting a new work item, naming it exactly for the target release version (`MAJOR.MINOR.PATCH`); default to the next minor version (`MAJOR.(MINOR+1).0`).
 - NEVER create a patch or major release branch unless the user explicitly requests that release type.
@@ -20,12 +21,21 @@
 
 ## Design defaults — pre-production
 - NEVER add fallback paths, backward-compatibility shims, legacy branches or graceful-degradation defaults without EXPRESS user permission — the system is pre-production.
+- ALWAYS require a successful email account test during initial setup; the email address is the person's canonical identity.
 - ALWAYS implement ONE canonical behavior; when the model changes, migrate existing data/individuals to the new model instead of branching to keep the old one working.
 - ALWAYS surface any design tension that tempts a fallback and ask the user before adding one.
 - NEVER add a fallback/default branch in render dispatch maps either (e.g. a `bpmn_FlowNode → NodeTask` catch-all in a frontend node-type map) — fix the real cause so every concrete type maps to its own component; a missing mapping is a bug to fix, not to mask.
 
 ## Visual language
 - ALWAYS preserve the reviewed Oblivion canvas texture: a black field with a subtle, evenly spaced cyan dot grid behind widgets.
+- ALWAYS keep the floating widgets menu collapsed to its smallest useful affordance while the pointer is outside; expand it on hover and collapse it when the pointer leaves.
+- ALWAYS animate floating widgets menu expansion and collapse smoothly; align the compact icon and count; constrain the panel to a maximum width and wrap long widget names within it.
+
+## Product communication
+- ALWAYS ground positioning in sovereignty/privacy/security, efficiency, and visual collaboration; start with the founding purpose.
+- ALWAYS explain ontology as structured, connected knowledge; explain reactive automation as avoiding repeated agent work and Subconscious as surfacing relevant context.
+- ALWAYS present the blackboard as a shared visual workspace for people and agents, reducing text overload.
+- NEVER publish absolute offline, security, performance, or token-saving claims without verifying their scope and evidence.
 
 ## Foundation vocabulary — domain entities
 - `foundation:Project` / `foundation:SoftwareFeature` / `foundation:UserStory` / `foundation:ArchitectureDecisionRecord` (ADR) — work planning.
@@ -54,8 +64,14 @@
 
 ## Product status integrity
 - ALWAYS read the current Feature → UserStory → AcceptanceCriterion graph through Foundation MCP before changing a status.
+- ALWAYS enumerate the complete linked AcceptanceCriterion set before QA; when an MCP relation view is capped, use paginated or reverse relation queries and never treat a truncated list as complete.
 - ALWAYS keep status separate from implementation evidence; source code or a changelog alone NEVER proves an AcceptanceCriterion passed.
 - ALWAYS record concrete QA evidence for every AcceptanceCriterion moved to `foundation:Completed`.
+- ALWAYS update each AcceptanceCriterion's status immediately when QA confirms its result; update the UserStory to `foundation:Completed` in that same QA pass once every in-scope criterion is Completed and required checks pass.
+- ALWAYS persist and read back each AcceptanceCriterion's status and evidence as soon as its individual QA result is known; never defer AC status updates until the end of the test run.
+- ALWAYS verify the QA changelog entry after writing it; when `describe_individual` or `read_property_page` truncates a multi-valued property, confirm the entry through a property-value search before concluding it is absent. Keep the parent Blocked only when all supported readback paths fail to find it.
+- ALWAYS finish the parent status in the same QA pass: `foundation:Completed` when all in-scope ACs pass and required checks are green; `foundation:Status_1773581282341` when an AC fails and a fix is required; `foundation:Blocked` when validation cannot continue without an external action.
+- ALWAYS reserve `foundation:Status_1772600993751` for QA that is actively testing; do not leave a story in QA after the pass ends with an unresolved external blocker.
 - ALWAYS let QA set a UserStory to `foundation:Completed` only after every current in-scope AcceptanceCriterion is Completed, none is Pending or Rejected, and required automated and visual checks pass.
 - ALWAYS return a Completed or QA UserStory to `foundation:Status_1773581282341` before planning when an AcceptanceCriterion is added or changed after validation.
 - ALWAYS return a Feature to `foundation:Status_1773581282341` when a verified change contradicts its delivered `successCriteria`; record the code and criterion evidence in its changelog.
@@ -77,6 +93,7 @@
 - `developer-backend` owns `src-tauri/**` (Rust/Tauri, MCP, ontology mutations via MCP). NEVER touches `src/**`.
 - `developer-frontend` owns `src/**` (Svelte 5, TS, widgets, realtime subscriptions). NEVER touches `src-tauri/**`.
 - **`qa` is the SINGLE gate before Concluído — for User Stories AND Bugs.** NEVER move a US or Bug from Em Progresso / Em Validação (QA) directly to Concluído without `qa` validation. `qa` enters when `architect` finishes Execução / Triagem; `devops` enters after for code review / security / release. NEITHER edits feature code.
+- ALWAYS have the implementation workflow invoke QA immediately after the architect hands off a story to Em Validação; QA owns per-AC evidence and status writes, then reads back the complete status set before reporting.
 - Skills `$userstory-plan`, `$userstory-implement`, `$bug-fix` are thin proxies: they invoke `architect` (and `support` for bugs). NEVER duplicate the protocol inside the skills.
 - Skills `$feature-plan` and `$feature-implement` orchestrate per-US via the userstory skills, so they inherit the hierarchy automatically.
 - ALWAYS use `.agents/skills/product-integrity-audit/SKILL.md` as the read-only status audit procedure; release and code-sync workflows invoke it.
@@ -89,6 +106,7 @@
 
 ## Database
 - NEVER delete the database.
+- ALWAYS create a consistent backup before user-authorized local diagnostic mutations when the user accepts test-data risk; mark test data uniquely and clean up only those test-created individuals via MCP after evidence is recorded.
 - NEVER run INSERT/UPDATE/DELETE/DROP/TRUNCATE without explicit user confirmation — SELECT only.
 - ALWAYS use MCP tools for ALL DB access (reads and writes) — never raw SQL.
 - If app is not running, report findings and wait for user to start it.
@@ -153,6 +171,9 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 - If the app is down and Codex needs it (MCP, QA, validation), start it via `$server-start` — do not ask the user.
 - Vite SSR zombie (`transport invoke timed out ... vite:invoke fetchModule`, or boot stalled at `MCP server listening` with no `[STARTUP]`/`[FRONTEND]` lines): run `$server-restart` with cache clean (`node_modules/.vite` + `.svelte-kit`) — recurring issue.
 
+## Application window
+- ALWAYS start the desktop app with its window maximized to the available display bounds on every launch.
+
 ## Dev commands
 - ALWAYS rely on automatic rebuild — the running `tauri dev` recompiles on every Rust file change; no restart needed after a backend edit.
 - NEVER run `npm run build` — production builds only via release flow.
@@ -184,6 +205,7 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 - ALWAYS continue work on branch `0.22.0` until the user publishes it; NEVER create a new release branch before publication.
 
 ## Blackboard / Lousa
+- ALWAYS when a user clicks an entity reference in an Inspector, open its widget immediately at the top of the active blackboard stack; if a widget for that entity already exists, promote it instead of creating a duplicate.
 - ALWAYS resolve the blackboard from the conversation currently open in the Foundation app UI; NEVER assume a hardcoded or main conversation is the active one.
 - ALWAYS verify newly created Foundation stories and artifacts are visibly present on that conversation's blackboard before reporting completion.
 - `add_widget_to_blackboard` takes `blackboard_iri` (a `foundation:Blackboard`), NOT a conversation IRI. Omit → DefaultBlackboard.
@@ -207,8 +229,10 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 - MCP Foundation unavailable: FIRST check whether the dev server is alive (`pm2 describe foundation-dev` plus `pgrep -fl FOUNDATION` on macOS/Linux or `Get-Process FOUNDATION` on Windows). If it is down, Codex owns the lifecycle and starts it via `$server-start`. Only when the server is running treat the failure as transient: wait 60–180s and retry automatically. NEVER fall back to curl/SQLite and NEVER ask the user to reconnect. MCP availability is session-specific; if a subagent lacks a required Foundation tool, it returns the pending ontology operation to the primary agent or another MCP-capable role instead of inventing a fallback.
 
 ## Code style
-- ALWAYS use named functions; NEVER use closures in any circumstance.
+- ALWAYS use `json-render.dev` with `@json-render/core` and `@json-render/svelte` for AI-generated custom widgets; maintain one canonical catalog of all eligible reusable UI components and allowed props/actions.
+- ALWAYS allow closures until the planned closures-to-named-functions refactor is complete; only reintroduce the named-functions-only rule after that refactor.
 - ALWAYS paginate EVERY method/command/MCP tool that returns a collection with STABLE pagination = `snapshot_tx` + `ORDER BY` domain-key + offset/keyset INSIDE the snapshot. (1) Pin `snapshot_tx = MAX(tx)` on the FIRST page and echo it on every later page. (2) Read every page AS-OF snapshot_tx: BOTH membership as-of (the membership triple's `MAX(tx) <= snapshot_tx` and not retracted) AND the ordering-key value as-of (key's value at `MAX(tx) <= snapshot_tx`) — freezing only one re-introduces mid-scroll reordering. (3) `ORDER BY` the list's natural DOMAIN key (`foundation:lastUpdatedAt` for activity, `foundation:createdAt`, `rdfs:label`, `foundation:receivedAt`…), NEVER `tx`. (4) With the dataset frozen, offset is stable again (offset only broke because a new row entered the top — the snapshot removes that). Return `{ items, next_cursor, has_more, snapshot_tx }`. The frontend pins snapshot_tx on page 1 and passes it back. NEVER load-all-then-slice, NEVER return an unbounded list. Rationale + revision recorded in the pagination ADR (`foundation:ArchitectureDecisionRecord_1781556688201`).
+- ALWAYS make pagination explicit to the user: show that more results exist, how many are available when known, and a clear next/load-more control or page indicator; APIs must expose `has_more` and a continuation cursor. NEVER silently truncate a list/property/relation or present a partial page as complete.
 - `tx` is the ordering key ONLY for create-immutable entities whose natural order IS creation-recency (`RawDataRecord`, `AIAPICall`, IMAP sync log): there `ORDER BY creation_tx DESC` is the domain key and keyset-by-creation_tx is correct. NEVER use `tx` as the ordering key for lists ordered by a mutable/domain key (AI models by default/alpha, conversations by activity).
 - The pagination `snapshot_tx` and the realtime-replay `setSinceTx` share the value `MAX(tx)` but are DISTINCT in purpose (frozen past vs live future) — complementary, they converge in the UI. Do NOT conflate them.
 - Bounded low-cardinality single-page lists (AI services/models pickers, agents, IMAP accounts, applicable properties) MAY freeze membership-as-of only and accept the current ordering key — there is no page 2 where instability shows. If such a list ever grows to real pagination, promote it to true snapshot. Apply the bound in SQL (`LIMIT`), NEVER load-all-then-slice.
@@ -228,6 +252,8 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 - ALWAYS place inspector property labels above their values to preserve horizontal space; align each value's left edge with its label and keep consistent vertical spacing between them.
 - ALWAYS keep the chat panel and open-widgets menu visually consistent with widget frames: dark square surfaces and restrained cyan corner accents.
 - ALWAYS define color and typography-size tokens only in `src/app.css`; components consume semantic tokens and never declare ad hoc colors or font sizes.
+- ALWAYS ensure syntax-highlighting token colors are vivid and clearly distinguishable in the rendered inspector; if users cannot distinguish them, strengthen semantic design-system tokens in `src/app.css` and validate in the integrated browser.
+- ALWAYS use a recognizable language-brand icon as the visible identifier when one is available; keep its name in a tooltip and accessible label instead of repeating it as visible text.
 - ALWAYS define spacing tokens semantically in `src/app.css`; components consume those tokens for control internals, related items, field groups, and section separation instead of ad hoc spacing values.
 - ALWAYS keep a field label visually close to its value/content; use minimal spacing within a related label-value pair and reserve larger spacing for separate fields or sections.
 - ALWAYS keep widget-control glyphs aligned to the sidebar icon size and give touch-operated icon buttons at least a 44px target.

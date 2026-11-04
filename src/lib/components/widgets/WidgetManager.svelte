@@ -18,6 +18,7 @@
   import NotificationCenterWidget from './NotificationCenterWidget.svelte';
   import AICallHistoryWidget from './AICallHistoryWidget.svelte';
   import EmailViewerWidget from './EmailViewerWidget.svelte';
+  import JsonRenderWidget from './JsonRenderWidget.svelte';
   import WidgetSidebar from './WidgetSidebar.svelte';
 
   let { activeBlackboardIri = null, activeConversationIri = null } = $props();
@@ -42,9 +43,13 @@
   let topZIndex = $state(BASE_WIDGET_Z_INDEX);
   let viewportWidth = $state(0);
   let viewportHeight = $state(0);
+  let reducedMotion = $state(false);
+  let motionPreference = null;
   const premaximizePosition = new Map();
   const preminimizeState = new Map();
   const widgetDefaultSize = new Map();
+  const pendingInspectorOpens = new Set();
+  let widgetAnnouncement = $state('');
 
   const widgetTypeInfo = new Map();
 
@@ -187,6 +192,49 @@
     widgets = widgets.map(w =>
       w.id === widgetId ? { ...w, zIndex: topZIndex } : w
     );
+  }
+
+  function inspectorOpenKey(entityIri) {
+    return `${activeBlackboardIri ?? 'default'}:inspector:${entityIri}`;
+  }
+
+  async function openOrPromoteInspector(entityIri) {
+    if (!entityIri) return;
+
+    const existing = widgets.find(widget =>
+      widget.blackboard_iri === activeBlackboardIri &&
+      widget.widget_type === 'inspector' &&
+      widget.entity_id === entityIri
+    );
+
+    if (existing) {
+      if (existing.window_state === 'minimized') restoreFromMinimized(existing.id);
+      else bringToFront(existing.id);
+      widgetAnnouncement = `Inspector promovido para o topo: ${entityResolutionByIri.get(entityIri)?.label ?? entityIri}`;
+      return;
+    }
+
+    const key = inspectorOpenKey(entityIri);
+    if (pendingInspectorOpens.has(key)) {
+      widgetAnnouncement = 'Inspector já está sendo aberto.';
+      return;
+    }
+
+    pendingInspectorOpens.add(key);
+    widgetAnnouncement = `Abrindo inspector: ${entityResolutionByIri.get(entityIri)?.label ?? entityIri}`;
+    try {
+      await invoke('widget_blackboard__add_widget', {
+        widgetType: 'inspector',
+        entityId: entityIri,
+        position: null,
+        size: null,
+        conversationId: activeConversationIri ?? null,
+      });
+    } catch (error) {
+      pendingInspectorOpens.delete(key);
+      widgetAnnouncement = 'Não foi possível abrir o inspector.';
+      console.error('Failed to open entity inspector:', error);
+    }
   }
 
   function startResize(event, widget) {
@@ -377,14 +425,15 @@
     const w = event.payload;
     if (w.blackboard_iri !== activeBlackboardIri) return;
 
+    if (w.widget_type === 'inspector' && w.entity_id) {
+      pendingInspectorOpens.delete(inspectorOpenKey(w.entity_id));
+      widgetAnnouncement = `Inspector aberto: ${entityResolutionByIri.get(w.entity_id)?.label ?? w.entity_id}`;
+    }
+
     widgetLoadRequestId += 1;
     const existingIdx = widgets.findIndex(existing => existing.id === w.id);
     if (existingIdx >= 0) {
       bringToFront(w.id);
-      widgets = widgets.map(existing =>
-        existing.id === w.id ? { ...existing, refreshKey: (existing.refreshKey ?? 0) + 1 } : existing
-      );
-      loadWidgets(activeBlackboardIri);
       return;
     }
 
@@ -392,7 +441,6 @@
     const newWidget = { ...w, zIndex: topZIndex };
     newWidget.position = constrainToBounds(newWidget.position, newWidget.size, newWidget.size.height);
     widgets = [...widgets, newWidget];
-    loadWidgets(activeBlackboardIri);
   }
 
   function handleWidgetRemoved(event) {
@@ -410,8 +458,15 @@
     for (const unlisten of listeners) unlisten();
   }
 
+  function updateMotionPreference() {
+    reducedMotion = motionPreference?.matches ?? false;
+  }
+
   async function initializeWidgetManager() {
     updateViewportSize();
+    motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    updateMotionPreference();
+    motionPreference.addEventListener('change', updateMotionPreference);
 
     const registeredListeners = await Promise.all([
       listen('widget-added', handleWidgetAdded),
@@ -445,6 +500,7 @@
 
   function cleanupWidgetManager() {
     managerDestroyed = true;
+    motionPreference?.removeEventListener('change', updateMotionPreference);
     removeListeners(unlisteners);
     document.removeEventListener('mousemove', onDrag);
     document.removeEventListener('mouseup', stopDrag);
@@ -466,6 +522,7 @@
     />
   {/if}
   <div class="widget-canvas" bind:clientWidth={viewportWidth} bind:clientHeight={viewportHeight}>
+    <div class="sr-only" aria-live="polite" aria-atomic="true">{widgetAnnouncement}</div>
 {#each widgets.filter(w => w.window_state !== 'minimized') as widget (widget.id)}
   <div
     class="widget-container"
@@ -485,8 +542,8 @@
     role="dialog"
     tabindex="0"
     aria-label="Widget"
-    in:fly={{ x: -viewportWidth, duration: WIDGET_FLY_DURATION, opacity: 1, easing: cubicOut }}
-    out:fly={{ x: -viewportWidth, duration: WIDGET_FLY_DURATION, opacity: 1, easing: cubicIn }}
+    in:fly={{ x: -viewportWidth, duration: reducedMotion ? 0 : WIDGET_FLY_DURATION, opacity: 1, easing: cubicOut }}
+    out:fly={{ x: -viewportWidth, duration: reducedMotion ? 0 : WIDGET_FLY_DURATION, opacity: 1, easing: cubicIn }}
   >
     <div
       class="resize-handle"
@@ -496,7 +553,7 @@
       onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && startResize(e, widget)}
     ></div>
     {#if widget.widget_type === 'inspector'}
-      <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} refreshKey={widget.refreshKey ?? 0} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} conversationIri={activeConversationIri} />
+      <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} refreshKey={widget.refreshKey ?? 0} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} onOpenEntityInspector={openOrPromoteInspector} conversationIri={activeConversationIri} />
     {:else if widget.widget_type === 'mermaid'}
       <MermaidWidget widgetId={widget.id} entityId={widget.entity_id} conversationIri={activeConversationIri} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {:else if widget.widget_type === 'process_status'}
@@ -523,6 +580,8 @@
       <AICallHistoryWidget widgetId={widget.id} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {:else if widget.widget_type === 'email_viewer'}
       <EmailViewerWidget widgetId={widget.id} entityId={widget.entity_id} conversationIri={activeConversationIri} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
+    {:else if widget.widget_type === 'json_render'}
+      <JsonRenderWidget widgetId={widget.id} entityId={widget.entity_id} conversationIri={activeConversationIri} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {/if}
   </div>
 {/each}
@@ -538,6 +597,18 @@
     height: 100%;
     overflow: hidden;
     gap: 5px;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .widget-canvas {
@@ -556,8 +627,16 @@
     transition:
       height 0.25s cubic-bezier(0.4, 0, 0.2, 1),
       transform 560ms cubic-bezier(0.16, 1, 0.3, 1),
+      opacity 560ms cubic-bezier(0.16, 1, 0.3, 1),
       box-shadow 560ms cubic-bezier(0.16, 1, 0.3, 1);
+    opacity: var(--widget-depth-scale);
     box-shadow: 0px 0px 10px var(--background);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .widget-container {
+      transition: none;
+    }
   }
 
   .widget-container.is-front {

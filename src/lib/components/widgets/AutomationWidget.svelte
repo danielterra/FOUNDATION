@@ -2,13 +2,14 @@
   import { onMount, onDestroy } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
   import { listen } from '@tauri-apps/api/event'
-  import { createEntitySubscription } from '$lib/realtime/subscriptions'
+  import { createEntitySubscription, type EntityEvent } from '$lib/realtime/subscriptions'
   import { openEntity } from '$lib/blackboard'
   import { SvelteFlow, Controls, Background, BackgroundVariant } from '@xyflow/svelte'
   import '@xyflow/svelte/dist/style.css'
   import { applyDagreLayout } from './automation/layout.js'
   import WidgetContainer from './WidgetContainer.svelte'
   import { Button } from '$lib/components/ui/button'
+  import ExecutionHistory from './automation/ExecutionHistory.svelte'
   import NodeStartEvent        from './automation/NodeStartEvent.svelte'
   import NodeTimerStartEvent   from './automation/NodeTimerStartEvent.svelte'
   import NodeEndEvent     from './automation/NodeEndEvent.svelte'
@@ -25,6 +26,30 @@
     done: number
     failed: number
     total: number | null
+  }
+
+  interface AutomationProgressPayload {
+    executionIri: string
+    stepIri: string
+    nodeIri: string
+    nodeLabel?: string
+    status: 'started' | 'completed' | 'failed' | 'waiting' | 'running' | 'cancelled'
+    phase?: 'query-properties' | 'calculated-properties'
+    entityIri?: string
+    propertyIri?: string
+    completedCount?: number
+    totalCount?: number
+    reason?: string
+    error?: string
+    iterationOf?: string
+    iterationIndex?: number
+    iterationTotal?: number
+  }
+
+  interface AutomationFinishedPayload {
+    executionIri: string
+    status: 'completed' | 'failed' | 'cancelled'
+    error?: string
   }
 
   let { widgetId, entityId, windowState = 'normal', onWindowStateChange, conversationIri = null } = $props()
@@ -51,12 +76,18 @@
   let error = $state(null)
   let hoveredNodeId = $state(null)
   let running = $state(false)
+  let activeTab = $state<'flow' | 'history'>('flow')
 
   let execNodeStatus = $state(new Map<string, { statusLabel: string; statusColor: string; statusIcon: string }>())
   let batchProgressMap = $state(new Map<string, BatchProgress>())
   let iterationOfToNodeId = new Map<string, string>()
   let activeExecutionIri = $state<string | null>(null)
   let activeStepLabel = $state<string | null>(null)
+  let activeStepPhase = $state<'query-properties' | 'calculated-properties' | null>(null)
+  let activeMaterializationStatus = $state<'waiting' | 'running' | 'completed' | 'failed' | 'cancelled' | null>(null)
+  let activeMaterializationProgress = $state<{ completedCount?: number; totalCount?: number } | null>(null)
+  let executionOutcome = $state<'completed' | 'failed' | 'cancelled' | null>(null)
+  let activeNodeIri: string | null = null
 
   const nodesWithExecStatus = $derived(
     execNodeStatus.size === 0 && batchProgressMap.size === 0
@@ -101,6 +132,7 @@
   let watchedIris = new Set()
   // Execution-scoped subscription for StepExecution entities.
   let execSub = null
+  let execStepIris = new Set()
 
   const entitySub = createEntitySubscription(async (event) => {
     if (event.type === 'joined-set') {
@@ -256,135 +288,195 @@
     await invoke('widget_blackboard__remove_widget', { widgetId }).catch(() => {})
   }
 
-  onMount(async () => {
-    await loadGraph()
-    unlistenExecStarted = await listen('automation-execution-started', (event) => {
-      if ((event.payload as Record<string, unknown>).processIri !== entityId) return
-      const execIri = (event.payload as Record<string, unknown>).executionIri as string
-      activeExecutionIri = execIri
-      execNodeStatus = new Map()
-      batchProgressMap = new Map()
-      iterationOfToNodeId = new Map()
-      activeStepLabel = null
-      running = true
-      // Register creation-query for new StepExecution entities belonging to this execution (US5).
-      // The stream remains the source of truth for the toast (ephemeral progress).
-      // The entity subscription is the source of truth for the persistent status (inspector).
-      if (execSub) execSub.destroy()
-      const execStepIris = new Set()
-      execSub = createEntitySubscription((event) => {
-        if (event.type === 'joined-set' && event.predicate === 'foundation:belongsToExecution') {
-          // A new step entered this execution — subscribe to its updates.
-          const stepIri = event.entityId
-          if (execStepIris.has(stepIri)) return
-          execStepIris.add(stepIri)
-          execSub.setIris([...execStepIris])
-          return
-        }
-        if (event.type === 'updated') {
-          // A StepExecution was updated — reflect its persisted status in the node overlay.
-          // The stream already showed ephemeral progress; this ensures the final state is durable.
-          const stepIri = event.entityId
-          invoke('inspector__get_entity', { entityId: stepIri }).then((resultStr) => {
-            const data = JSON.parse(resultStr as string)
-            const props = data?.properties ?? []
-            const statusProp = props.find(p => p.property === 'foundation:hasStatus')
-            const execStepProp = props.find(p => p.property === 'foundation:executesStep')
-            const nodeIri = execStepProp?.value ?? null
-            if (!nodeIri) return
-            const statusIri = statusProp?.value ?? ''
-            // Map ontology status to display values.
-            let statusLabel, statusColor, statusIcon
-            if (statusIri.includes('Falhou') || statusIri.includes('1772993026091')) {
-              statusLabel = 'Failed'; statusColor = 'var(--color-danger)'; statusIcon = 'error'
-            } else if (statusIri === 'foundation:Completed' || statusIri.includes('Concluído')) {
-              statusLabel = 'Done'; statusColor = 'var(--color-success)'; statusIcon = 'check_circle'
-            } else {
-              statusLabel = 'Running'; statusColor = 'var(--color-warning)'; statusIcon = 'progress_activity'
-            }
-            const map = new Map(execNodeStatus)
-            map.set(nodeIri, { statusLabel, statusColor, statusIcon })
-            execNodeStatus = map
-          }).catch(() => {})
-        }
-      })
-      execSub.setCreationQueries([{
-        classIri: 'foundation:StepExecution',
-        predicate: 'foundation:belongsToExecution',
-        objectValue: execIri,
-      }])
-    })
-    unlistenStepProgress = await listen('automation-step-progress', (event) => {
-      const payload = event.payload as {
-        executionIri: string
-        nodeIri: string
-        nodeLabel: string
-        status: 'started' | 'completed' | 'failed'
-        iterationOf?: string
-        iterationIndex?: number
-        iterationTotal?: number
+  function materializationPhaseLabel(phase, status) {
+    if (status === 'failed') return 'Falha ao atualizar os dados necessários'
+    if (status === 'cancelled') return 'Atualização dos dados cancelada'
+    if (status === 'completed') return 'Dados atualizados'
+    if (phase === 'query-properties') return 'Atualizando propriedades relacionadas'
+    return 'Atualizando propriedades calculadas'
+  }
+
+  function hasDeterminateProgress(progress) {
+    return progress?.completedCount !== undefined
+      && progress?.totalCount !== undefined
+      && progress.totalCount > 0
+      && progress.completedCount >= 0
+      && progress.completedCount <= progress.totalCount
+  }
+
+  async function loadStepStatus(stepIri) {
+    const resultStr = await invoke('inspector__get_entity', { entityId: stepIri })
+    const data = JSON.parse(resultStr as string)
+    const props = data?.properties ?? []
+    const statusProp = props.find(p => p.property === 'foundation:hasStatus')
+    const execStepProp = props.find(p => p.property === 'foundation:executesStep')
+    const nodeIri = execStepProp?.value ?? null
+    if (!nodeIri) return
+    const statusIri = statusProp?.value ?? ''
+    let statusLabel, statusColor, statusIcon
+    if (statusIri.includes('Falhou') || statusIri.includes('1772993026091')) {
+      statusLabel = 'Failed'; statusColor = 'var(--color-danger)'; statusIcon = 'error'
+    } else if (statusIri === 'foundation:Status_1772570972069') {
+      statusLabel = 'Cancelled'; statusColor = 'var(--color-warning)'; statusIcon = 'cancel'
+    } else if (statusIri === 'foundation:Completed' || statusIri.includes('Concluído')) {
+      statusLabel = 'Done'; statusColor = 'var(--color-success)'; statusIcon = 'check_circle'
+    } else {
+      statusLabel = 'Running'; statusColor = 'var(--color-warning)'; statusIcon = 'progress_activity'
+    }
+    const map = new Map(execNodeStatus)
+    map.set(nodeIri, { statusLabel, statusColor, statusIcon })
+    execNodeStatus = map
+  }
+
+  function handleExecutionEntityEvent(event: EntityEvent) {
+    if (event.type === 'joined-set' && event.predicate === 'foundation:belongsToExecution') {
+      const stepIri = event.entityId
+      if (execStepIris.has(stepIri)) return
+      execStepIris.add(stepIri)
+      execSub.setIris([...execStepIris])
+      return
+    }
+    if (event.type === 'updated') {
+      loadStepStatus(event.entityId).catch(() => {})
+    }
+  }
+
+  function handleExecutionStarted(event: { payload: { processIri: string; executionIri: string } }) {
+    if (event.payload.processIri !== entityId) return
+    const execIri = event.payload.executionIri
+    activeExecutionIri = execIri
+    execNodeStatus = new Map()
+    batchProgressMap = new Map()
+    iterationOfToNodeId = new Map()
+    activeStepLabel = null
+    activeStepPhase = null
+    activeMaterializationStatus = null
+    activeMaterializationProgress = null
+    executionOutcome = null
+    activeNodeIri = null
+    running = true
+    if (execSub) execSub.destroy()
+    execStepIris = new Set()
+    execSub = createEntitySubscription(handleExecutionEntityEvent)
+    execSub.setCreationQueries([{
+      classIri: 'foundation:StepExecution',
+      predicate: 'foundation:belongsToExecution',
+      objectValue: execIri,
+    }])
+  }
+
+  function handleStepProgress(event: { payload: AutomationProgressPayload }) {
+    const payload = event.payload
+    if (payload.executionIri !== activeExecutionIri) return
+
+    if (payload.phase) {
+      const nodeIri = payload.nodeIri
+      const node = nodes.find(n => n.id === nodeIri)
+      activeNodeIri = nodeIri
+      activeStepLabel = node?.data?.label ?? activeStepLabel ?? 'Etapa'
+      activeStepPhase = payload.phase
+      activeMaterializationStatus = payload.status as typeof activeMaterializationStatus
+      activeMaterializationProgress = {
+        completedCount: payload.completedCount,
+        totalCount: payload.totalCount,
       }
-      if (payload.executionIri !== activeExecutionIri) return
-      const { nodeIri, nodeLabel, status } = payload
-
-      if (payload.iterationOf != null && payload.iterationTotal != null) {
-        const iterIri = payload.iterationOf
-        const total = payload.iterationTotal
-
-        let nodeId = iterationOfToNodeId.get(iterIri)
-        if (nodeId == null) {
-          const alreadyMapped = new Set(iterationOfToNodeId.values())
-          const candidate = nodes.find(n => n.data?.isMultiInstance && !alreadyMapped.has(n.id))
-          nodeId = candidate ? candidate.id : iterIri
-          iterationOfToNodeId.set(iterIri, nodeId)
-        }
-
-        const prev = batchProgressMap.get(nodeId) ?? { done: 0, failed: 0, total: null }
-        const next: BatchProgress = {
-          done: prev.done + (status === 'completed' ? 1 : 0),
-          failed: prev.failed + (status === 'failed' ? 1 : 0),
-          total,
-        }
-        const bpMap = new Map(batchProgressMap)
-        bpMap.set(nodeId, next)
-        batchProgressMap = bpMap
-
-        const statusMap = new Map(execNodeStatus)
-        if (!statusMap.has(nodeId)) {
-          statusMap.set(nodeId, { statusLabel: 'Running', statusColor: 'var(--color-warning)', statusIcon: 'progress_activity' })
-          execNodeStatus = statusMap
-        }
-        return
-      }
-
       const map = new Map(execNodeStatus)
-      if (status === 'started') {
-        map.set(nodeIri, { statusLabel: 'Running', statusColor: 'var(--color-warning)', statusIcon: 'progress_activity' })
-        activeStepLabel = nodeLabel
-      } else if (status === 'completed') {
-        map.set(nodeIri, { statusLabel: 'Done', statusColor: 'var(--color-success)', statusIcon: 'check_circle' })
-        activeStepLabel = null
-      } else if (status === 'failed') {
+      if (payload.status === 'failed') {
         map.set(nodeIri, { statusLabel: 'Failed', statusColor: 'var(--color-danger)', statusIcon: 'error' })
-        activeStepLabel = null
+      } else if (payload.status === 'cancelled') {
+        map.set(nodeIri, { statusLabel: 'Cancelled', statusColor: 'var(--color-warning)', statusIcon: 'cancel' })
+      } else {
+        map.set(nodeIri, { statusLabel: 'Running', statusColor: 'var(--color-warning)', statusIcon: 'progress_activity' })
       }
       execNodeStatus = map
-    })
-    unlistenExecFinished = await listen('automation-execution-finished', (event) => {
-      const p = event.payload as { executionIri: string }
-      if (p.executionIri !== activeExecutionIri) return
-      running = false
-      activeStepLabel = null
-    })
-  })
+      return
+    }
 
-  onDestroy(() => {
+    const { nodeIri, nodeLabel, status } = payload
+    if (payload.iterationOf != null && payload.iterationTotal != null) {
+      const iterIri = payload.iterationOf
+      const total = payload.iterationTotal
+      let nodeId = iterationOfToNodeId.get(iterIri)
+      if (nodeId == null) {
+        const alreadyMapped = new Set(iterationOfToNodeId.values())
+        const candidate = nodes.find(n => n.data?.isMultiInstance && !alreadyMapped.has(n.id))
+        nodeId = candidate ? candidate.id : iterIri
+        iterationOfToNodeId.set(iterIri, nodeId)
+      }
+      const prev = batchProgressMap.get(nodeId) ?? { done: 0, failed: 0, total: null }
+      const next: BatchProgress = {
+        done: prev.done + (status === 'completed' ? 1 : 0),
+        failed: prev.failed + (status === 'failed' ? 1 : 0),
+        total,
+      }
+      const bpMap = new Map(batchProgressMap)
+      bpMap.set(nodeId, next)
+      batchProgressMap = bpMap
+      const statusMap = new Map(execNodeStatus)
+      if (!statusMap.has(nodeId)) {
+        statusMap.set(nodeId, { statusLabel: 'Running', statusColor: 'var(--color-warning)', statusIcon: 'progress_activity' })
+        execNodeStatus = statusMap
+      }
+      return
+    }
+
+    const map = new Map(execNodeStatus)
+    activeNodeIri = nodeIri
+    if (status === 'started') {
+      map.set(nodeIri, { statusLabel: 'Running', statusColor: 'var(--color-warning)', statusIcon: 'progress_activity' })
+      activeStepLabel = nodeLabel ?? 'Etapa'
+      activeStepPhase = null
+      activeMaterializationStatus = null
+      activeMaterializationProgress = null
+    } else if (status === 'completed') {
+      map.set(nodeIri, { statusLabel: 'Done', statusColor: 'var(--color-success)', statusIcon: 'check_circle' })
+      activeStepLabel = null
+      activeNodeIri = null
+      activeStepPhase = null
+      activeMaterializationStatus = null
+      activeMaterializationProgress = null
+    } else if (status === 'failed') {
+      map.set(nodeIri, { statusLabel: 'Failed', statusColor: 'var(--color-danger)', statusIcon: 'error' })
+      activeStepLabel = nodeLabel ?? 'Etapa'
+      activeStepPhase = null
+      activeMaterializationStatus = null
+      activeMaterializationProgress = null
+    }
+    execNodeStatus = map
+  }
+
+  function handleExecutionFinished(event: { payload: AutomationFinishedPayload }) {
+    const payload = event.payload
+    if (payload.executionIri !== activeExecutionIri) return
+    running = false
+    activeStepLabel = null
+    activeStepPhase = null
+    activeMaterializationStatus = payload.status === 'cancelled' ? 'cancelled' : null
+    executionOutcome = payload.status
+    if (payload.status === 'cancelled' && activeNodeIri) {
+      const map = new Map(execNodeStatus)
+      map.set(activeNodeIri, { statusLabel: 'Cancelled', statusColor: 'var(--color-warning)', statusIcon: 'cancel' })
+      execNodeStatus = map
+    }
+  }
+
+  async function mountWidget() {
+    await loadGraph()
+    unlistenExecStarted = await listen('automation-execution-started', handleExecutionStarted)
+    unlistenStepProgress = await listen('automation-step-progress', handleStepProgress)
+    unlistenExecFinished = await listen('automation-execution-finished', handleExecutionFinished)
+  }
+
+  function destroyWidget() {
     entitySub.destroy()
     if (execSub) execSub.destroy()
     if (unlistenExecStarted) unlistenExecStarted()
     if (unlistenStepProgress) unlistenStepProgress()
     if (unlistenExecFinished) unlistenExecFinished()
-  })
+  }
+
+  onMount(mountWidget)
+  onDestroy(destroyWidget)
 </script>
 
 <WidgetContainer
@@ -398,7 +490,23 @@
 >
   {#snippet headerExtra()}
     {#if activeStepLabel}
-      <span class="active-step-label">{activeStepLabel}…</span>
+      <span class="active-step-label" aria-live="polite">{activeStepLabel}</span>
+    {/if}
+    {#if activeStepPhase}
+      <span class="active-step-phase">
+        <span role="status" aria-live="polite">{materializationPhaseLabel(activeStepPhase, activeMaterializationStatus)}</span>
+        {#if activeMaterializationStatus === 'waiting' || activeMaterializationStatus === 'running'}
+          {#if hasDeterminateProgress(activeMaterializationProgress)}
+            <span>{activeMaterializationProgress.completedCount}/{activeMaterializationProgress.totalCount}</span>
+          {:else}
+            <progress aria-label="Atualizando os dados necessários"></progress>
+          {/if}
+        {/if}
+      </span>
+    {:else if executionOutcome === 'cancelled'}
+      <span class="execution-outcome cancelled" role="status">Automação cancelada</span>
+    {:else if executionOutcome === 'failed'}
+      <span class="execution-outcome failed" role="status">Automação falhou</span>
     {/if}
     {#if isExecutable}
       <Button variant="ghost" size="icon-sm" class="run-btn-automation" onclick={runAutomation} disabled={running} title="Run automation">
@@ -408,6 +516,16 @@
   {/snippet}
 
   <div class="widget-content">
+    <div class="automation-tabs" role="tablist" aria-label="Visualização da automação">
+      <button class:active={activeTab === 'flow'} id="automation-flow-tab" role="tab" aria-selected={activeTab === 'flow'} aria-controls="automation-flow-panel" onclick={() => activeTab = 'flow'}>Fluxo</button>
+      <button class:active={activeTab === 'history'} id="automation-history-tab" role="tab" aria-selected={activeTab === 'history'} aria-controls="automation-history-panel" onclick={() => activeTab = 'history'}>Execuções</button>
+    </div>
+    {#if activeTab === 'history'}
+      <div class="history-panel" id="automation-history-panel" role="tabpanel" aria-labelledby="automation-history-tab">
+        <ExecutionHistory automationIri={entityId} />
+      </div>
+    {:else}
+      <div class="flow-panel" id="automation-flow-panel" role="tabpanel" aria-labelledby="automation-flow-tab">
     {#if loading}
       <div class="loading">
         <span class="material-symbols-outlined spinning">progress_activity</span>
@@ -433,6 +551,8 @@
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
       </SvelteFlow>
     {/if}
+      </div>
+    {/if}
   </div>
 </WidgetContainer>
 
@@ -446,6 +566,33 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .active-step-phase,
+  .execution-outcome {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-inline-tight);
+    font-size: var(--type-caption-compact);
+    max-width: var(--size-toast-max-width);
+  }
+
+  .active-step-phase {
+    color: var(--color-transition);
+  }
+
+  .active-step-phase progress {
+    width: var(--size-toast-recalc-min-width);
+    height: var(--size-startup-progress-height);
+    accent-color: var(--color-transition);
+  }
+
+  .execution-outcome.cancelled {
+    color: var(--color-warning);
+  }
+
+  .execution-outcome.failed {
+    color: var(--color-danger);
   }
 
   :global(.run-btn-automation) {
@@ -469,6 +616,48 @@
     height: 100%;
     overflow: hidden;
     position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .automation-tabs {
+    flex: 0 0 auto;
+    display: flex;
+    gap: var(--spacing-field-group);
+    padding: 0 var(--spacing-widget-inset);
+    border-bottom: var(--size-hud-frame-line) solid var(--color-hud-line-subtle);
+  }
+
+  .automation-tabs button {
+    min-height: var(--size-touch-target);
+    padding: var(--space-2) var(--space-1);
+    border: 0;
+    border-bottom: var(--size-toast-edge) solid transparent;
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: var(--type-body-compact);
+    cursor: pointer;
+  }
+
+  .automation-tabs button.active {
+    border-bottom-color: var(--color-selection);
+    color: var(--color-selection);
+  }
+
+  .automation-tabs button:focus-visible {
+    outline: var(--size-toast-edge) solid var(--color-selection);
+    outline-offset: var(--size-hud-frame-line);
+  }
+
+  .history-panel, .flow-panel {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .flow-panel :global(.svelte-flow) {
+    height: 100%;
   }
 
   .loading {

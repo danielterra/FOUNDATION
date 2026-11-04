@@ -2,33 +2,47 @@
   import { Textarea } from '$lib/components/ui/textarea';
   import { Button } from '$lib/components/ui/button';
   import { cn } from '$lib/utils';
-  let { propertyIri, draftValue = $bindable(), saving, mono = false, onsave, oncancel } = $props();
+  import CodeEditor from './CodeEditor.svelte';
+  let { propertyIri, draftValue = $bindable(), saving, mono = false, codeLanguage = null, fieldLabel = 'Código', onsave, oncancel } = $props();
 
   let textareaEl = $state(null);
 
   $effect(() => {
-    if (!textareaEl) return;
+    if (!textareaEl || codeLanguage) return;
     draftValue;
     textareaEl.style.height = 'auto';
     textareaEl.style.height = Math.min(textareaEl.scrollHeight, 400) + 'px';
   });
 
   $effect(() => {
-    if (textareaEl) textareaEl.focus();
+    if (textareaEl && !codeLanguage) textareaEl.focus();
   });
+
+  function saveOnBlur() {
+    if (codeLanguage) onsave(propertyIri);
+  }
+
+  function handleCodeKeydown(event) {
+    if (event.key === 'Escape') oncancel();
+    else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) onsave(propertyIri);
+  }
 </script>
 
 <div class="edit-container">
-  <Textarea
-    class={cn('edit-textarea', mono && 'mono')}
-    bind:value={draftValue}
-    bind:ref={textareaEl}
-    onblur={() => onsave(propertyIri)}
-    onkeydown={(e) => {
-      if (e.key === 'Escape') oncancel();
-      else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) onsave(propertyIri);
-    }}
-  />
+  {#if codeLanguage}
+    <CodeEditor bind:value={draftValue} language={codeLanguage} {fieldLabel} onblur={saveOnBlur} onkeydown={handleCodeKeydown} />
+  {:else}
+    <Textarea
+      class={cn('edit-textarea', mono && 'mono')}
+      bind:value={draftValue}
+      bind:ref={textareaEl}
+      onblur={() => onsave(propertyIri)}
+      onkeydown={(e) => {
+        if (e.key === 'Escape') oncancel();
+        else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) onsave(propertyIri);
+      }}
+    />
+  {/if}
   <div class="edit-actions">
     <Button
       variant="default"

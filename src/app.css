@@ -101,9 +101,18 @@
   --size-hud-marker: 3px;
   --size-hud-grid: 24px;
   --size-hud-grid-dot: 1px;
-  --size-startup-panel-width: 480px;
   --size-startup-progress-height: 3px;
   --size-startup-progress-sweep: 35%;
+  --size-setup-panel-width: 600px;
+  --size-setup-panel-max-width: calc(100vw - var(--space-4));
+  --size-setup-panel-max-height: calc(100vh - var(--space-4));
+  --size-setup-progress-dot: 4px;
+  --size-setup-progress-active: 20px;
+  --size-setup-outline: var(--size-hud-frame-line);
+  --duration-setup-transition: 180ms;
+  --duration-setup-spinner: 800ms;
+  --line-height-body: 1.5;
+  --line-height-compact: 1.35;
   --size-chat-bubble-streaming-rule: 1px;
   --size-toast-edge: 2px;
   --size-toast-min-width: 260px;
@@ -197,6 +206,8 @@
    * -------------------------------------------------------- */
 
   --app-header-height: 44px;
+  --size-widget-sidebar-width: min(18rem, calc(100vw - var(--space-4)));
+  --size-widget-sidebar-list-max-height: 480px;
 
   /* Semantic typography scale shared by every component. */
   --type-overline: 10px;
@@ -251,6 +262,19 @@
    * -------------------------------------------------------- */
 
   --font-mono: 'Monaspace Krypton', 'SF Mono', 'Monaco', 'Courier New', monospace;
+  --color-code-keyword: var(--color-selection);
+  --color-code-string: var(--color-success-hover);
+  --color-code-number: var(--color-warning-hover);
+  --color-code-comment: var(--color-danger-hover);
+  --color-code-operator: var(--text-primary);
+  --color-code-function: var(--color-interactive-hover);
+  --color-code-logo-surface: var(--color-white);
+  --size-code-language-logo-border: var(--size-hud-frame-line);
+  --size-code-editor-max-height: 28rem;
+  --size-code-editor-gutter: 3.5em;
+  --size-code-editor-min-height: 2.5em;
+  --size-code-editor-focus-outline: 1px;
+  --size-code-language-logo: var(--type-icon-medium);
 
   /* --------------------------------------------------------
    * RADIUS — raio de borda único da aplicação

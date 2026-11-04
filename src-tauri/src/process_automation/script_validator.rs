@@ -143,6 +143,17 @@ async fn validate_code_task(app: &AppHandle, entity_id: &str) {
 
 pub(crate) fn compile_script(script: &str) -> Result<(), String> {
     let mut engine = rhai::Engine::new();
+    engine.register_fn("sha256_hex", super::code_task::rhai_sha256_hex);
+    engine.register_fn("replace_text", super::code_task::rhai_replace_text);
+    engine.register_fn("normalize_money", super::code_task::rhai_normalize_money);
+    engine.register_fn("trim_text", super::code_task::rhai_trim_text);
+    engine.register_fn(
+        "escape_json_content",
+        super::code_task::rhai_escape_json_content,
+    );
+    engine.register_fn("normalize_date", super::code_task::rhai_normalize_date);
+    engine.register_fn("c6_source_key", super::code_task::rhai_c6_source_key);
+    engine.register_fn("csv_parse_record", super::code_task::rhai_parse_csv_record);
     engine.register_fn(
         "mcp",
         |_: rhai::ImmutableString, _: rhai::ImmutableString| -> String { String::new() },

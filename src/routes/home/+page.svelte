@@ -16,6 +16,10 @@
 
   let isChatOpen = $state(false);
   let chatEnabled = $state(false);
+  let chatVisibilityReady = $state(false);
+  let chatVisibilityError = $state(null);
+  let chatVisibilitySaveError = $state(null);
+  let chatVisibilitySaveInProgress = $state(false);
   let searchComponent = $state();
   let activeConversationIri = $state(null);
   let activeBlackboardIri = $state(null);
@@ -43,19 +47,35 @@
     resolveBlackboard(conv);
   });
 
-  onMount(async () => {
+  onMount(initializeHome);
+
+  async function initializeHome() {
     try {
       const setupDone = await invoke('setup__check');
       if (!setupDone) { goto('/'); return; }
-      await checkChatEnabled();
-      isChatOpen = chatEnabled;
     } catch {
       goto('/');
+      return;
     }
-  });
+
+    await loadChatVisibility();
+    await checkChatEnabled();
+  }
+
+  async function loadChatVisibility() {
+    try {
+      const visibility = await invoke('settings__get_chat_panel_visibility');
+      if (visibility !== 'open' && visibility !== 'closed') {
+        throw new Error(`Preferência de visibilidade inesperada: ${visibility}`);
+      }
+      isChatOpen = visibility === 'open';
+      chatVisibilityReady = true;
+    } catch (e) {
+      chatVisibilityError = `Não foi possível carregar a preferência de visibilidade do chat: ${String(e)}`;
+    }
+  }
 
   async function checkChatEnabled() {
-    const wasEnabled = chatEnabled;
     try {
       const service = await invoke('setup__get_current_ai_service');
       if (!service) { chatEnabled = false; return; }
@@ -65,7 +85,6 @@
         const key = await invoke('ai__get_api_key', { serviceIri: service.iri });
         chatEnabled = !!(key && key.trim());
       }
-      if (chatEnabled && !wasEnabled) isChatOpen = true;
     } catch {
       chatEnabled = true;
     }
@@ -94,8 +113,24 @@
     if (searchComponent) searchComponent.open();
   }
 
-  function toggleChat() {
-    isChatOpen = !isChatOpen;
+  async function toggleChat() {
+    if (!chatEnabled || !chatVisibilityReady || chatVisibilitySaveInProgress) return;
+    chatVisibilitySaveError = null;
+    const visibility = isChatOpen ? 'closed' : 'open';
+    await persistChatVisibility(visibility);
+  }
+
+  async function persistChatVisibility(visibility) {
+    if (chatVisibilitySaveInProgress || !chatVisibilityReady) return;
+    chatVisibilitySaveInProgress = true;
+    try {
+      await invoke('settings__set_chat_panel_visibility', { visibility });
+      isChatOpen = visibility === 'open';
+    } catch (e) {
+      chatVisibilitySaveError = `Não foi possível salvar a preferência de visibilidade do chat: ${String(e)}`;
+    } finally {
+      chatVisibilitySaveInProgress = false;
+    }
   }
 
   async function openAiCallHistory() {
@@ -111,7 +146,7 @@
   function handleKeydown(event) {
     if ((event.metaKey || event.ctrlKey) && event.key === 's') {
       event.preventDefault();
-      if (chatEnabled) isChatOpen = !isChatOpen;
+      toggleChat();
     }
 
     if ((event.metaKey || event.ctrlKey) && event.key === 'f') {
@@ -143,8 +178,8 @@
 <HeaderActions>
   <Button variant="ghost" size="icon" title="Buscar (/)" onclick={openSearch}><span class="material-symbols-outlined">search</span></Button>
   <span class="header-spacer"></span>
-  {#if chatEnabled}
-    <Button variant="ghost" size="icon" title="Conversa (Ctrl+S)" aria-label="Conversa" aria-expanded={isChatOpen} aria-controls="home-chat-panel" onclick={toggleChat}><span class="material-symbols-outlined">forum</span></Button>
+  {#if chatEnabled && chatVisibilityReady}
+    <Button variant="ghost" size="icon" title={chatVisibilitySaveInProgress ? 'Salvando preferência…' : 'Conversa (Ctrl+S)'} aria-label="Conversa" aria-expanded={isChatOpen} aria-controls="home-chat-panel" aria-busy={chatVisibilitySaveInProgress} disabled={chatVisibilitySaveInProgress} onclick={toggleChat}><span class="material-symbols-outlined">forum</span></Button>
   {/if}
   <Button variant="ghost" size="icon" title="Consumo de IA" onclick={openAiCallHistory}><span class="material-symbols-outlined">payments</span></Button>
   <NotificationBell />
@@ -155,13 +190,18 @@
   <Search bind:this={searchComponent} onSelectResult={handleSearchResult} />
 
   <div class="content-area">
+    {#if chatVisibilityError || chatVisibilitySaveError}
+      <div class="chat-visibility-error" role="alert" aria-live="assertive">
+        {chatVisibilityError ?? chatVisibilitySaveError}
+      </div>
+    {/if}
     <div class="canvas-area">
       <WidgetManager {activeBlackboardIri} {activeConversationIri} />
     </div>
 
-    {#if chatEnabled && isChatOpen}
+    {#if chatEnabled && chatVisibilityReady && isChatOpen}
       <div id="home-chat-panel" class="chat-slot" role="region" aria-label="Conversa" transition:fly={{ x: 500, duration: 250, easing: cubicOut }}>
-        <ChatWindow bind:activeConversationIri bind:isOpen={isChatOpen} />
+        <ChatWindow bind:activeConversationIri />
       </div>
     {/if}
   </div>
@@ -207,6 +247,21 @@
     min-width: min(320px, calc(100% - 16px));
     display: flex;
     z-index: calc(var(--z-widget-max) + 1);
+  }
+
+  .chat-visibility-error {
+    position: absolute;
+    z-index: calc(var(--z-widget-max) + 2);
+    top: var(--space-4);
+    left: 50%;
+    max-width: min(42rem, calc(100% - 2 * var(--space-4)));
+    padding: var(--space-3) var(--space-4);
+    transform: translateX(-50%);
+    border: 1px solid color-mix(in srgb, var(--color-error) 55%, transparent);
+    border-radius: var(--radius);
+    background: var(--color-surface-2);
+    color: var(--color-error);
+    font-size: var(--type-body-compact);
   }
 
   :global(.chat-slot .chat-panel) {

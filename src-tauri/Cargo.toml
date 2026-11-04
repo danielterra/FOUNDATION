@@ -31,7 +31,7 @@ path = "src/bin/purge_retracted.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-foundation-core = { git = "https://github.com/danielterra/foundation-core" }
+foundation-core = { git = "https://github.com/danielterra/foundation-core", rev = "1c5987d6b3bb7b82d360e1da073043ca93c33954" }
 tauri = { version = "2", features = ["protocol-asset", "test", "devtools"] }
 tauri-plugin-opener = "2"
 tauri-plugin-fs = "2"
@@ -80,7 +80,7 @@ llama-cpp-2 = { version = "0.1.143", features = ["sampler"] }
 
 [dev-dependencies]
 tempfile = "3.8"  # Temporary files for tests
-foundation-core = { git = "https://github.com/danielterra/foundation-core", features = ["test-helpers"] }
+foundation-core = { git = "https://github.com/danielterra/foundation-core", rev = "1c5987d6b3bb7b82d360e1da073043ca93c33954", features = ["test-helpers"] }
 
 [profile.dev]
 incremental = true

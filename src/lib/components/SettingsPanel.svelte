@@ -41,6 +41,14 @@
 	);
 	let currentModelLabel = $state('');
 
+	function formatOpenRouterContext(contextLength) {
+		return contextLength == null ? 'contexto não informado' : `${(contextLength / 1000).toFixed(0)}k ctx`;
+	}
+
+	function formatOpenRouterPrice(price) {
+		return price == null ? 'não informado' : `$${(price * 1_000_000).toFixed(2)} por 1M`;
+	}
+
 	let aiDirty = $derived(
 		selectedServiceIri !== loadedServiceIri
 		|| selectedModelIri !== loadedModelIri
@@ -759,7 +767,7 @@
 								<Select.Content>
 									<Select.Item value="">Selecione um modelo…</Select.Item>
 									{#each openRouterModels as m}
-										<Select.Item value={m.id}>{m.name} — {(m.contextLength / 1000).toFixed(0)}k ctx · in ${(m.inputCostPerToken * 1_000_000).toFixed(2)} / out ${(m.outputCostPerToken * 1_000_000).toFixed(2)} por 1M</Select.Item>
+										<Select.Item value={m.id}>{m.name} — {formatOpenRouterContext(m.contextLength)} · entrada {formatOpenRouterPrice(m.inputCostPerToken)} · saída {formatOpenRouterPrice(m.outputCostPerToken)}</Select.Item>
 									{/each}
 								</Select.Content>
 							</Select.Root>

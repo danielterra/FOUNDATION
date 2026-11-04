@@ -396,15 +396,7 @@ pub(super) fn get_individual_data(
             .map(|r| !r.triples.is_empty())
             .unwrap_or(false);
 
-        let formula_error: Option<String> = if is_calculated && !is_query_prop {
-            conn.query_row(
-                "SELECT error_message FROM formula_instance_errors WHERE instance_iri = ? AND property_iri = ?",
-                rusqlite::params![individual_id, property_iri],
-                |row| row.get(0),
-            ).ok()
-        } else {
-            None
-        };
+        let formula_error: Option<String> = None;
 
         let fwd_group_total = individual
             .forward_group_totals
@@ -413,6 +405,8 @@ pub(super) fn get_individual_data(
         let property_next_cursor = fwd_cursors.remove(property_iri.as_str()).flatten();
 
         properties.push(PropertyValue {
+            presentation: None,
+            language: None,
             property: property_iri.clone(),
             property_label,
             property_comment,
@@ -542,6 +536,8 @@ pub(super) fn get_individual_data(
                     let ai_behavior_rules = prop.ai_behavior_rules.clone();
 
                     properties.push(PropertyValue {
+                        presentation: None,
+                        language: None,
                         property: prop_iri.clone(),
                         property_label,
                         property_comment,
@@ -952,6 +948,8 @@ pub(super) fn get_individual_data(
             .flatten();
 
         properties.push(PropertyValue {
+            presentation: None,
+            language: None,
             property: b.predicate.clone(),
             property_label,
             property_comment,

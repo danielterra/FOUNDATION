@@ -733,6 +733,7 @@ pub struct ConversationMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StepExecutionDetail {
     pub iri: String,
     pub node_iri: String,
@@ -745,18 +746,17 @@ pub struct StepExecutionDetail {
     pub started_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub refs: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+    pub input_context: Option<String>,
+    pub execution_summary: Option<String>,
+    pub execution_output: Vec<String>,
+    pub step_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_iri: Option<String>,
     pub messages: Vec<ConversationMessage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkflowExecutionDetail {
     pub iri: String,
     pub process_iri: String,
@@ -769,6 +769,17 @@ pub struct WorkflowExecutionDetail {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub control_instance_iri: Option<String>,
     pub steps: Vec<StepExecutionDetail>,
+    pub step_page: StepExecutionPageMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StepExecutionPageMetadata {
+    pub total_count: i64,
+    pub loaded_count: usize,
+    pub next_cursor: Option<crate::core_ontology::automation_execution::ExecutionHistoryCursor>,
+    pub has_more: bool,
+    pub snapshot_tx: i64,
 }
 
 fn load_step_messages(
@@ -805,6 +816,9 @@ fn load_step_messages(
 #[allow(non_snake_case)]
 pub async fn automation__get_execution(
     execution_iri: String,
+    snapshot_tx: Option<i64>,
+    cursor: Option<crate::core_ontology::automation_execution::ExecutionHistoryCursor>,
+    limit: Option<usize>,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
     executor
@@ -831,12 +845,18 @@ pub async fn automation__get_execution(
                 get_iri_property(conn, &execution_iri, "foundation:controlInstance")
                     .map_err(|e| e.to_string())?;
 
-            let step_iris =
-                get_all_iri_properties(conn, &execution_iri, "foundation:hasStepExecutions")
-                    .map_err(|e| e.to_string())?;
+            let (step_page, step_total_count, step_next_cursor, step_has_more, step_snapshot_tx) =
+                crate::core_ontology::automation_execution::list_step_executions(
+                    conn,
+                    &execution_iri,
+                    snapshot_tx,
+                    cursor,
+                    limit.unwrap_or(25),
+                )?;
 
             let mut steps = Vec::new();
-            for step_iri in step_iris {
+            for step_page_item in step_page {
+                let step_iri = step_page_item.iri;
                 let node_iri = get_iri_property(conn, &step_iri, "foundation:executesStep")
                     .map_err(|e| e.to_string())?
                     .unwrap_or_default();
@@ -850,26 +870,28 @@ pub async fn automation__get_execution(
                     .map(|t| extract_local_name(&t).to_string())
                     .unwrap_or_default();
 
-                let (step_status_label, step_status_color, step_status_icon) =
-                    match crate::core_ontology::status::get_entity_status_info(conn, &step_iri) {
-                        Some((_, label, color, icon)) => (label, color, icon),
-                        None => ("Unknown".to_string(), None, None),
-                    };
+                let step_status_label = match step_page_item.status_iri.as_deref() {
+                    Some(status_iri) => get_literal_property(conn, status_iri, rdfs::LABEL)
+                        .map_err(|e| e.to_string())?
+                        .unwrap_or_else(|| status_iri.to_string()),
+                    None => "Unknown".to_string(),
+                };
 
-                let started_at = get_literal_property(conn, &step_iri, "foundation:stepStartedAt")
-                    .map_err(|e| e.to_string())?;
+                let started_at = Some(step_page_item.started_at);
 
-                let finished_at =
-                    get_literal_property(conn, &step_iri, "foundation:stepFinishedAt")
+                let finished_at = step_page_item.finished_at;
+
+                let input_context =
+                    crate::core_ontology::automation_execution::get_input_context(conn, &step_iri)?;
+                let execution_summary =
+                    get_literal_property(conn, &step_iri, "foundation:executionSummary")
                         .map_err(|e| e.to_string())?;
-
-                let summary = get_literal_property(conn, &step_iri, "foundation:executionSummary")
-                    .map_err(|e| e.to_string())?;
-                let refs = get_all_iri_properties(conn, &step_iri, "foundation:executionOutput")
-                    .map_err(|e| e.to_string())?;
-
-                let error = get_literal_property(conn, &step_iri, "foundation:stepError")
-                    .map_err(|e| e.to_string())?;
+                let execution_output =
+                    crate::core_ontology::automation_execution::get_execution_output(
+                        conn, &step_iri,
+                    )?;
+                let step_error =
+                    crate::core_ontology::automation_execution::get_step_error(conn, &step_iri)?;
 
                 let conversation_iri =
                     find_entities_with_property(conn, "foundation:generatedByStep", &step_iri)
@@ -889,20 +911,20 @@ pub async fn automation__get_execution(
                     node_label,
                     node_type,
                     status_label: step_status_label,
-                    status_color: step_status_color,
-                    status_icon: step_status_icon,
+                    status_color: None,
+                    status_icon: None,
                     started_at,
                     finished_at,
-                    summary,
-                    refs,
-                    error,
+                    input_context,
+                    execution_summary,
+                    execution_output,
+                    step_error,
                     conversation_iri,
                     messages,
                 });
             }
 
-            steps.sort_by(|a, b| a.started_at.cmp(&b.started_at));
-
+            let loaded_step_count = steps.len();
             let detail = WorkflowExecutionDetail {
                 iri: execution_iri,
                 process_iri,
@@ -913,9 +935,43 @@ pub async fn automation__get_execution(
                 error_message,
                 control_instance_iri,
                 steps,
+                step_page: StepExecutionPageMetadata {
+                    total_count: step_total_count,
+                    loaded_count: loaded_step_count,
+                    next_cursor: step_next_cursor,
+                    has_more: step_has_more,
+                    snapshot_tx: step_snapshot_tx,
+                },
             };
 
             serde_json::to_string(&detail).map_err(|e| e.to_string())
+        })
+        .await
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn automation__list_executions(
+    automation_iri: String,
+    range_start: Option<String>,
+    range_end: Option<String>,
+    snapshot_tx: Option<i64>,
+    cursor: Option<crate::core_ontology::automation_execution::ExecutionHistoryCursor>,
+    limit: Option<usize>,
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    executor
+        .read(move |conn| {
+            let page = crate::core_ontology::automation_execution::list_workflow_executions(
+                conn,
+                &automation_iri,
+                range_start.as_deref(),
+                range_end.as_deref(),
+                snapshot_tx,
+                cursor,
+                limit.unwrap_or(25),
+            )?;
+            serde_json::to_string(&page).map_err(|error| error.to_string())
         })
         .await
 }

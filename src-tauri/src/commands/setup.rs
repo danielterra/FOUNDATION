@@ -30,7 +30,7 @@ impl StartupRetentionGate {
         self.sender.send_replace(true);
     }
 }
-use crate::owl::formula_worker::FormulaWorker;
+use crate::commands::formula_worker::FormulaWorker;
 use crate::owl::{self, Connection, DbExecutor, Individual, Object};
 
 /// Initialize the application database
@@ -301,16 +301,16 @@ pub async fn initialize_app(app: AppHandle) -> Result<(), String> {
 
     // Values built on TODAY()/NOW() have no write to react to — they go stale when
     // the date changes. Refresh them at startup and once a day.
-    crate::owl::formula_worker::spawn_daily_clock_refresh(
+    crate::commands::formula_worker::spawn_daily_clock_refresh(
         app.clone(),
         app.state::<DbExecutor>().inner().clone(),
     );
 
     let query_worker_executor = app.state::<DbExecutor>().inner().clone();
     let query_worker =
-        crate::owl::query_worker::QueryWorker::spawn(app.clone(), query_worker_executor);
+        crate::commands::query_worker::QueryWorker::spawn(app.clone(), query_worker_executor);
     app.manage(query_worker);
-    crate::owl::query_worker::register_listener(app.clone());
+    crate::commands::query_worker::register_listener(app.clone());
     super::log_backend(
         "debug",
         &format!("[STARTUP] query_worker={}ms", t0.elapsed().as_millis()),
@@ -361,36 +361,27 @@ pub async fn initialize_app(app: AppHandle) -> Result<(), String> {
 }
 
 async fn recover_pending_jobs(executor: &crate::owl::DbExecutor, worker: &FormulaWorker) {
-    use crate::owl::formula_worker::WorkerCommand;
+    use crate::commands::formula_worker::WorkerCommand;
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64;
 
-    let _ = executor.write(move |conn| {
-        conn.execute(
-            "UPDATE formula_recalc_jobs SET status = 'pending', updated_at = ? WHERE status = 'running'",
-            rusqlite::params![now],
-        ).map(|_| String::new()).map_err(|e| e.to_string())
-    }).await;
-
-    let job_ids: Vec<String> = executor
-        .read(|conn| {
-            let mut stmt = match conn.prepare(
-                "SELECT id FROM formula_recalc_jobs WHERE status = 'pending' ORDER BY created_at",
-            ) {
-                Ok(s) => s,
-                Err(_) => return Ok(vec![]),
-            };
-            let rows = match stmt.query_map([], |row| row.get(0)) {
-                Ok(r) => r,
-                Err(_) => return Ok(vec![]),
-            };
-            Ok(rows.filter_map(|r| r.ok()).collect())
-        })
+    let store = crate::owl::formula_job_store::FormulaJobStore::new(executor.clone());
+    let _ = store
+        .recover_interrupted(
+            "Formula worker was interrupted by application shutdown".into(),
+            now,
+        )
+        .await;
+    let job_ids: Vec<String> = store
+        .list_pending(None)
         .await
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .into_iter()
+        .map(|job| job.id)
+        .collect();
 
     for job_id in job_ids {
         let _ = worker.sender.send(WorkerCommand::Enqueue { job_id }).await;
@@ -692,18 +683,12 @@ pub struct FoundationInfo {
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn setup__check(executor: State<'_, DbExecutor>) -> Result<bool, String> {
-    executor.read(|conn| {
-        // The ontology references foundation:ThisUser as an object, but never asserts
-        // rdf:type for it. setup__init creates ThisUser as foundation:Person — that
-        // triple is the reliable signal that the wizard was completed.
-        conn.query_row(
-            "SELECT COUNT(*) FROM triples WHERE subject='foundation:ThisUser' AND predicate='rdf:type' AND object='foundation:Person' AND retracted=0",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|c| c > 0)
-        .map_err(|e| format!("Failed to check setup status: {}", e))
-    }).await
+    executor
+        .read(|conn| {
+            crate::core_ontology::setup::is_setup_complete(conn)
+                .map_err(|error| format!("Failed to check setup status: {}", error))
+        })
+        .await
 }
 
 /// Deletes foundation:ThisFoundationInstance to force the setup wizard on next launch.
@@ -734,6 +719,14 @@ pub async fn setup__init(
     ai_model_iri: Option<String>,
     executor: State<'_, DbExecutor>,
 ) -> Result<SetupResult, String> {
+    let email = email
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Email is required to complete setup".to_string())?;
+    if user_name.trim().is_empty() {
+        return Err("Name is required to complete setup".to_string());
+    }
+
     // Setup involves writes, so we use the write executor
     let result_json = executor
         .write(move |conn| {
@@ -747,28 +740,6 @@ pub async fn setup__init(
             let os_info = get_os_info();
             let cpu_info = get_cpu_info();
             let memory_info = get_memory_info();
-
-            let user = Individual::new("foundation:ThisUser");
-            user.assert(conn, "foundation:Person", &user_name, "person", "setup")
-                .map_err(|e| format!("Failed to create Person: {}", e))?;
-
-            let name_obj = Object::Literal {
-                value: user_name.clone(),
-                datatype: Some("xsd:string".to_string()),
-                language: Some("en".to_string()),
-            };
-            user.add_property(conn, "foundation:name", vec![name_obj], "setup")
-                .map_err(|e| format!("Failed to add user name: {}", e))?;
-
-            if let Some(ref email_val) = email {
-                let email_obj = Object::Literal {
-                    value: email_val.clone(),
-                    datatype: Some("xsd:string".to_string()),
-                    language: None,
-                };
-                user.add_property(conn, "foundation:email", vec![email_obj], "setup")
-                    .map_err(|e| format!("Failed to add user email: {}", e))?;
-            }
 
             let processor = Individual::new("foundation:ThisProcessor");
             processor
@@ -993,32 +964,21 @@ pub async fn setup__init(
                 .map_err(|e| format!("Failed to link AI to service: {}", e))?;
 
             if let Some(model_iri) = ai_model_iri {
-                let timestamp = chrono::Utc::now().timestamp_millis();
-                let model_setting_iri = format!("foundation:AIModelSetting_{}", timestamp);
-                let model_setting = Individual::new(&model_setting_iri);
-                model_setting
-                    .assert(
-                        conn,
-                        "foundation:SoftwareSetting",
-                        "Selected AI Model",
-                        "settings",
-                        "setup",
-                    )
-                    .map_err(|e| format!("Failed to create model setting: {}", e))?;
-
-                model_setting
-                    .add_property(
-                        conn,
-                        "foundation:settingKey",
-                        vec![Object::Literal {
-                            value: "aiModel".to_string(),
-                            datatype: Some("xsd:string".to_string()),
-                            language: None,
-                        }],
-                        "setup",
-                    )
-                    .map_err(|e| format!("Failed to set settingKey: {}", e))?;
-
+                Individual::get(conn, &model_iri)
+                    .map_err(|e| format!("Failed to find selected AI model: {}", e))?
+                    .ok_or_else(|| format!("Selected AI model '{}' not found", model_iri))?;
+                let model_service =
+                    crate::owl::get_iri_property(conn, &model_iri, "foundation:offeredBy")
+                        .map_err(|e| format!("Failed to find selected AI model service: {}", e))?;
+                if model_service.as_deref() != Some(service_iri.as_str()) {
+                    return Err(format!(
+                        "Selected AI model '{}' is not offered by service '{}'",
+                        model_iri, service_iri
+                    ));
+                }
+                let model_setting = Individual::get(conn, "foundation:DefaultAIModelSetting")
+                    .map_err(|e| format!("Failed to get DefaultAIModelSetting: {}", e))?
+                    .ok_or_else(|| "DefaultAIModelSetting not found".to_string())?;
                 model_setting
                     .add_property(
                         conn,
@@ -1030,38 +990,15 @@ pub async fn setup__init(
                         }],
                         "setup",
                     )
-                    .map_err(|e| format!("Failed to set settingValue: {}", e))?;
-
-                model_setting
-                    .add_property(
-                        conn,
-                        "foundation:settingCategory",
-                        vec![Object::Literal {
-                            value: "ai".to_string(),
-                            datatype: Some("xsd:string".to_string()),
-                            language: None,
-                        }],
-                        "setup",
-                    )
-                    .map_err(|e| format!("Failed to set settingCategory: {}", e))?;
-
-                model_setting
-                    .add_property(
-                        conn,
-                        "foundation:origin",
-                        vec![Object::Iri("foundation:ThisFoundationInstance".to_string())],
-                        "setup",
-                    )
-                    .map_err(|e| format!("Failed to set origin: {}", e))?;
-
+                    .map_err(|e| format!("Failed to set selected AI model: {}", e))?;
                 model_setting
                     .add_property(
                         conn,
                         "foundation:appliedTo",
-                        vec![Object::Iri(service_iri)],
+                        vec![Object::Iri(service_iri.clone())],
                         "setup",
                     )
-                    .map_err(|e| format!("Failed to set appliedTo: {}", e))?;
+                    .map_err(|e| format!("Failed to set AI model service: {}", e))?;
             }
 
             // retraction is automatic when setting the same property, so this is idempotent
@@ -1115,14 +1052,32 @@ pub async fn setup__init(
                 )
                 .map_err(|e| format!("Failed to update country setting: {}", e))?;
 
-            computer
-                .add_property(
-                    conn,
-                    "foundation:hasUser",
-                    vec![Object::Iri("foundation:ThisUser".to_string())],
-                    "setup",
-                )
-                .map_err(|e| format!("Failed to link Computer -> User: {}", e))?;
+            let user = Individual::new("foundation:ThisUser");
+            user.assert(conn, "foundation:Person", &user_name, "person", "setup")
+                .map_err(|e| format!("Failed to create Person: {}", e))?;
+            user.add_property(
+                conn,
+                "foundation:name",
+                vec![Object::Literal {
+                    value: user_name.clone(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: Some("en".to_string()),
+                }],
+                "setup",
+            )
+            .map_err(|e| format!("Failed to add user name: {}", e))?;
+            user.add_property(
+                conn,
+                "foundation:email",
+                vec![Object::Literal {
+                    value: email.clone(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                }],
+                "setup",
+            )
+            .map_err(|e| format!("Failed to add user email: {}", e))?;
+
             foundation
                 .add_property(
                     conn,
@@ -1137,7 +1092,7 @@ pub async fn setup__init(
                 user: UserInfo {
                     iri: "foundation:ThisUser".to_string(),
                     name: user_name,
-                    email,
+                    email: Some(email),
                 },
                 computer: ComputerInfo {
                     iri: "foundation:ThisComputer".to_string(),
@@ -1170,7 +1125,17 @@ pub async fn setup__init(
                 },
             };
 
-            serde_json::to_string(&result).map_err(|e| e.to_string())
+            let result_json = serde_json::to_string(&result).map_err(|e| e.to_string())?;
+            computer
+                .add_property(
+                    conn,
+                    "foundation:hasUser",
+                    vec![Object::Iri("foundation:ThisUser".to_string())],
+                    "setup",
+                )
+                .map_err(|e| format!("Failed to link Computer -> User: {}", e))?;
+
+            Ok(result_json)
         })
         .await?;
 

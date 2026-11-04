@@ -43,21 +43,25 @@ Sempre uso **o IRI exato** que recebo. Nunca identifico a US ou o bug pelo black
 **Runtime acima de estático — regra dura.** Quando o AC envolve comportamento de execução (automação, motor, escrita no triple store, ciclo de vida de execução/instância de controle), **EU EXECUTO de verdade via MCP** (`run_automation` + inspeção do resultado com `describe_individual`/`search`) — `cargo check`/leitura de código **NÃO** cobrem regressões de runtime (validação de domínio, escrita real, status terminal, instruções injetadas). Já passamos bugs que compilavam verde e quebravam toda automação no 1º passo, e AgentTask que rodava sem instruções — ambos invisíveis na revisão estática. **Sempre que a funcionalidade puder ser exercitada via MCP, eu a exercito**; só caio em leitura de código quando o runtime for genuinamente inacessível, e aí marco a limitação no relatório.
 
 Para cada AC:
+- Antes de começar, enumero o conjunto completo de ACs ligados à US; quando a relação exibida pelo MCP estiver limitada, uso paginação ou busca reversa e não trato uma lista truncada como completa.
+- Quando iniciar o teste de um AC, mova-o para `foundation:Status_1772600993751` se ele ainda estiver `foundation:Pending`.
 - **Exercitável via MCP** → **executo** (`run_automation` quando há um fluxo a rodar; `assert_individual`/`replace_property_values` para montar o cenário de teste) e **inspeciono o resultado real** (`describe_individual`, `search`, `describe_class`, `read_property_page`) → **✅ Passou** (evidência de runtime confirma) ou **❌ Falhou** (evidência contradiz). **NÃO substituo execução por leitura de código quando a execução é possível.** Se rodar uma automação tem efeito colateral (toca dados reais), monto um cenário de teste isolado via MCP em vez de pular a execução.
-- **UI/visual** → executo a interface em `http://localhost:1420/` com Computer Use visível, usando o bridge local para alcançar o backend Tauri; faço uma interação com cursor e verifico o estado renderizado resultante. Screenshot ou árvore de acessibilidade isolados não provam interação. Se o bridge ou Computer Use estiver indisponível, produzo um guia "Como testar" (passos concretos, IRIs e dados reais, resultado esperado) e marco **⚠️ requer confirmação do usuário**.
+- **UI/visual** → executo a interface em `http://localhost:1420/` com Computer Use visível, usando o bridge local para alcançar o backend Tauri; faço uma interação com cursor e verifico o estado renderizado resultante. Screenshot ou árvore de acessibilidade isolados não provam interação. Se o bridge ou Computer Use estiver indisponível, marco o AC não testável como `foundation:Blocked`, registro um guia concreto para retomar e, ao encerrar a rodada, movo a US para `foundation:Blocked`.
 - Registro evidência concreta para cada critério.
-- Atualizo o status de cada AC conforme a evidência do teste daquele AC; só uso `foundation:Completed` quando o comportamento passou. Registro a evidência correspondente no changelog/relatório da US.
+- Atualizo o status de cada AC imediatamente após confirmar sua evidência individual — `foundation:Completed`, `foundation:Rejected` ou `foundation:Blocked` — antes de começar o próximo AC. Registro a evidência correspondente no changelog da US na mesma rodada; leio novamente via MCP cada AC e o changelog após a escrita. Se a leitura direta for truncada, confirmo a entrada com busca pelo valor antes de concluir que ela não persistiu. Só mantenho a US Bloqueada por falha de persistência quando todos os caminhos de readback disponíveis não encontrarem a entrada.
 
 ### 4. Analisar logs
 `npm run logs [N]` — procuro erros/warnings ligados às entidades e predicados da US. Logs são a **primeira parada** da depuração; se algo falhou na FASE 3, começo a investigação aqui.
 
 ### 5. Decisão — baseada em evidência
-- **Todos ✅, zero ⚠️, suíte verde** → confirmo que todos os ACs atuais e em escopo estão `foundation:Completed`, então movo a US para **Concluído** (`foundation:Completed`). Pronta para o CTO.
-- **Algum ❌, ou suíte vermelha** → registro **Bug** (abaixo) e movo a US para **Em Progresso** (`foundation:InProgress`) — de volta ao Desenvolvedor.
-- **Algum ⚠️ (manual) e nada falhou** → **mantenho o status Em Validação (QA)**, entrego o guia "Como testar" e **peço ao usuário** para confirmar antes de fechar. Não fecho sem a confirmação.
+- **Todos ✅ e checks obrigatórios verdes** → confirmo por leitura MCP que todos os ACs atuais/em escopo estão `foundation:Completed`, movo a US para `foundation:Completed` na mesma rodada e leio de volta o status da US. Pronta para o CTO.
+- **Algum ❌** → marco o AC como `foundation:Rejected`, registro Bug com evidência e movo a US para `foundation:Status_1773581282341` (Mudança Pendente) — de volta ao fluxo de correção.
+- **A validação não pode continuar sem ação externa** (por exemplo, Computer Use não consegue acessar a janela nativa) → marco o AC não testável como `foundation:Blocked`, registro a ação concreta necessária, movo a US para `foundation:Blocked` e entrego os passos para retomar.
+- **A rodada ainda está executando testes** → a US permanece `foundation:Status_1772600993751` (Em Validação). Nunca encerre uma rodada com status de parent indefinido ou sem ler de volta o estado final.
+- Uma falha de suíte sem relação comprovada com os ACs não transforma automaticamente um AC em Rejected; registre o blocker de suíte e use `foundation:Blocked` para a US se ele impedir a conclusão.
 
 ### 6. Registrar resultado
-`add_property_values` no `foundation:changelog` da US: uma linha com data, veredito e evidência-chave (histórico cumulativo).
+`add_property_values` no `foundation:changelog` da US: uma linha com data, veredito, status finais dos ACs e da US, evidência-chave e eventual ação externa (histórico cumulativo). Leia novamente a US e cada AC pela MCP antes do relatório final.
 
 ## Registrar Bug (quando há falha)
 `assert_individual` com `class_iri: "foundation:Bug"` e:
@@ -79,7 +83,7 @@ Handoff: **reporto ao chamador** indicando que ele deve acionar `$bug-fix <IRI d
 - **Runtime > leitura de código** — se dá para rodar via MCP (`run_automation` + inspeção), rode; revisão estática e `cargo check` mascaram regressões de runtime. Dois bugs desta família passaram no QA estático e só apareceram em execução real (validação de domínio quebrando toda automação; AgentTask sem instruções).
 - **O IRI do input é lei** — ignore o blackboard/tela para identificar a US ou o bug.
 - **Nunca marcar Concluído sem evidência** de cada Critério de Aceitação.
-- **Nunca concluir uma US** se houver AC atual Pendente, Rejeitado ou sem evidência; reporto a inconsistência e mantenho a US fora de Concluído.
+- **Nunca concluir uma US** se houver AC atual Pendente, Rejeitado, Bloqueado ou sem evidência; reporto a inconsistência e mantenho a US fora de Concluído.
 - **Nunca concluir Features** — reporto evidências e escopo verificado ao chamador; conclusão de Feature só ocorre após QA de todas as US explicitamente no escopo.
 - **Complete todos os passos** mesmo ao encontrar falhas — não pare no meio.
 - **Rastreabilidade** — cada decisão tem evidência registrada no relatório e/ou changelog.

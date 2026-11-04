@@ -1,27 +1,79 @@
-<script>
+<script lang="ts">
+	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
-	import posthog from 'posthog-js';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import * as Select from '$lib/components/ui/select';
 
-	let { onComplete = () => {} } = $props();
+	type EmailProvider = {
+		id: string;
+		label: string;
+		icon: string;
+		host: string;
+		port: number;
+		use_tls: boolean;
+		passwordLabel: string;
+		passwordHint: string;
+		instructions: string[];
+		disabled?: boolean;
+	};
 
-	// ── estado global ──────────────────────────────────────────────────────────
-	let step = $state(1); // 1 nome | 2 email | 3 ia | 4 pronto
+	type EmailTestCredentials = {
+		host: string;
+		port: number;
+		useTls: boolean;
+		username: string;
+		password: string;
+	};
+
+	type AIService = {
+		iri: string;
+		label: string;
+		description: string;
+		isLocal: boolean;
+	};
+
+	type AIModel = {
+		iri: string;
+		label: string;
+		modelIdentifier: string | null;
+		modelVersion: string | null;
+	};
+
+	type OpenRouterModel = {
+		id: string;
+		name: string;
+		publisher?: string | null;
+		description?: string;
+		contextLength: number | null;
+		inputCostPerToken: number | null;
+		outputCostPerToken: number | null;
+		parameterCountTotal?: number | null;
+		parameterCountActive?: number | null;
+		supportedParameters?: string[] | null;
+		supportsTools?: boolean | null;
+		inputModalities?: string[] | null;
+		outputModalities?: string[] | null;
+	};
+	type OpenRouterModelSort = 'price' | 'size' | 'provider';
+
+	let { onComplete } = $props<{ onComplete?: () => void }>();
+
+	let step = $state(1);
 	let isSubmitting = $state(false);
 	let submitError = $state('');
 
-	// ── step 1: identificação ──────────────────────────────────────────────────
 	let personName = $state('');
-	let nameInputEl = $state(null);
-	$effect(() => {
-		if (step === 1 && nameInputEl) nameInputEl.focus();
-	});
+	let nameInputEl = $state<HTMLInputElement | null>(null);
 
-	// ── step 2: e-mail ─────────────────────────────────────────────────────────
-	const PROVIDERS = [
+	function focusNameInput() {
+		nameInputEl?.focus();
+	}
+
+	onMount(focusNameInput);
+
+	const EMAIL_PROVIDERS: EmailProvider[] = [
 		{
 			id: 'icloud',
 			label: 'iCloud Mail',
@@ -95,22 +147,31 @@
 		},
 	];
 
-	let selectedProviderId = $state('');
+	let selectedEmailProviderId = $state('');
 	let emailUsername = $state('');
 	let emailPassword = $state('');
 	let emailHost = $state('');
 	let emailPort = $state(993);
 	let emailUseTls = $state(true);
 	let emailTesting = $state(false);
-	let emailTestResult = $state(null); // null | 'ok' | 'error'
+	let emailTestResult = $state<'ok' | 'error' | null>(null);
 	let emailTestMessage = $state('');
+	let emailTestRequestId = 0;
 	let showInstructions = $state(false);
+	let savedEmailAccountIri = $state<string | null>(null);
 
-	let selectedProvider = $derived(PROVIDERS.find(p => p.id === selectedProviderId) ?? null);
+	function getSelectedEmailProvider(): EmailProvider | null {
+		for (const provider of EMAIL_PROVIDERS) {
+			if (provider.id === selectedEmailProviderId) return provider;
+		}
+		return null;
+	}
 
-	function selectProvider(provider) {
+	let selectedEmailProvider = $derived(getSelectedEmailProvider());
+
+	function selectEmailProvider(provider: EmailProvider) {
 		if (provider.disabled) return;
-		selectedProviderId = provider.id;
+	selectedEmailProviderId = provider.id;
 		emailTestResult = null;
 		emailTestMessage = '';
 		showInstructions = false;
@@ -125,63 +186,322 @@
 		}
 	}
 
+	function handleEmailProviderClick(event: MouseEvent) {
+		const target = event.currentTarget;
+		if (!(target instanceof HTMLElement)) return;
+		const providerId = target.dataset.emailProviderId;
+		let provider: EmailProvider | null = null;
+		for (const item of EMAIL_PROVIDERS) {
+			if (item.id === providerId) provider = item;
+		}
+		if (provider) selectEmailProvider(provider);
+	}
+
+	function invalidateEmailTest() {
+		emailTestRequestId += 1;
+		emailTesting = false;
+		emailTestResult = null;
+		emailTestMessage = '';
+	}
+
+	function handleEmailTlsChange() {
+		invalidateEmailTest();
+	}
+
+	function emailCredentialsMatch(credentials: EmailTestCredentials): boolean {
+		return credentials.host === emailHost &&
+			credentials.port === emailPort &&
+			credentials.useTls === emailUseTls &&
+			credentials.username === emailUsername &&
+			credentials.password === emailPassword;
+	}
+
+	function handleNameKeydown(event: KeyboardEvent) {
+		if (event.key === 'Enter' && personName.trim()) goToEmailStep();
+	}
+
+	function goToEmailStep() {
+		step = 2;
+	}
+
+	function goToNameStep() {
+		step = 1;
+	}
+
+	function toggleEmailInstructions() {
+		showInstructions = !showInstructions;
+	}
+
 	async function testEmailConnection() {
 		if (!emailUsername.trim() || !emailPassword.trim() || !emailHost.trim()) return;
+		const testedCredentials: EmailTestCredentials = {
+			host: emailHost,
+			port: emailPort,
+			useTls: emailUseTls,
+			username: emailUsername,
+			password: emailPassword,
+		};
+		const requestId = ++emailTestRequestId;
 		emailTesting = true;
 		emailTestResult = null;
 		emailTestMessage = '';
 		try {
-			const msg = await invoke('imap__test_connection', {
-				host: emailHost,
-				port: emailPort,
-				useTls: emailUseTls,
-				username: emailUsername,
-				password: emailPassword,
-			});
+			const msg = await invoke<string>('imap__test_connection', testedCredentials);
+			if (requestId !== emailTestRequestId || !emailCredentialsMatch(testedCredentials)) return;
 			emailTestResult = 'ok';
 			emailTestMessage = msg;
 		} catch (e) {
+			if (requestId !== emailTestRequestId || !emailCredentialsMatch(testedCredentials)) return;
 			emailTestResult = 'error';
 			emailTestMessage = String(e);
 		} finally {
-			emailTesting = false;
+			if (requestId === emailTestRequestId) emailTesting = false;
 		}
 	}
 
 	let emailValid = $derived(
-		selectedProviderId !== '' &&
+		selectedEmailProviderId !== '' &&
 		emailUsername.trim() !== '' &&
 		emailPassword.trim() !== '' &&
 		emailHost.trim() !== '' &&
 		emailTestResult === 'ok'
 	);
 
-	// ── step 3: ia ─────────────────────────────────────────────────────────────
-	let aiChoice = $state(''); // 'chat' | 'mcp'
+	let aiChoice = $state<'chat' | 'mcp' | ''>('');
 	let apiKey = $state('');
 	let showApiKey = $state(false);
+	let apiBaseUrl = $state('');
+	let aiServices = $state<AIService[]>([]);
+	let aiModels = $state<AIModel[]>([]);
+	let openRouterModels = $state<OpenRouterModel[]>([]);
+	let selectedAIServiceIri = $state('');
+	let selectedAIModelIri = $state('');
+	let selectedOpenRouterModelId = $state('');
+	let aiServicesLoading = $state(false);
+	let aiModelsLoading = $state(false);
+	let openRouterModelsLoading = $state(false);
+	let openRouterModelSort = $state<OpenRouterModelSort>('price');
+	let aiServicesLoaded = $state(false);
+	let aiConfigError = $state('');
 
-	// ── step 4: privacidade ────────────────────────────────────────────────────
-	let analyticsConsent = $state(false);
+	function getSelectedAIService(): AIService | null {
+		for (const service of aiServices) {
+			if (service.iri === selectedAIServiceIri) return service;
+		}
+		return null;
+	}
 
-	// ── finalização ────────────────────────────────────────────────────────────
+	function getSelectedAIModel(): AIModel | null {
+		for (const model of aiModels) {
+			if (model.iri === selectedAIModelIri) return model;
+		}
+		return null;
+	}
+
+	function getSelectedOpenRouterModel(): OpenRouterModel | null {
+		for (const model of openRouterModels) {
+			if (model.id === selectedOpenRouterModelId) return model;
+		}
+		return null;
+	}
+
+	function openRouterProvider(model: OpenRouterModel): string {
+		return model.publisher || 'Provedor não informado';
+	}
+
+	function openRouterPrice(model: OpenRouterModel): number | null {
+		if (model.inputCostPerToken == null || model.outputCostPerToken == null) return null;
+		return model.inputCostPerToken + model.outputCostPerToken;
+	}
+
+	function sortOpenRouterModels(models: OpenRouterModel[], sort: OpenRouterModelSort): OpenRouterModel[] {
+		return [...models].sort((a, b) => {
+			if (sort === 'provider') {
+				return openRouterProvider(a).localeCompare(openRouterProvider(b)) || a.name.localeCompare(b.name);
+			}
+			if (sort === 'size') {
+				return (b.parameterCountTotal ?? -1) - (a.parameterCountTotal ?? -1) || a.name.localeCompare(b.name);
+			}
+			const aPrice = openRouterPrice(a);
+			const bPrice = openRouterPrice(b);
+			if (aPrice == null) return bPrice == null ? a.name.localeCompare(b.name) : 1;
+			if (bPrice == null) return -1;
+			return aPrice - bPrice || a.name.localeCompare(b.name);
+		});
+	}
+
+	function formatOpenRouterContext(model: OpenRouterModel): string {
+		return model.contextLength == null ? 'Contexto não informado' : `${(model.contextLength / 1000).toFixed(0)}k tokens`;
+	}
+
+	function formatOpenRouterModelSize(model: OpenRouterModel): string {
+		if (model.parameterCountTotal == null) return 'Não informado pelo provedor';
+		const total = `${(model.parameterCountTotal / 1_000_000_000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}B parâmetros`;
+		if (model.parameterCountActive == null) return `${total} (estimativa da descrição do provedor)`;
+		return `${total} · ${(model.parameterCountActive / 1_000_000_000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}B ativos`;
+	}
+
+	function formatOpenRouterPrice(value: number | null): string {
+		return value == null ? 'não informado' : `$${(value * 1_000_000).toFixed(2)} / 1M tokens`;
+	}
+
+	let sortedOpenRouterModels = $derived(sortOpenRouterModels(openRouterModels, openRouterModelSort));
+
+	let selectedAIService = $derived(getSelectedAIService());
+	let selectedAIModel = $derived(getSelectedAIModel());
+	let selectedOpenRouterModel = $derived(getSelectedOpenRouterModel());
+	let isOpenRouterService = $derived(
+		selectedAIService?.label.toLowerCase().includes('openrouter') ?? false
+	);
+	let requiresAIKey = $derived(
+		selectedAIService !== null && (!selectedAIService.isLocal || isOpenRouterService)
+	);
+	let aiModelSelected = $derived(
+		isOpenRouterService ? selectedOpenRouterModel !== null : selectedAIModel !== null
+	);
+	let aiChatConfigurationValid = $derived(
+		selectedAIService !== null &&
+		aiModelSelected &&
+		(!requiresAIKey || apiKey.trim() !== '') &&
+		(!isOpenRouterService || apiBaseUrl.trim() !== '')
+	);
+	let aiChoiceValid = $derived(
+		aiChoice === 'mcp' || (aiChoice === 'chat' && aiChatConfigurationValid)
+	);
+
+	async function loadAIServices() {
+		aiServicesLoading = true;
+		aiConfigError = '';
+		try {
+			aiServices = await invoke<AIService[]>('setup__list_ai_services');
+			aiServicesLoaded = true;
+		} catch (error) {
+			aiConfigError = String(error);
+		} finally {
+			aiServicesLoading = false;
+		}
+	}
+
+	async function goToAIChoiceStep() {
+		step = 3;
+		if (!aiServicesLoaded) await loadAIServices();
+	}
+
+	function chooseChatMode() {
+		aiChoice = 'chat';
+	}
+
+	function chooseMcpMode() {
+		aiChoice = 'mcp';
+	}
+
+	function handleAIServiceChange(serviceIri: string | undefined) {
+		if (!serviceIri) return;
+		selectAIService(serviceIri);
+	}
+
+	async function selectAIService(serviceIri: string) {
+		selectedAIServiceIri = serviceIri;
+		selectedAIModelIri = '';
+		selectedOpenRouterModelId = '';
+		apiKey = '';
+		apiBaseUrl = '';
+		aiModels = [];
+		openRouterModels = [];
+		aiConfigError = '';
+		aiModelsLoading = true;
+		try {
+			const [modelResponse, savedKey, savedBaseUrl] = await Promise.all([
+				invoke<{ items: AIModel[] }>('setup__list_ai_models', { serviceIri }),
+				invoke<string>('ai__get_api_key', { serviceIri }),
+				invoke<string>('ai__get_service_base_url', { serviceIri }),
+			]);
+			aiModels = modelResponse.items;
+			apiKey = savedKey ?? '';
+			apiBaseUrl = savedBaseUrl ?? '';
+		} catch (error) {
+			aiConfigError = String(error);
+		} finally {
+			aiModelsLoading = false;
+		}
+	}
+
+	function handleAIModelChange(modelIri: string | undefined) {
+		if (modelIri !== undefined) selectedAIModelIri = modelIri;
+	}
+
+	function handleOpenRouterModelChange(modelId: string | undefined) {
+		if (modelId !== undefined) selectedOpenRouterModelId = modelId;
+	}
+
+	function handleAPIKeyInput(event: Event) {
+		const target = event.currentTarget;
+		if (!(target instanceof HTMLInputElement)) return;
+		apiKey = target.value;
+		selectedOpenRouterModelId = '';
+		openRouterModels = [];
+	}
+
+	function handleAPIBaseUrlInput(event: Event) {
+		const target = event.currentTarget;
+		if (!(target instanceof HTMLInputElement)) return;
+		apiBaseUrl = target.value;
+		selectedOpenRouterModelId = '';
+		openRouterModels = [];
+	}
+
+	async function loadOpenRouterModels() {
+		if (!apiKey.trim() || !apiBaseUrl.trim()) return;
+		openRouterModelsLoading = true;
+		aiConfigError = '';
+		try {
+			await invoke('ai__validate_provider_key', { apiKey, baseUrl: apiBaseUrl });
+			openRouterModels = await invoke<OpenRouterModel[]>(
+				'ai__list_openrouter_models',
+				{ apiKey, baseUrl: apiBaseUrl }
+			);
+			if (openRouterModels.length === 0) {
+				aiConfigError = 'Nenhum modelo foi retornado pelo OpenRouter.';
+			}
+		} catch (error) {
+			aiConfigError = String(error);
+		} finally {
+			openRouterModelsLoading = false;
+		}
+	}
+
+	function handleRetryLoadAIServices() {
+		aiServicesLoaded = false;
+		loadAIServices();
+	}
+
+	function handleRetryLoadOpenRouterModels() {
+		loadOpenRouterModels();
+	}
+
+	function goToEmailStepFromAI() {
+		step = 2;
+	}
+
+	function goToSummaryStep() {
+		step = 4;
+		submitError = '';
+	}
+
+	function goToAIChoiceStepFromSummary() {
+		step = 3;
+		submitError = '';
+	}
+
 	async function finish() {
+		if (!emailValid || !aiChoiceValid) return;
 		isSubmitting = true;
 		submitError = '';
 		try {
-			// 1. setup principal (nome + email de identidade)
-			await invoke('setup__init', {
-				userName: personName.trim(),
-				email: emailUsername.trim() || null,
-				aiServiceIri: aiChoice === 'chat' ? 'foundation:ClaudeAIService' : null,
-				aiModelIri: null,
-			});
-
-			// 2. salvar conta IMAP
-			await invoke('imap__save_account', {
-				accountIri: null,
+			const emailAccountIri = await invoke<string>('imap__save_account', {
+				accountIri: savedEmailAccountIri,
 				input: {
-					label: selectedProvider?.label ?? 'E-mail',
+					label: selectedEmailProvider?.label ?? 'E-mail',
 					host: emailHost,
 					port: emailPort,
 					use_tls: emailUseTls,
@@ -190,26 +510,68 @@
 					sync_interval_minutes: 15,
 				},
 			});
+			savedEmailAccountIri = emailAccountIri;
 
-			// 3. salvar API key se escolheu chat interno
-			if (aiChoice === 'chat' && apiKey.trim()) {
+			let aiModelIri: string | null = null;
+			let aiServiceIri: string | null = null;
+			if (aiChoice === 'chat' && selectedAIService) {
+				aiServiceIri = selectedAIService.iri;
+				if (requiresAIKey) {
+					if (isOpenRouterService) {
+						await invoke('ai__validate_provider_key', {
+							apiKey: apiKey.trim(),
+							baseUrl: apiBaseUrl.trim(),
+						});
+						await invoke('ai__save_service_base_url', {
+							serviceIri: selectedAIService.iri,
+							baseUrl: apiBaseUrl.trim(),
+						});
+					}
 				await invoke('ai__save_api_key', {
 					apiKey: apiKey.trim(),
-					serviceIri: 'foundation:ClaudeAIService',
+					serviceIri: selectedAIService.iri,
 				});
+				}
+
+				if (isOpenRouterService && selectedOpenRouterModel) {
+					aiModelIri = await invoke<string>('ai__ensure_openrouter_model', {
+						serviceIri: selectedAIService.iri,
+						modelId: selectedOpenRouterModel.id,
+						modelName: selectedOpenRouterModel.name,
+						contextLength: selectedOpenRouterModel.contextLength,
+						inputCostPerToken: selectedOpenRouterModel.inputCostPerToken,
+						outputCostPerToken: selectedOpenRouterModel.outputCostPerToken,
+						supportsTools: selectedOpenRouterModel.supportsTools ?? false,
+					});
+				} else if (selectedAIModel) {
+					aiModelIri = selectedAIModel.iri;
+				}
 			}
 
-			if (analyticsConsent) {
-				posthog.opt_in_capturing();
-			} else {
-				posthog.opt_out_capturing();
-			}
+			await invoke('setup__init', {
+				userName: personName.trim(),
+				email: emailUsername.trim(),
+				aiServiceIri,
+				aiModelIri,
+			});
 
-			onComplete();
+			onComplete?.();
 		} catch (e) {
 			submitError = String(e);
 			isSubmitting = false;
 		}
+	}
+
+	function handleStepOneContinue() {
+		if (personName.trim()) goToEmailStep();
+	}
+
+	function handleInstructionsToggle() {
+		toggleEmailInstructions();
+	}
+
+	function toggleApiKeyVisibility() {
+		showApiKey = !showApiKey;
 	}
 </script>
 
@@ -219,7 +581,7 @@
 		<!-- cabeçalho -->
 		<div class="header">
 			<span class="logo">FOUNDATION</span>
-			<div class="steps">
+			<div class="steps" role="progressbar" aria-label="Progresso da configuração" aria-valuemin="1" aria-valuemax="4" aria-valuenow={step}>
 				{#each [1,2,3,4] as s}
 					<div class="step-dot" class:active={step === s} class:done={step > s}></div>
 				{/each}
@@ -232,16 +594,18 @@
 				<span class="material-symbols-outlined step-icon">waving_hand</span>
 				<h2>Bem-vindo ao FOUNDATION</h2>
 				<p class="subtitle">Vamos configurar tudo em poucos minutos. Primeiro, como podemos te chamar?</p>
+				<label for="person-name">Seu nome</label>
 				<Input
+					id="person-name"
 					type="text"
 					placeholder="Seu nome"
 					bind:value={personName}
 					bind:ref={nameInputEl}
-					onkeydown={(e) => e.key === 'Enter' && personName.trim() && (step = 2)}
+					onkeydown={handleNameKeydown}
 				/>
 			</div>
 			<div class="footer">
-				<Button variant="default" onclick={() => step = 2} disabled={!personName.trim()}>
+				<Button variant="default" onclick={handleStepOneContinue} disabled={!personName.trim()}>
 					Continuar
 				</Button>
 			</div>
@@ -254,11 +618,12 @@
 				<p class="subtitle">O FOUNDATION usa seu e-mail para criar memória de conversas e contexto. Selecione seu provedor:</p>
 
 				<div class="provider-grid">
-					{#each PROVIDERS as provider}
+					{#each EMAIL_PROVIDERS as provider}
 						<Button
 							variant="ghost"
-							class={`provider-card${selectedProviderId === provider.id ? ' selected' : ''}${provider.disabled ? ' disabled' : ''}`}
-							onclick={() => selectProvider(provider)}
+							class={`provider-card${selectedEmailProviderId === provider.id ? ' selected' : ''}${provider.disabled ? ' disabled' : ''}`}
+							data-email-provider-id={provider.id}
+							onclick={handleEmailProviderClick}
 							disabled={provider.disabled}
 						>
 							<span class="material-symbols-outlined">{provider.icon}</span>
@@ -270,36 +635,36 @@
 					{/each}
 				</div>
 
-				{#if selectedProvider && !selectedProvider.disabled}
+				{#if selectedEmailProvider && !selectedEmailProvider.disabled}
 					<div class="email-form">
-						{#if selectedProvider.instructions.length > 0}
-							<Button variant="ghost" class="instructions-toggle" onclick={() => showInstructions = !showInstructions}>
+						{#if selectedEmailProvider.instructions.length > 0}
+							<Button variant="ghost" class="instructions-toggle" onclick={handleInstructionsToggle}>
 								<span class="material-symbols-outlined">{showInstructions ? 'expand_less' : 'help_outline'}</span>
-								{showInstructions ? 'Ocultar instruções' : 'Como configurar o ' + selectedProvider.label + '?'}
+								{showInstructions ? 'Ocultar instruções' : 'Como configurar o ' + selectedEmailProvider.label + '?'}
 							</Button>
 
 							{#if showInstructions}
 								<ol class="instructions">
-									{#each selectedProvider.instructions as step_instruction}
+									{#each selectedEmailProvider.instructions as step_instruction}
 										<li>{step_instruction}</li>
 									{/each}
 								</ol>
 							{/if}
 						{/if}
 
-						{#if selectedProviderId === 'custom'}
+						{#if selectedEmailProviderId === 'custom'}
 							<div class="field-group">
 								<label for="email-host">Servidor IMAP</label>
-								<Input id="email-host" type="text" placeholder="imap.exemplo.com" bind:value={emailHost} />
+								<Input id="email-host" type="text" placeholder="imap.exemplo.com" bind:value={emailHost} oninput={invalidateEmailTest} />
 							</div>
 							<div class="field-row">
 								<div class="field-group">
 									<label for="email-port">Porta</label>
-									<Input id="email-port" type="number" bind:value={emailPort} />
+									<Input id="email-port" type="number" bind:value={emailPort} oninput={invalidateEmailTest} />
 								</div>
 								<div class="field-group checkbox-group">
 									<label for="email-tls" class="checkbox-row">
-										<Checkbox id="email-tls" bind:checked={emailUseTls} />
+										<Checkbox id="email-tls" bind:checked={emailUseTls} onchange={handleEmailTlsChange} />
 										Usar TLS
 									</label>
 								</div>
@@ -308,17 +673,17 @@
 
 						<div class="field-group">
 							<label for="email-username">Usuário (e-mail)</label>
-							<Input id="email-username" type="email" placeholder="seu@email.com" bind:value={emailUsername} />
+							<Input id="email-username" type="email" placeholder="seu@email.com" bind:value={emailUsername} oninput={invalidateEmailTest} />
 						</div>
 
 						<div class="field-group">
 							<label for="email-password">
-								{selectedProvider.passwordLabel}
-								{#if selectedProvider.passwordHint}
-									<span class="hint">— {selectedProvider.passwordHint}</span>
+								{selectedEmailProvider.passwordLabel}
+								{#if selectedEmailProvider.passwordHint}
+									<span class="hint">— {selectedEmailProvider.passwordHint}</span>
 								{/if}
 							</label>
-							<Input id="email-password" type="password" placeholder="••••••••••••" bind:value={emailPassword} />
+							<Input id="email-password" type="password" placeholder="••••••••••••" bind:value={emailPassword} oninput={invalidateEmailTest} />
 						</div>
 
 						<Button
@@ -350,8 +715,8 @@
 				{/if}
 			</div>
 			<div class="footer">
-				<Button variant="ghost" onclick={() => step = 1}>Voltar</Button>
-				<Button variant="default" onclick={() => step = 3} disabled={!emailValid}>
+				<Button variant="ghost" onclick={goToNameStep}>Voltar</Button>
+				<Button variant="default" onclick={goToAIChoiceStep} disabled={!emailValid}>
 					Continuar
 				</Button>
 			</div>
@@ -360,19 +725,20 @@
 		{:else if step === 3}
 			<div class="body">
 				<span class="material-symbols-outlined step-icon">smart_toy</span>
-				<h2>Como você quer usar a IA?</h2>
-				<p class="subtitle">Escolha como o FOUNDATION vai funcionar. Você pode mudar isso depois.</p>
+				<h2>Escolha como usar a IA</h2>
+				<p class="subtitle">O modo define como você acessa a IA. No chat integrado, selecione também o serviço e o modelo.</p>
 
 				<div class="ai-cards">
 					<Button
 						variant="ghost"
 						class={`ai-card${aiChoice === 'chat' ? ' selected' : ''}`}
-						onclick={() => aiChoice = 'chat'}
+						aria-pressed={aiChoice === 'chat'}
+						onclick={chooseChatMode}
 					>
 						<span class="material-symbols-outlined ai-card-icon">chat</span>
 						<div class="ai-card-text">
-							<strong>Chat interno</strong>
-							<span>Use o chat integrado do FOUNDATION com a API do Claude.</span>
+							<span class="ai-card-title">Chat integrado</span>
+							<span>Converse no FOUNDATION com um serviço e modelo configurados por você.</span>
 						</div>
 						<div class="ai-card-check">
 							{#if aiChoice === 'chat'}
@@ -384,11 +750,12 @@
 					<Button
 						variant="ghost"
 						class={`ai-card${aiChoice === 'mcp' ? ' selected' : ''}`}
-						onclick={() => { aiChoice = 'mcp'; apiKey = ''; }}
+						aria-pressed={aiChoice === 'mcp'}
+						onclick={chooseMcpMode}
 					>
 						<span class="material-symbols-outlined ai-card-icon">hub</span>
 						<div class="ai-card-text">
-							<strong>Via MCP</strong>
+							<span class="ai-card-title">Via MCP</span>
 							<span>Use seu app favorito (Claude Code, Claude.ai, etc.) conectado ao FOUNDATION pelo protocolo MCP.</span>
 						</div>
 						<div class="ai-card-check">
@@ -400,26 +767,160 @@
 				</div>
 
 				{#if aiChoice === 'chat'}
-					<div class="api-key-section">
-						<p class="api-key-hint">
-							Você precisa de uma chave de API do Claude.
-							<a href="https://console.anthropic.com/" target="_blank" rel="noreferrer">Obter chave →</a>
-						</p>
-						<div class="field-group">
-							<label for="api-key">Chave de API</label>
-							<div class="field-row">
-								<Input
-									id="api-key"
-									type={showApiKey ? 'text' : 'password'}
-									placeholder="sk-ant-…"
-									bind:value={apiKey}
-								/>
-								<Button variant="ghost" size="icon" onclick={() => showApiKey = !showApiKey} title={showApiKey ? 'Ocultar' : 'Mostrar'}>
-									<span class="material-symbols-outlined">{showApiKey ? 'visibility_off' : 'visibility'}</span>
-								</Button>
-							</div>
+					{#if aiServicesLoading}
+						<p class="state-message" role="status" aria-live="polite">Carregando serviços de IA…</p>
+					{:else if aiServices.length === 0 && aiConfigError}
+						<div class="state-panel" role="alert">
+							<p>Não foi possível carregar os serviços de IA.</p>
+							<p class="state-detail">{aiConfigError}</p>
+							<Button variant="secondary" onclick={handleRetryLoadAIServices}>Tentar novamente</Button>
 						</div>
+					{:else if aiServices.length === 0}
+						<p class="state-message">Nenhum serviço de IA está disponível.</p>
+					{:else}
+						<div class="field-group">
+							<label for="setup-ai-service">Serviço de IA</label>
+							<Select.Root
+								type="single"
+								value={selectedAIServiceIri}
+								onValueChange={handleAIServiceChange}
+							>
+								<Select.Trigger id="setup-ai-service">
+									<Select.Value placeholder="Selecione um serviço" />
+								</Select.Trigger>
+								<Select.Content>
+									{#each aiServices as service}
+										<Select.Item value={service.iri}>{service.label}</Select.Item>
+									{/each}
+								</Select.Content>
+							</Select.Root>
+						</div>
+
+						{#if selectedAIService}
+							{#if requiresAIKey}
+								{#if isOpenRouterService}
+									<div class="field-group">
+									<label for="setup-ai-base-url">URL base</label>
+									<Input
+										id="setup-ai-base-url"
+										type="url"
+										placeholder="URL do serviço OpenRouter"
+										value={apiBaseUrl}
+										oninput={handleAPIBaseUrlInput}
+									/>
+								</div>
+								{/if}
+
+								<div class="field-group">
+									<label for="setup-ai-api-key">Chave de API</label>
+									<div class="field-row">
+										<Input
+											id="setup-ai-api-key"
+											type={showApiKey ? 'text' : 'password'}
+											placeholder="Chave do serviço selecionado"
+											value={apiKey}
+											oninput={handleAPIKeyInput}
+										/>
+										<Button
+											variant="ghost"
+											size="icon-sm"
+											onclick={toggleApiKeyVisibility}
+							aria-pressed={showApiKey}
+											title={showApiKey ? 'Ocultar chave' : 'Mostrar chave'}
+											aria-label={showApiKey ? 'Ocultar chave de API' : 'Mostrar chave de API'}
+										>
+											<span class="material-symbols-outlined">{showApiKey ? 'visibility_off' : 'visibility'}</span>
+										</Button>
+									</div>
+								</div>
+							{/if}
+
+							{#if isOpenRouterService}
+								<div class="field-group">
+									<div class="field-label-row">
+										<label for="setup-openrouter-model">Modelo</label>
+										<Button
+											variant="ghost"
+											size="sm"
+											onclick={handleRetryLoadOpenRouterModels}
+											disabled={openRouterModelsLoading || !apiKey.trim() || !apiBaseUrl.trim()}
+										>
+											{openRouterModelsLoading ? 'Carregando…' : 'Carregar modelos'}
+										</Button>
+									</div>
+					<div class="field-group model-sort-field">
+						<label for="setup-openrouter-sort">Ordenar modelos por</label>
+										<Select.Root type="single" value={openRouterModelSort} onValueChange={(value) => { if (value === 'price' || value === 'size' || value === 'provider') openRouterModelSort = value; }}>
+							<Select.Trigger id="setup-openrouter-sort"><Select.Value /></Select.Trigger>
+							<Select.Content>
+									<Select.Item value="price">Menor custo</Select.Item>
+									<Select.Item value="size">Menor tamanho</Select.Item>
+								<Select.Item value="provider">Provedor</Select.Item>
+							</Select.Content>
+						</Select.Root>
+									<p class="state-detail">O tamanho só aparece quando a descrição do provedor informa explicitamente os parâmetros; caso contrário, o modelo fica como não informado.</p>
 					</div>
+									<Select.Root
+										type="single"
+										value={selectedOpenRouterModelId}
+										onValueChange={handleOpenRouterModelChange}
+									>
+										<Select.Trigger id="setup-openrouter-model">
+											<Select.Value placeholder="Selecione um modelo" />
+										</Select.Trigger>
+										<Select.Content>
+										{#each sortedOpenRouterModels as model}
+										<Select.Item value={model.id}>{model.name} · {openRouterProvider(model)} · {formatOpenRouterModelSize(model)} · contexto {formatOpenRouterContext(model)} · entrada {formatOpenRouterPrice(model.inputCostPerToken)} · saída {formatOpenRouterPrice(model.outputCostPerToken)}</Select.Item>
+											{/each}
+										</Select.Content>
+									</Select.Root>
+									{#if selectedOpenRouterModel}
+										<div class="model-metadata" aria-label="Detalhes do modelo selecionado">
+											<p><span>Provedor</span><span>{openRouterProvider(selectedOpenRouterModel)}</span></p>
+											<p><span>Tamanho do modelo</span><span>{formatOpenRouterModelSize(selectedOpenRouterModel)}</span></p>
+											<p><span>Janela de contexto</span><span>{formatOpenRouterContext(selectedOpenRouterModel)}</span></p>
+											<p><span>Custo de entrada</span><span>{formatOpenRouterPrice(selectedOpenRouterModel.inputCostPerToken)}</span></p>
+											<p><span>Custo de saída</span><span>{formatOpenRouterPrice(selectedOpenRouterModel.outputCostPerToken)}</span></p>
+											{#if selectedOpenRouterModel.supportedParameters?.length}
+												<p><span>Capacidades declaradas</span><span>{selectedOpenRouterModel.supportedParameters.join(', ')}</span></p>
+											{:else}<p><span>Capacidades</span><span>Não informadas</span></p>{/if}
+											<p><span>Modalidades de entrada</span><span>{selectedOpenRouterModel.inputModalities?.join(', ') || 'Não informadas'}</span></p>
+											<p><span>Modalidades de saída</span><span>{selectedOpenRouterModel.outputModalities?.join(', ') || 'Não informadas'}</span></p>
+											<p><span>Uso recomendado</span><span>{selectedOpenRouterModel.supportsTools === true ? 'Agentes que usam ferramentas' : 'Não informado'}</span></p>
+										</div>
+									{/if}
+								</div>
+							{:else}
+								<div class="field-group">
+									<label for="setup-ai-model">Modelo</label>
+									{#if aiModelsLoading}
+										<p class="state-message" role="status" aria-live="polite">Carregando modelos…</p>
+									{:else if aiModels.length === 0}
+										<p class="state-message">Nenhum modelo está disponível para este serviço.</p>
+									{:else}
+										<Select.Root
+											type="single"
+											value={selectedAIModelIri}
+											onValueChange={handleAIModelChange}
+										>
+											<Select.Trigger id="setup-ai-model">
+												<Select.Value placeholder="Selecione um modelo" />
+											</Select.Trigger>
+											<Select.Content>
+												{#each aiModels as model}
+													<Select.Item value={model.iri}>{model.label}</Select.Item>
+												{/each}
+											</Select.Content>
+										</Select.Root>
+									{/if}
+								</div>
+							{/if}
+						{/if}
+
+						{#if aiConfigError}
+							<p class="state-error" role="alert" aria-live="polite">{aiConfigError}</p>
+						{/if}
+					{/if}
 				{/if}
 
 				{#if aiChoice === 'mcp'}
@@ -433,11 +934,11 @@
 				{/if}
 			</div>
 			<div class="footer">
-				<Button variant="ghost" onclick={() => step = 2}>Voltar</Button>
+				<Button variant="ghost" onclick={goToEmailStepFromAI}>Voltar</Button>
 				<Button
 					variant="default"
-					onclick={() => step = 4}
-					disabled={!aiChoice || (aiChoice === 'chat' && !apiKey.trim())}
+					onclick={goToSummaryStep}
+					disabled={!aiChoiceValid}
 				>
 					Continuar
 				</Button>
@@ -457,31 +958,29 @@
 					</div>
 					<div class="summary-row">
 						<span class="material-symbols-outlined">inbox</span>
-						<span>{emailUsername} <em>({selectedProvider?.label})</em></span>
+						<span>{emailUsername} <span class="summary-meta">({selectedEmailProvider?.label})</span></span>
 					</div>
 					<div class="summary-row">
 						<span class="material-symbols-outlined">{aiChoice === 'chat' ? 'chat' : 'hub'}</span>
-						<span>{aiChoice === 'chat' ? 'Chat interno com Claude' : 'Via MCP'}</span>
+						<span>
+							{#if aiChoice === 'chat'}
+								{selectedAIService?.label} · {#if isOpenRouterService}{selectedOpenRouterModel?.name}{:else}{selectedAIModel?.label}{/if}
+							{:else}
+								Via MCP
+							{/if}
+						</span>
 					</div>
 				</div>
 
-				<label class="consent-row">
-					<Checkbox bind:checked={analyticsConsent} />
-					<span>
-						Compartilhar dados de uso anônimos para nos ajudar a melhorar o FOUNDATION.
-						Nenhuma informação pessoal ou conteúdo de e-mail é enviado.
-					</span>
-				</label>
-
 				{#if submitError}
-					<p class="submit-error">
+					<p class="submit-error" role="alert" aria-live="polite">
 						<span class="material-symbols-outlined">error</span>
 						{submitError}
 					</p>
 				{/if}
 			</div>
 			<div class="footer">
-				<Button variant="ghost" onclick={() => { step = 3; submitError = ''; }}>Voltar</Button>
+				<Button variant="ghost" onclick={goToAIChoiceStepFromSummary}>Voltar</Button>
 				<Button variant="default" onclick={finish} disabled={isSubmitting}>
 					{isSubmitting ? 'Configurando…' : 'Começar'}
 				</Button>
@@ -495,7 +994,13 @@
 	.overlay {
 		position: fixed;
 		inset: 0;
-		background: var(--color-black);
+		background-color: var(--color-surface-0);
+		background-image: radial-gradient(
+			circle,
+			var(--color-hud-grid-dot) var(--size-hud-grid-dot),
+			transparent var(--size-hud-grid-dot)
+		);
+		background-size: var(--size-hud-grid) var(--size-hud-grid);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -503,64 +1008,74 @@
 	}
 
 	.wizard {
+		position: relative;
 		display: flex;
 		flex-direction: column;
-		width: 520px;
-		max-width: 95vw;
-		max-height: 92vh;
+		width: var(--size-setup-panel-width);
+		max-width: var(--size-setup-panel-max-width);
+		max-height: var(--size-setup-panel-max-height);
 		background: var(--color-surface-1);
 		border-radius: var(--radius);
+		border: var(--size-setup-outline) solid var(--color-hud-line-subtle);
 		overflow: hidden;
+		box-shadow: 0 0 var(--size-hud-glow-blur) var(--color-hud-glow);
 	}
 
-	/* cabeçalho */
+	.wizard::before {
+		position: absolute;
+		inset: 0 var(--space-5) auto;
+		height: var(--size-hud-frame-line);
+		background: var(--color-hud-line);
+		content: '';
+		pointer-events: none;
+	}
+
 	.header {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: 1.25rem 1.75rem;
-		border-bottom: 1px solid color-mix(in srgb, var(--color-neutral) 10%, transparent);
+		padding: var(--space-4) var(--space-5);
+		border-bottom: var(--size-hud-frame-line) solid var(--color-hud-line-subtle);
 	}
 
 	.logo {
-		font-size: 0.875rem;
-		font-weight: 700;
-		letter-spacing: 0.2rem;
-		color: var(--color-neutral);
+		font-size: var(--type-body-compact);
+		letter-spacing: var(--tracking-hud-label);
+		color: var(--text-primary);
 		text-transform: uppercase;
 	}
 
 	.steps {
 		display: flex;
-		gap: 0.4rem;
+		gap: var(--space-2);
+		align-items: center;
 	}
 
 	.step-dot {
-		width: 6px;
-		height: 6px;
+		width: var(--size-setup-progress-dot);
+		height: var(--size-setup-progress-dot);
 		border-radius: 50%;
-		background: var(--color-surface-3);
-		transition: all 0.2s;
+		background: var(--color-neutral-disabled);
+		transition: all var(--duration-setup-transition) ease;
 	}
 
 	.step-dot.active {
-		background: var(--color-interactive);
-		width: 18px;
+		background: var(--color-selection);
+		width: var(--size-setup-progress-active);
 		border-radius: var(--radius);
 	}
 
 	.step-dot.done {
-		background: color-mix(in srgb, var(--color-interactive) 50%, transparent);
+		background: var(--color-interactive);
 	}
 
-	/* corpo */
 	.body {
 		flex: 1;
 		overflow-y: auto;
-		padding: 2rem 1.75rem 1rem;
+		padding: var(--space-5) var(--space-5) var(--space-4);
 		display: flex;
 		flex-direction: column;
-		gap: 1.25rem;
+		gap: var(--space-4);
 	}
 
 	.body-center {
@@ -569,7 +1084,7 @@
 	}
 
 	.step-icon {
-		font-size: 2.25rem;
+		font-size: var(--type-icon-large);
 		color: var(--color-interactive);
 	}
 
@@ -578,76 +1093,73 @@
 	}
 
 	h2 {
-		font-size: 1.25rem;
-		font-weight: 600;
-		color: var(--color-neutral-active);
+		font-size: var(--type-title);
+		color: var(--text-primary);
 		margin: 0;
 	}
 
 	.subtitle {
-		font-size: 0.875rem;
-		color: var(--color-neutral);
+		font-size: var(--type-body);
+		color: var(--text-body);
 		margin: 0;
-		line-height: 1.6;
+		line-height: var(--line-height-body);
 	}
 
 	.field-group {
 		display: flex;
 		flex-direction: column;
-		gap: 0.375rem;
+		gap: var(--spacing-label-to-value);
 	}
 
 	.field-row {
 		display: flex;
-		gap: 0.625rem;
+		gap: var(--spacing-control-internal);
 		align-items: flex-end;
 	}
 
 	label {
-		font-size: 0.8125rem;
-		font-weight: 500;
-		color: var(--color-neutral);
+		font-size: var(--type-label);
+		color: var(--text-secondary);
 		text-transform: uppercase;
-		letter-spacing: 0.05rem;
+		letter-spacing: var(--tracking-hud-label);
 	}
 
 	.hint {
 		font-weight: 400;
 		text-transform: none;
 		letter-spacing: 0;
-		opacity: 0.75;
+		color: var(--text-secondary);
 	}
 
 	.checkbox-row {
 		display: flex;
 		flex-direction: row;
 		align-items: center;
-		gap: 0.5rem;
+		gap: var(--spacing-control-internal);
 		text-transform: none;
 		letter-spacing: 0;
-		font-weight: 400;
 		cursor: pointer;
 	}
 
-	/* provedores */
 	.provider-grid {
 		display: grid;
 		grid-template-columns: repeat(3, 1fr);
-		gap: 0.625rem;
+		gap: var(--spacing-control-internal);
 	}
 
 	:global([data-slot="button"].provider-card) {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 0.375rem;
-		padding: 0.875rem 0.5rem;
+		gap: var(--spacing-inline-tight);
+		padding: var(--space-3) var(--space-2);
+		min-height: var(--size-touch-target);
 		height: auto;
 		background: var(--color-surface-2);
-		border: 1.5px solid transparent;
+		border: var(--size-setup-outline) solid var(--color-hud-line-subtle);
 		border-radius: var(--radius);
 		cursor: pointer;
-		transition: all 0.15s;
+		transition: all var(--duration-setup-transition) ease;
 		position: relative;
 	}
 
@@ -656,8 +1168,8 @@
 	}
 
 	:global([data-slot="button"].provider-card.selected) {
-		border-color: var(--color-interactive);
-		background: color-mix(in srgb, var(--color-interactive) 8%, var(--color-surface-2));
+		border-color: var(--color-selection);
+		background: var(--color-selection-subtle);
 	}
 
 	:global([data-slot="button"].provider-card.disabled) {
@@ -666,71 +1178,69 @@
 	}
 
 	:global([data-slot="button"].provider-card .material-symbols-outlined) {
-		font-size: 1.5rem;
-		color: var(--color-neutral);
+		font-size: var(--type-icon-medium);
+		color: var(--text-secondary);
 	}
 
 	:global([data-slot="button"].provider-card.selected .material-symbols-outlined) {
-		color: var(--color-interactive);
+		color: var(--color-selection);
 	}
 
 	.provider-label {
-		font-size: 0.75rem;
-		color: var(--color-neutral);
+		font-size: var(--type-caption);
+		color: var(--text-body);
 		text-align: center;
-		line-height: 1.3;
+		line-height: var(--line-height-compact);
 	}
 
 	.badge-soon {
 		position: absolute;
-		top: 0.25rem;
-		right: 0.25rem;
-		font-size: 0.625rem;
+		top: var(--space-1);
+		right: var(--space-1);
+		font-size: var(--type-overline);
 		background: var(--color-surface-3);
-		color: var(--color-neutral);
-		padding: 0.1rem 0.35rem;
+		color: var(--text-secondary);
+		padding: var(--space-1) var(--space-2);
 		border-radius: var(--radius);
 		text-transform: uppercase;
-		letter-spacing: 0.05rem;
+		letter-spacing: var(--tracking-hud-label);
 	}
 
-	/* formulário de e-mail */
 	.email-form {
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
-		padding-top: 0.5rem;
+		gap: var(--space-3);
+		padding-top: var(--space-2);
 	}
 
 	:global([data-slot="button"].instructions-toggle) {
 		display: flex;
 		align-items: center;
-		gap: 0.4rem;
+		gap: var(--spacing-inline-tight);
 		color: var(--color-interactive);
-		font-size: 0.8125rem;
+		font-size: var(--type-body-compact);
 		padding: 0;
 		height: auto;
 	}
 
 	:global([data-slot="button"].instructions-toggle:hover) {
 		background: transparent;
-		opacity: 0.8;
 		color: var(--color-interactive);
 	}
 
 	:global([data-slot="button"].instructions-toggle .material-symbols-outlined) {
-		font-size: 1rem;
+		font-size: var(--type-icon-small);
 	}
 
 	.instructions {
 		margin: 0;
-		padding-left: 1.25rem;
-		font-size: 0.8125rem;
-		color: var(--color-neutral);
-		line-height: 1.7;
+		padding: var(--space-3) var(--space-3) var(--space-3) var(--space-6);
+		font-size: var(--type-body-compact);
+		color: var(--text-body);
+		line-height: var(--line-height-body);
 		background: var(--color-surface-2);
 		border-radius: var(--radius);
-		padding: 1rem 1rem 1rem 2rem;
+		border-inline-start: var(--size-hud-frame-line) solid var(--color-hud-line);
 	}
 
 	@keyframes spin {
@@ -738,54 +1248,54 @@
 	}
 
 	.spin {
-		animation: spin 0.8s linear infinite;
+		animation: spin var(--duration-setup-spinner) linear infinite;
 		display: inline-block;
 	}
 
 	.test-ok {
 		display: flex;
 		align-items: center;
-		gap: 0.4rem;
-		font-size: 0.8125rem;
+		gap: var(--spacing-inline-tight);
+		font-size: var(--type-body-compact);
 		color: var(--color-success);
 		margin: 0;
 	}
 
 	.test-ok .material-symbols-outlined,
 	.test-error .material-symbols-outlined {
-		font-size: 1rem;
+		font-size: var(--type-icon-small);
 	}
 
 	.test-error {
 		display: flex;
 		align-items: flex-start;
-		gap: 0.4rem;
-		font-size: 0.8125rem;
+		gap: var(--spacing-inline-tight);
+		font-size: var(--type-body-compact);
 		color: var(--color-danger);
 		margin: 0;
-		line-height: 1.5;
+		line-height: var(--line-height-body);
 	}
 
-	/* cards de ia */
 	.ai-cards {
 		display: flex;
 		flex-direction: column;
-		gap: 0.75rem;
+		gap: var(--space-2);
 	}
 
 	:global([data-slot="button"].ai-card) {
 		display: flex;
 		align-items: center;
-		gap: 1rem;
-		padding: 1rem 1.25rem;
+		gap: var(--space-3);
+		padding: var(--space-3) var(--space-4);
+		min-height: var(--size-touch-target);
 		height: auto;
 		justify-content: flex-start;
 		width: 100%;
 		background: var(--color-surface-2);
-		border: 1.5px solid transparent;
+		border: var(--size-setup-outline) solid var(--color-hud-line-subtle);
 		border-radius: var(--radius);
 		cursor: pointer;
-		transition: all 0.15s;
+		transition: all var(--duration-setup-transition) ease;
 	}
 
 	:global([data-slot="button"].ai-card:hover) {
@@ -793,77 +1303,51 @@
 	}
 
 	:global([data-slot="button"].ai-card.selected) {
-		border-color: var(--color-interactive);
-		background: color-mix(in srgb, var(--color-interactive) 8%, var(--color-surface-2));
+		border-color: var(--color-selection);
+		background: var(--color-selection-subtle);
 	}
 
 	.ai-card-icon {
-		font-size: 1.75rem;
-		color: var(--color-neutral);
+		font-size: var(--type-icon-medium);
+		color: var(--text-secondary);
 		flex-shrink: 0;
 	}
 
 	:global([data-slot="button"].ai-card.selected .ai-card-icon) {
-		color: var(--color-interactive);
+		color: var(--color-selection);
 	}
 
 	.ai-card-text {
 		flex: 1;
 		display: flex;
 		flex-direction: column;
-		gap: 0.2rem;
+		gap: var(--spacing-inline-tight);
 	}
 
-	.ai-card-text strong {
-		font-size: 0.9375rem;
-		color: var(--color-neutral-active);
-		font-weight: 600;
+	.ai-card-title {
+		font-size: var(--type-body-prominent);
+		color: var(--text-primary);
 	}
 
 	.ai-card-text span {
-		font-size: 0.8125rem;
-		color: var(--color-neutral);
-		line-height: 1.4;
+		font-size: var(--type-body-compact);
+		color: var(--text-body);
+		line-height: var(--line-height-compact);
 	}
 
 	.ai-card-check .material-symbols-outlined {
-		font-size: 1.25rem;
-		color: var(--color-interactive);
+		font-size: var(--type-icon-medium);
+		color: var(--color-selection);
 	}
 
-	/* api key */
-	.api-key-section {
-		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
-		padding: 1rem;
-		background: var(--color-surface-2);
-		border-radius: var(--radius);
-	}
-
-	.api-key-hint {
-		font-size: 0.8125rem;
-		color: var(--color-neutral);
-		margin: 0;
-	}
-
-	.api-key-hint a {
-		color: var(--color-interactive);
-		text-decoration: none;
-	}
-
-	.api-key-hint a:hover {
-		text-decoration: underline;
-	}
-
-	/* mcp info */
 	.mcp-info {
-		padding: 1rem;
+		padding: var(--space-3);
 		background: var(--color-surface-2);
 		border-radius: var(--radius);
-		font-size: 0.8125rem;
-		color: var(--color-neutral);
-		line-height: 1.6;
+		font-size: var(--type-body-compact);
+		color: var(--text-body);
+		line-height: var(--line-height-body);
+		border-inline-start: var(--size-hud-frame-line) solid var(--color-hud-line);
 	}
 
 	.mcp-info p {
@@ -872,88 +1356,124 @@
 
 	.mcp-info code {
 		background: var(--color-surface-3);
-		padding: 0.1rem 0.35rem;
+		padding: var(--space-1) var(--space-2);
 		border-radius: var(--radius);
-		font-size: 0.8rem;
+		font-size: var(--type-caption);
 		color: var(--color-interactive);
 	}
 
-	/* resumo */
 	.summary {
 		display: flex;
 		flex-direction: column;
-		gap: 0.625rem;
+		gap: var(--space-2);
 		width: 100%;
-		padding: 1.25rem;
+		padding: var(--space-4);
 		background: var(--color-surface-2);
 		border-radius: var(--radius);
+		border: var(--size-hud-frame-line) solid var(--color-hud-line-subtle);
 	}
 
 	.summary-row {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
-		font-size: 0.875rem;
-		color: var(--color-neutral);
+		gap: var(--space-2);
+		font-size: var(--type-body);
+		color: var(--text-body);
 	}
 
 	.summary-row .material-symbols-outlined {
-		font-size: 1.125rem;
+		font-size: var(--type-icon-medium);
 		color: var(--color-interactive);
 		flex-shrink: 0;
 	}
 
-	.summary-row em {
-		opacity: 0.6;
-		font-style: normal;
+	.summary-meta {
+		color: var(--text-secondary);
 	}
 
-	/* consentimento de analytics */
-	.consent-row {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.625rem;
-		padding: 0.875rem 1rem;
-		background: var(--color-surface-2);
-		border-radius: var(--radius);
-		font-size: 0.8125rem;
-		color: var(--color-neutral);
-		line-height: 1.55;
-		cursor: pointer;
-		width: 100%;
-		text-align: left;
-	}
-
-	.consent-row :global([data-slot="checkbox"]) {
-		margin-top: 0.15rem;
-		flex-shrink: 0;
-	}
-
-	/* erro de submissão */
 	.submit-error {
 		display: flex;
 		align-items: flex-start;
-		gap: 0.5rem;
-		font-size: 0.8125rem;
-		color: var(--color-danger);
+		gap: var(--spacing-control-internal);
+		font-size: var(--type-body-compact);
+		color: var(--text-danger);
 		margin: 0;
-		line-height: 1.5;
+		line-height: var(--line-height-body);
+		border-inline-start: var(--size-hud-frame-line) solid var(--color-danger);
+		padding: var(--space-2);
 	}
 
 	.submit-error .material-symbols-outlined {
-		font-size: 1rem;
+		font-size: var(--type-icon-small);
 		flex-shrink: 0;
-		margin-top: 0.1rem;
+		margin-top: var(--space-1);
 	}
 
-	/* rodapé */
 	.footer {
-		padding: 1.25rem 1.75rem;
+		padding: var(--space-4) var(--space-5);
 		display: flex;
 		justify-content: flex-end;
-		gap: 0.75rem;
-		border-top: 1px solid color-mix(in srgb, var(--color-neutral) 10%, transparent);
+		gap: var(--space-2);
+		border-top: var(--size-hud-frame-line) solid var(--color-hud-line-subtle);
 	}
 
+	.field-label-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-2);
+	}
+
+	.model-metadata {
+		display: grid;
+		gap: var(--space-2);
+		padding: var(--space-3);
+		border-inline-start: var(--size-hud-frame-line) solid var(--color-hud-line-subtle);
+		background: var(--color-surface-2);
+	}
+
+	.model-metadata p {
+		display: flex;
+		justify-content: space-between;
+		gap: var(--space-3);
+		margin: 0;
+		font-size: var(--type-body-compact);
+		color: var(--text-secondary);
+	}
+
+	.model-metadata p span:last-child {
+		color: var(--text-body);
+		text-align: end;
+		overflow-wrap: anywhere;
+	}
+
+	.state-message,
+	.state-detail {
+		margin: 0;
+		font-size: var(--type-body-compact);
+		color: var(--text-secondary);
+		line-height: var(--line-height-body);
+	}
+
+	.state-panel {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: var(--space-2);
+		padding: var(--space-3);
+		border-inline-start: var(--size-hud-frame-line) solid var(--color-danger);
+		background: var(--color-surface-2);
+		color: var(--text-body);
+	}
+
+	.state-panel p {
+		margin: 0;
+	}
+
+	.state-error {
+		margin: 0;
+		font-size: var(--type-body-compact);
+		color: var(--text-danger);
+	}
 
 </style>

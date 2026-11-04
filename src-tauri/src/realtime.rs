@@ -1,7 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 /// A creation-query declares interest in new instances of a class that have a specific
 /// property pointing at a specific value (e.g. AIConversationMessage.partOfConversation=convIri).
@@ -138,13 +138,13 @@ impl SubscriptionRegistry {
 
 /// True when the entity is currently shown by the frontend. When no registry is
 /// managed (CI / in-memory mode) there is no UI to filter for, so emit unconditionally.
-fn subscribed(app: &AppHandle, entity_id: &str) -> bool {
+fn subscribed<R: Runtime>(app: &AppHandle<R>, entity_id: &str) -> bool {
     app.try_state::<SubscriptionRegistry>()
         .map(|r| r.is_subscribed(entity_id))
         .unwrap_or(true)
 }
 
-pub fn emit_entity_updated(app: &AppHandle, entity_id: &str) {
+pub fn emit_entity_updated<R: Runtime>(app: &AppHandle<R>, entity_id: &str) {
     if subscribed(app, entity_id) {
         let payload = serde_json::json!({ "entityId": entity_id });
         if let Some(registry) = app.try_state::<SubscriptionRegistry>() {
@@ -236,8 +236,8 @@ pub fn emit_entity_deleted(app: &AppHandle, entity_id: &str) {
 /// Reactors MAY inspect `writtenPredicates` to skip an `executor.read()` when none
 /// of their relevant predicates were touched. Existing listeners that parse only
 /// `entityId` are unaffected: unknown JSON fields are ignored by `serde_json`.
-pub fn emit_entity_changed_internal(
-    app: &AppHandle,
+pub fn emit_entity_changed_internal<R: Runtime>(
+    app: &AppHandle<R>,
     entity_id: &str,
     written_predicates: &[String],
 ) {

@@ -186,6 +186,7 @@ fn normalize_node_type(full_type: &str) -> &str {
 const STATUS_IN_PROGRESS: &str = "foundation:InProgress";
 const STATUS_COMPLETED: &str = "foundation:Completed";
 const STATUS_FAILED: &str = "foundation:Status_1772993026091";
+const STATUS_CANCELLED: &str = "foundation:Status_1772570972069";
 
 fn create_execution_record(conn: &mut rusqlite::Connection, process_iri: &str) -> Result<String> {
     let now_ms = Utc::now().timestamp_millis();
@@ -634,6 +635,40 @@ fn finish_execution_record(
     Ok(exec_iri.to_string())
 }
 
+fn finish_execution_cancelled_record(
+    conn: &mut rusqlite::Connection,
+    exec_iri: &str,
+    reason: &str,
+) -> Result<String> {
+    let ind = Individual::new(exec_iri);
+    ind.add_property(
+        conn,
+        "foundation:hasStatus",
+        vec![Object::Iri(STATUS_CANCELLED.to_string())],
+        "process_automation",
+    )
+    .map_err(|error| error.to_string())?;
+    ind.add_property(
+        conn,
+        "foundation:hasEndTime",
+        vec![lit_datetime(Utc::now().timestamp_millis())],
+        "process_automation",
+    )
+    .map_err(|error| error.to_string())?;
+    ind.add_property(
+        conn,
+        "foundation:errorMessage",
+        vec![Object::Literal {
+            value: reason.to_string(),
+            datatype: Some("xsd:string".to_string()),
+            language: None,
+        }],
+        "process_automation",
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(exec_iri.to_string())
+}
+
 /// Runs a BPMN process from the start, threading outputs through an ExecutionContext.
 /// Set `dry_run = true` to execute read operations normally but skip all writes in CodeTask scripts.
 pub async fn run_process(
@@ -760,6 +795,7 @@ pub async fn run_process_with_context(
         None,
     )
     .await;
+    let cancelled_reason = ctx.get("__executionCancelled").cloned();
 
     if let Some(active) = app.try_state::<ActiveExecutions>() {
         active.remove(&exec_iri);
@@ -770,9 +806,16 @@ pub async fn run_process_with_context(
             let exec_iri = exec_iri.clone();
             let control_instance_iri = control_instance_iri.clone();
             let error = run_result.as_ref().err().cloned();
+            let cancelled_reason = cancelled_reason.clone();
             move |conn| {
-                finish_execution_record(conn, &exec_iri, error.as_deref())?;
-                let terminal_status = if error.is_none() {
+                if let Some(reason) = cancelled_reason.as_deref() {
+                    finish_execution_cancelled_record(conn, &exec_iri, reason)?;
+                } else {
+                    finish_execution_record(conn, &exec_iri, error.as_deref())?;
+                }
+                let terminal_status = if cancelled_reason.is_some() {
+                    STATUS_CANCELLED
+                } else if error.is_none() {
                     STATUS_COMPLETED
                 } else {
                     STATUS_FAILED
@@ -790,7 +833,11 @@ pub async fn run_process_with_context(
         })
         .await?;
 
-    if let Some(error_msg) = run_result.as_ref().err() {
+    if let Some(error_msg) = run_result
+        .as_ref()
+        .err()
+        .filter(|_| cancelled_reason.is_none())
+    {
         let error_msg = error_msg.clone();
         let exec_iri_notif = exec_iri.clone();
         let process_iri_notif = process_iri.clone();
@@ -807,7 +854,9 @@ pub async fn run_process_with_context(
             .ok();
     }
 
-    let finished_status = if run_result.is_ok() {
+    let finished_status = if cancelled_reason.is_some() {
+        "cancelled"
+    } else if run_result.is_ok() {
         "completed"
     } else {
         "failed"
@@ -1155,39 +1204,180 @@ async fn execute_nodes(
             Err(e) => (None, Some(e)),
         };
 
-        executor
-            .write({
-                let step_iri = step_iri.clone();
-                let out = output.clone();
-                let err = step_error.clone();
-                move |conn| finish_step_record(conn, &step_iri, out.as_deref(), err.as_deref())
-            })
-            .await?;
+        if step_error.is_some() {
+            executor
+                .write({
+                    let step_iri = step_iri.clone();
+                    let out = output.clone();
+                    let err = step_error.clone();
+                    move |conn| finish_step_record(conn, &step_iri, out.as_deref(), err.as_deref())
+                })
+                .await?;
+        }
 
         // Wait for the QueryWorker to recompute all query/formula-derived properties
         // on the control instance before advancing to the next node. Without this
         // barrier, a headless execution would read stale (empty) query-property values
         // because `entity-changed-internal` is async and the worker may not have
         // finished materialising when the next node reads `ctx["self"]`.
-        if let Some(ref ci_iri) = ctx.get("self").cloned() {
-            if let Some(worker) = app.try_state::<crate::owl::query_worker::QueryWorker>() {
-                if let Err(timeout_msg) = worker.await_drained(ci_iri).await {
-                    return Err(timeout_msg);
-                }
-            }
-            // Then the same for formula/aggregation properties. Query properties go
-            // first because a resolved query set is what several aggregates count
-            // over — draining formulas first would total an empty set.
-            //
-            // Without this second barrier, a node that writes a value and a next node
-            // that reads a total derived from it disagree: the total is one step
-            // behind, and nothing in the read says so.
-            if let Err(timeout_msg) =
-                crate::owl::formula_worker::FormulaWorker::await_drained(app, &executor, ci_iri)
+        if step_error.is_none() {
+            if let Some(ref ci_iri) = ctx.get("self").cloned() {
+                emit_materialization_progress(
+                    app,
+                    exec_iri,
+                    &step_iri,
+                    &node_iri,
+                    "query-properties",
+                    "waiting",
+                    None,
+                );
+                let query_worker = app
+                    .try_state::<crate::commands::query_worker::QueryWorker>()
+                    .ok_or_else(|| {
+                        "query worker is unavailable during materialization barrier".to_string()
+                    })?;
+                let drain_started = std::time::Instant::now();
+                match query_worker
+                    .await_drained(&executor, ci_iri, exec_iri, &step_iri, &node_iri)
                     .await
-            {
-                return Err(timeout_msg);
+                {
+                    Ok(()) => log_backend(
+                        "debug",
+                        &format!(
+                            "[executor] query materialization barrier completed execution={} step={} entity={} duration_ms={}",
+                            exec_iri,
+                            step_iri,
+                            ci_iri,
+                            drain_started.elapsed().as_millis()
+                        ),
+                    ),
+                    Err(error) => {
+                        log_backend(
+                            "error",
+                            &format!(
+                                "[executor] query materialization barrier failed execution={} step={} entity={} duration_ms={} error={}",
+                                exec_iri,
+                                step_iri,
+                                ci_iri,
+                                drain_started.elapsed().as_millis(),
+                                error
+                            ),
+                        );
+                        persist_materialization_failure(&executor, &step_iri, &error).await?;
+                        emit_materialization_progress(app, exec_iri, &step_iri, &node_iri, "query-properties", "failed", Some(&error));
+                        return Err(error);
+                    }
             }
+                emit_materialization_progress(
+                    app,
+                    exec_iri,
+                    &step_iri,
+                    &node_iri,
+                    "query-properties",
+                    "completed",
+                    None,
+                );
+                // Then the same for formula/aggregation properties. Query properties go
+                // first because a resolved query set is what several aggregates count
+                // over — draining formulas first would total an empty set.
+                //
+                // Without this second barrier, a node that writes a value and a next node
+                // that reads a total derived from it disagree: the total is one step
+                // behind, and nothing in the read says so.
+                let formula_drain_started = std::time::Instant::now();
+                emit_materialization_progress(
+                    app,
+                    exec_iri,
+                    &step_iri,
+                    &node_iri,
+                    "calculated-properties",
+                    "waiting",
+                    None,
+                );
+                let formula_correlation = crate::owl::materialization::MaterializationCorrelation {
+                    execution_iri: exec_iri.to_string(),
+                    step_iri: step_iri.to_string(),
+                    node_iri: node_iri.to_string(),
+                    source_tx: None,
+                };
+                if let Err(terminal) =
+                    crate::commands::formula_worker::FormulaWorker::await_drained(
+                        app,
+                        &executor,
+                        ci_iri,
+                        formula_correlation,
+                    )
+                    .await
+                {
+                    let timeout_msg = terminal.to_string();
+                    log_backend(
+                    "error",
+                    &format!(
+                        "[executor] formula materialization barrier failed execution={} step={} entity={} duration_ms={} error={}",
+                        exec_iri,
+                        step_iri,
+                        ci_iri,
+                        formula_drain_started.elapsed().as_millis(),
+                        timeout_msg
+                    ),
+                );
+                    match &terminal {
+                        crate::owl::materialization::MaterializationTerminal::Cancelled(reason) => {
+                            persist_materialization_cancellation(&executor, &step_iri, reason)
+                                .await?;
+                        }
+                        crate::owl::materialization::MaterializationTerminal::Failed(reason) => {
+                            persist_materialization_failure(&executor, &step_iri, reason).await?;
+                        }
+                    }
+                    emit_materialization_progress(
+                        app,
+                        exec_iri,
+                        &step_iri,
+                        &node_iri,
+                        "calculated-properties",
+                        match terminal {
+                            crate::owl::materialization::MaterializationTerminal::Cancelled(_) => {
+                                "cancelled"
+                            }
+                            crate::owl::materialization::MaterializationTerminal::Failed(_) => {
+                                "failed"
+                            }
+                        },
+                        Some(&timeout_msg),
+                    );
+                    return abort_materialization_barrier(ctx, &terminal);
+                }
+                emit_materialization_progress(
+                    app,
+                    exec_iri,
+                    &step_iri,
+                    &node_iri,
+                    "calculated-properties",
+                    "completed",
+                    None,
+                );
+                log_backend(
+                "debug",
+                &format!(
+                    "[executor] formula materialization barrier completed execution={} step={} entity={} duration_ms={}",
+                    exec_iri,
+                    step_iri,
+                    ci_iri,
+                    formula_drain_started.elapsed().as_millis()
+                ),
+            );
+            }
+        }
+
+        if step_error.is_none() {
+            executor
+                .write({
+                    let step_iri = step_iri.clone();
+                    let out = output.clone();
+                    move |conn| finish_step_record(conn, &step_iri, out.as_deref(), None)
+                })
+                .await?;
         }
 
         if let Some(ref e) = step_error {
@@ -1280,6 +1470,99 @@ async fn execute_nodes(
     }
 
     Ok(None)
+}
+
+fn abort_materialization_barrier(
+    ctx: &mut ExecutionContext,
+    terminal: &crate::owl::materialization::MaterializationTerminal,
+) -> Result<Option<String>> {
+    match terminal {
+        crate::owl::materialization::MaterializationTerminal::Cancelled(reason) => {
+            ctx.insert("__executionCancelled".to_string(), reason.clone());
+            Err(reason.clone())
+        }
+        crate::owl::materialization::MaterializationTerminal::Failed(reason) => Err(reason.clone()),
+    }
+}
+
+async fn persist_materialization_failure(
+    executor: &DbExecutor,
+    step_iri: &str,
+    error: &str,
+) -> Result<()> {
+    let step = step_iri.to_string();
+    let reason = error.to_string();
+    executor
+        .write(move |conn| finish_step_record(conn, &step, None, Some(&reason)))
+        .await
+        .map(|_| ())
+}
+
+async fn persist_materialization_cancellation(
+    executor: &DbExecutor,
+    step_iri: &str,
+    reason: &str,
+) -> Result<()> {
+    let step_id = step_iri.to_string();
+    let step = step_id.clone();
+    let message = reason.to_string();
+    executor
+        .write(move |conn| {
+            let step = Individual::new(&step);
+            step.add_property(
+                conn,
+                "foundation:hasStatus",
+                vec![Object::Iri(STATUS_CANCELLED.to_string())],
+                "process_automation",
+            )
+            .map_err(|error| error.to_string())?;
+            step.add_property(
+                conn,
+                "foundation:stepFinishedAt",
+                vec![lit_datetime(Utc::now().timestamp_millis())],
+                "process_automation",
+            )
+            .map_err(|error| error.to_string())?;
+            step.add_property(
+                conn,
+                "foundation:hasEndTime",
+                vec![lit_datetime(Utc::now().timestamp_millis())],
+                "process_automation",
+            )
+            .map_err(|error| error.to_string())?;
+            step.add_property(
+                conn,
+                "foundation:stepError",
+                vec![lit_str(&message)],
+                "process_automation",
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(step_id)
+        })
+        .await
+        .map(|_| ())
+}
+
+fn emit_materialization_progress(
+    app: &AppHandle,
+    execution_iri: &str,
+    step_iri: &str,
+    node_iri: &str,
+    phase: &str,
+    status: &str,
+    error: Option<&str>,
+) {
+    let mut payload = serde_json::json!({
+        "executionIri": execution_iri,
+        "stepIri": step_iri,
+        "nodeIri": node_iri,
+        "status": status,
+        "phase": phase,
+    });
+    if let Some(reason) = error {
+        payload["error"] = serde_json::Value::String(reason.to_string());
+    }
+    app.emit("automation-step-progress", payload).ok();
 }
 
 async fn run_sub_process(
@@ -1530,12 +1813,12 @@ async fn run_sub_process(
         .collect();
 
     if !children_for_link.is_empty() {
-        let job_ids_json = executor
+        let children_for_write = children_for_link.clone();
+        let _ = executor
             .write({
                 let parent_self_for_link = parent_self_for_link.clone();
                 move |conn| {
-                    let mut all_job_ids: Vec<String> = Vec::new();
-                    for child_iri in &children_for_link {
+                    for child_iri in &children_for_write {
                         Individual::add_iri_value(
                             conn,
                             child_iri,
@@ -1544,24 +1827,25 @@ async fn run_sub_process(
                             "process_automation",
                         )
                         .map_err(|e| e.to_string())?;
-                        let job_ids = crate::owl::formula_worker::create_instance_recalc_jobs(
-                            conn,
-                            child_iri,
-                            "foundation:iterationOf",
-                        );
-                        all_job_ids.extend(job_ids);
                     }
-                    serde_json::to_string(&all_job_ids).map_err(|e| e.to_string())
+                    Ok(String::new())
                 }
             })
             .await?;
 
-        let job_ids: Vec<String> = serde_json::from_str(&job_ids_json).unwrap_or_default();
-        if let Some(worker) = app.try_state::<crate::owl::formula_worker::FormulaWorker>() {
-            for job_id in job_ids {
-                let _ = worker
-                    .sender
-                    .try_send(crate::owl::formula_worker::WorkerCommand::Enqueue { job_id });
+        if let Some(worker) = app.try_state::<crate::commands::formula_worker::FormulaWorker>() {
+            for child_iri in children_for_link {
+                let job_ids = crate::commands::formula_worker::create_instance_recalc_jobs(
+                    executor.inner(),
+                    &child_iri,
+                    "foundation:iterationOf",
+                )
+                .await?;
+                for job_id in job_ids {
+                    let _ = worker.sender.try_send(
+                        crate::commands::formula_worker::WorkerCommand::Enqueue { job_id },
+                    );
+                }
             }
         }
     }

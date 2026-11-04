@@ -10,11 +10,11 @@ fn enqueue_formula_jobs(app: &tauri::AppHandle, job_ids_json: &str) {
     if job_ids.is_empty() {
         return;
     }
-    let worker = app.state::<crate::owl::formula_worker::FormulaWorker>();
+    let worker = app.state::<crate::commands::formula_worker::FormulaWorker>();
     for job_id in job_ids {
         let _ = worker
             .sender
-            .try_send(crate::owl::formula_worker::WorkerCommand::Enqueue { job_id });
+            .try_send(crate::commands::formula_worker::WorkerCommand::Enqueue { job_id });
     }
 }
 
@@ -122,6 +122,10 @@ pub struct PropertyValueCursor {
 #[serde(rename_all = "camelCase")]
 pub struct PropertyValue {
     pub property: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub presentation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
     pub property_label: String,
     pub property_comment: Option<String>,
     pub value: String,
@@ -637,29 +641,49 @@ pub async fn inspector__get_entity(
             .await;
     });
 
+    let snapshot_tx = executor.current_snapshot_tx().await?;
+    let entity_id_for_read = entity_id.clone();
     let result = executor
         .read(move |conn| {
             let t_read = std::time::Instant::now();
 
-            let snapshot_tx: i64 = conn
-                .query_row("SELECT COALESCE(MAX(tx), 0) FROM triples", [], |row| {
-                    row.get(0)
-                })
-                .map_err(|e| e.to_string())?;
-
             let groups = owl::load_graph_node_groups(conn);
             let t2 = std::time::Instant::now();
 
-            let mut data =
-                if let Some(class) = Class::get(conn, &entity_id).map_err(|e| e.to_string())? {
-                    get_class_data(conn, &entity_id, groups, class)?
-                } else if let Some(individual) =
-                    Individual::get(conn, &entity_id).map_err(|e| e.to_string())?
-                {
-                    individual::get_individual_data(conn, &entity_id, groups, individual)?
-                } else {
-                    return Err(format!("Entity {} not found or unknown type", entity_id));
-                };
+            let mut data = if let Some(class) =
+                Class::get(conn, &entity_id_for_read).map_err(|e| e.to_string())?
+            {
+                get_class_data(conn, &entity_id_for_read, groups, class)?
+            } else if let Some(individual) =
+                Individual::get(conn, &entity_id_for_read).map_err(|e| e.to_string())?
+            {
+                individual::get_individual_data(conn, &entity_id_for_read, groups, individual)?
+            } else {
+                return Err(format!(
+                    "Entity {} not found or unknown type",
+                    entity_id_for_read
+                ));
+            };
+            for property_value in &mut data.properties {
+                let presentation =
+                    crate::core_ontology::property_configuration::property_presentation(
+                        conn,
+                        &property_value.property,
+                    )
+                    .map_err(|error| error.to_string())?;
+                property_value.presentation = presentation.mode;
+                property_value.language = presentation.language;
+            }
+            for property_value in &mut data.backlinks {
+                let presentation =
+                    crate::core_ontology::property_configuration::property_presentation(
+                        conn,
+                        &property_value.property,
+                    )
+                    .map_err(|error| error.to_string())?;
+                property_value.presentation = presentation.mode;
+                property_value.language = presentation.language;
+            }
             data.snapshot_tx = snapshot_tx;
             let t3 = std::time::Instant::now();
 
@@ -669,7 +693,7 @@ pub async fn inspector__get_entity(
             crate::commands::logging::log_backend(
                 "DEBUG",
                 &format!(
-                    "[INSPECTOR] get_entity({entity_id}) \
+                    "[INSPECTOR] get_entity({entity_id_for_read}) \
             read_wait={}ms groups={}ms data={}ms serialize={}ms total={}ms",
                     t_read.duration_since(t0).as_millis(),
                     t2.duration_since(t_read).as_millis(),
@@ -690,7 +714,27 @@ pub async fn inspector__get_entity(
             t0.elapsed().as_millis()
         ),
     );
-    result
+    let mut entity_data: serde_json::Value = serde_json::from_str(&result?)
+        .map_err(|error| format!("Failed to decode entity data: {error}"))?;
+    if let Some(properties) = entity_data
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        let store = crate::owl::formula_job_store::FormulaJobStore::new(executor.inner().clone());
+        for property in properties {
+            let Some(property_iri) = property.get("property").and_then(serde_json::Value::as_str)
+            else {
+                continue;
+            };
+            if let Some(error) = store
+                .get_error(entity_id.clone(), property_iri.to_string())
+                .await?
+            {
+                property["formulaError"] = serde_json::Value::String(error.error_message);
+            }
+        }
+    }
+    serde_json::to_string(&entity_data).map_err(|error| error.to_string())
 }
 
 /// Returns the GraphNodeType configuration stored in the ontology.
@@ -718,18 +762,20 @@ pub async fn widget_inspector__clear_property(
 ) -> Result<(), String> {
     let entity_id_clone = entity_id.clone();
     let property_iri_clone = property_iri.clone();
-    let job_ids_json = executor
+    executor
         .write(move |conn| {
             Individual::clear_property(conn, &entity_id_clone, &property_iri_clone, "user")
                 .map_err(|e| e.to_string())?;
-            let job_ids = crate::owl::formula_worker::create_instance_recalc_jobs(
-                conn,
-                &entity_id_clone,
-                &property_iri_clone,
-            );
-            serde_json::to_string(&job_ids).map_err(|e| e.to_string())
+            Ok(String::new())
         })
         .await?;
+    let job_ids = crate::commands::formula_worker::create_instance_recalc_jobs(
+        &executor,
+        &entity_id,
+        &property_iri,
+    )
+    .await?;
+    let job_ids_json = serde_json::to_string(&job_ids).map_err(|e| e.to_string())?;
     enqueue_formula_jobs(&app, &job_ids_json);
     crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
@@ -747,7 +793,9 @@ pub async fn widget_inspector__update_property(
 ) -> Result<(), String> {
     let entity_id_clone = entity_id.clone();
     let property_iri_clone = property_iri.clone();
-    let job_ids_json = executor
+    let is_property_formula =
+        property_iri == "foundation:formula" || property_iri == "foundation:aggregation";
+    executor
         .write(move |conn| {
             if !value.is_empty() {
                 let effective_datatype = datatype.unwrap_or_else(|| {
@@ -771,22 +819,23 @@ pub async fn widget_inspector__update_property(
                     )
                     .map_err(|e| e.to_string())?;
             }
-            let job_ids = if property_iri_clone == "foundation:formula"
-                || property_iri_clone == "foundation:aggregation"
-            {
-                crate::owl::formula_worker::cancel_and_create_property_job(conn, &entity_id_clone)
-                    .map(|id| vec![id])
-                    .unwrap_or_default()
-            } else {
-                crate::owl::formula_worker::create_instance_recalc_jobs(
-                    conn,
-                    &entity_id_clone,
-                    &property_iri_clone,
-                )
-            };
-            serde_json::to_string(&job_ids).map_err(|e| e.to_string())
+            Ok(String::new())
         })
         .await?;
+    let job_ids = if is_property_formula {
+        vec![
+            crate::commands::formula_worker::cancel_and_create_property_job(&executor, &entity_id)
+                .await?,
+        ]
+    } else {
+        crate::commands::formula_worker::create_instance_recalc_jobs(
+            &executor,
+            &entity_id,
+            &property_iri,
+        )
+        .await?
+    };
+    let job_ids_json = serde_json::to_string(&job_ids).map_err(|e| e.to_string())?;
     enqueue_formula_jobs(&app, &job_ids_json);
     crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
@@ -803,7 +852,7 @@ pub async fn widget_inspector__set_references(
 ) -> Result<(), String> {
     let entity_id_clone = entity_id.clone();
     let property_iri_clone = property_iri.clone();
-    let job_ids_json = executor
+    executor
         .write(move |conn| {
             Individual::clear_property(conn, &entity_id_clone, &property_iri_clone, "user")
                 .map_err(|e| e.to_string())?;
@@ -814,14 +863,16 @@ pub async fn widget_inspector__set_references(
                     .add_property(conn, &property_iri_clone, values, "user")
                     .map_err(|e| e.to_string())?;
             }
-            let job_ids = crate::owl::formula_worker::create_instance_recalc_jobs(
-                conn,
-                &entity_id_clone,
-                &property_iri_clone,
-            );
-            serde_json::to_string(&job_ids).map_err(|e| e.to_string())
+            Ok(String::new())
         })
         .await?;
+    let job_ids = crate::commands::formula_worker::create_instance_recalc_jobs(
+        &executor,
+        &entity_id,
+        &property_iri,
+    )
+    .await?;
+    let job_ids_json = serde_json::to_string(&job_ids).map_err(|e| e.to_string())?;
     enqueue_formula_jobs(&app, &job_ids_json);
     crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
@@ -1493,6 +1544,8 @@ fn get_class_data(
 
     for type_thing in &class.types {
         properties.push(PropertyValue {
+            presentation: None,
+            language: None,
             property: "rdf:type".to_string(),
             property_label: "type".to_string(),
             property_comment: Some("The type of this entity".to_string()),
@@ -1530,6 +1583,8 @@ fn get_class_data(
 
     for super_class in &class.super_classes {
         properties.push(PropertyValue {
+            presentation: None,
+            language: None,
             property: "rdfs:subClassOf".to_string(),
             property_label: "subClassOf".to_string(),
             property_comment: Some("Parent class of this class".to_string()),
@@ -1616,6 +1671,8 @@ fn get_class_data(
         let ai_behavior_rules = prop.ai_behavior_rules.clone();
 
         properties.push(PropertyValue {
+            presentation: None,
+            language: None,
             property: property_iri.clone(),
             property_label,
             property_comment,
@@ -1676,6 +1733,8 @@ fn get_class_data(
         };
 
         properties.push(PropertyValue {
+            presentation: None,
+            language: None,
             property: predicate.clone(),
             property_label,
             property_comment,
@@ -1762,6 +1821,8 @@ fn get_class_data(
             .cloned();
 
         backlinks.push(PropertyValue {
+            presentation: None,
+            language: None,
             property: property_iri.clone(),
             property_label: "type of".to_string(),
             property_comment: None,

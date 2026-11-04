@@ -84,6 +84,7 @@
           valueIcon: item.valueIcon ?? null,
           valueStatus: item.valueStatus ?? null,
           datatype: item.datatype ?? null,
+          presentation: item.presentation ?? null,
           language: item.language ?? null,
           unitLabel: null,
           formulaError: null,

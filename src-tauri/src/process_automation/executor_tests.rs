@@ -31,6 +31,226 @@ fn test_step_output_empty_not_inserted() {
     assert!(ctx.get("inputIRIs").is_none());
 }
 
+#[tokio::test]
+async fn materialization_barrier_terminals_persist_and_return_abort() {
+    let executor = crate::owl::DbExecutor::new_in_memory(setup_test_db());
+    executor
+        .write(move |conn| {
+            let triples = vec![
+                Triple::new(
+                    "foundation:StepExecution_barrier_cancelled",
+                    "rdf:type",
+                    Object::Iri("foundation:StepExecution".to_string()),
+                ),
+                Triple::new(
+                    "foundation:WorkflowExecution_barrier_cancelled",
+                    "rdf:type",
+                    Object::Iri("foundation:WorkflowExecution".to_string()),
+                ),
+                Triple::new(
+                    "foundation:StepExecution_barrier_failed",
+                    "rdf:type",
+                    Object::Iri("foundation:StepExecution".to_string()),
+                ),
+                Triple::new(
+                    "foundation:WorkflowExecution_barrier_failed",
+                    "rdf:type",
+                    Object::Iri("foundation:WorkflowExecution".to_string()),
+                ),
+                Triple::new(
+                    "foundation:StepExecution",
+                    "rdf:type",
+                    Object::Iri("owl:Class".to_string()),
+                ),
+                Triple::new(
+                    "foundation:WorkflowExecution",
+                    "rdf:type",
+                    Object::Iri("owl:Class".to_string()),
+                ),
+                Triple::new(
+                    "foundation:hasStatus",
+                    "rdf:type",
+                    Object::Iri("owl:ObjectProperty".to_string()),
+                ),
+                Triple::new(
+                    "foundation:hasStatus",
+                    "rdfs:domain",
+                    Object::Iri("foundation:StepExecution".to_string()),
+                ),
+                Triple::new(
+                    "foundation:hasStatus",
+                    "rdfs:domain",
+                    Object::Iri("foundation:WorkflowExecution".to_string()),
+                ),
+                Triple::new(
+                    "foundation:stepFinishedAt",
+                    "rdf:type",
+                    Object::Iri("owl:DatatypeProperty".to_string()),
+                ),
+                Triple::new(
+                    "foundation:stepFinishedAt",
+                    "rdfs:domain",
+                    Object::Iri("foundation:StepExecution".to_string()),
+                ),
+                Triple::new(
+                    "foundation:hasEndTime",
+                    "rdf:type",
+                    Object::Iri("owl:DatatypeProperty".to_string()),
+                ),
+                Triple::new(
+                    "foundation:hasEndTime",
+                    "rdfs:domain",
+                    Object::Iri("foundation:StepExecution".to_string()),
+                ),
+                Triple::new(
+                    "foundation:hasEndTime",
+                    "rdfs:domain",
+                    Object::Iri("foundation:WorkflowExecution".to_string()),
+                ),
+                Triple::new(
+                    "foundation:stepError",
+                    "rdf:type",
+                    Object::Iri("owl:DatatypeProperty".to_string()),
+                ),
+                Triple::new(
+                    "foundation:stepError",
+                    "rdfs:domain",
+                    Object::Iri("foundation:StepExecution".to_string()),
+                ),
+                Triple::new(
+                    "foundation:errorMessage",
+                    "rdf:type",
+                    Object::Iri("owl:DatatypeProperty".to_string()),
+                ),
+                Triple::new(
+                    "foundation:errorMessage",
+                    "rdfs:domain",
+                    Object::Iri("foundation:WorkflowExecution".to_string()),
+                ),
+                Triple::new(
+                    STATUS_CANCELLED,
+                    "rdf:type",
+                    Object::Iri("foundation:Status".to_string()),
+                ),
+                Triple::new(
+                    STATUS_FAILED,
+                    "rdf:type",
+                    Object::Iri("foundation:Status".to_string()),
+                ),
+            ];
+            store::assert_triples(conn, &triples, "test")
+                .map(|_| String::new())
+                .map_err(|error| error.to_string())
+        })
+        .await
+        .unwrap();
+    let cancellation_reason = "formula worker cancelled the targeted job";
+    let cancellation = crate::owl::materialization::MaterializationTerminal::Cancelled(
+        cancellation_reason.to_string(),
+    );
+    let mut cancellation_context = ExecutionContext::new();
+
+    let cancellation_result =
+        abort_materialization_barrier(&mut cancellation_context, &cancellation);
+    assert_eq!(cancellation_result, Err(cancellation_reason.to_string()));
+    assert_eq!(
+        cancellation_context
+            .get("__executionCancelled")
+            .map(String::as_str),
+        Some(cancellation_reason)
+    );
+
+    persist_materialization_cancellation(
+        &executor,
+        "foundation:StepExecution_barrier_cancelled",
+        cancellation_reason,
+    )
+    .await
+    .unwrap();
+    executor
+        .write(move |conn| {
+            finish_execution_cancelled_record(
+                conn,
+                "foundation:WorkflowExecution_barrier_cancelled",
+                cancellation_reason,
+            )
+        })
+        .await
+        .unwrap();
+
+    let cancelled_step = "foundation:StepExecution_barrier_cancelled".to_string();
+    let step_status =
+        read_current_iri_value(&executor, cancelled_step, "foundation:hasStatus").await;
+    assert_eq!(step_status, STATUS_CANCELLED);
+
+    let cancelled_execution = "foundation:WorkflowExecution_barrier_cancelled".to_string();
+    let execution_status =
+        read_current_iri_value(&executor, cancelled_execution, "foundation:hasStatus").await;
+    assert_eq!(execution_status, STATUS_CANCELLED);
+
+    let failure_reason = "formula worker failed while processing the targeted job";
+    let failure =
+        crate::owl::materialization::MaterializationTerminal::Failed(failure_reason.to_string());
+    let mut failure_context = ExecutionContext::new();
+    assert_eq!(
+        abort_materialization_barrier(&mut failure_context, &failure),
+        Err(failure_reason.to_string())
+    );
+    assert!(!failure_context.contains_key("__executionCancelled"));
+
+    persist_materialization_failure(
+        &executor,
+        "foundation:StepExecution_barrier_failed",
+        failure_reason,
+    )
+    .await
+    .unwrap();
+    executor
+        .write(move |conn| {
+            finish_execution_record(
+                conn,
+                "foundation:WorkflowExecution_barrier_failed",
+                Some(failure_reason),
+            )
+        })
+        .await
+        .unwrap();
+
+    let failed_step = "foundation:StepExecution_barrier_failed".to_string();
+    let step_status = read_current_iri_value(&executor, failed_step, "foundation:hasStatus").await;
+    assert_eq!(step_status, STATUS_FAILED);
+
+    let failed_execution = "foundation:WorkflowExecution_barrier_failed".to_string();
+    let execution_status =
+        read_current_iri_value(&executor, failed_execution, "foundation:hasStatus").await;
+    assert_eq!(execution_status, STATUS_FAILED);
+}
+
+async fn read_current_iri_value(
+    executor: &crate::owl::DbExecutor,
+    subject: String,
+    predicate: &str,
+) -> String {
+    use rusqlite::OptionalExtension;
+
+    let predicate = predicate.to_string();
+    executor
+        .write(move |conn| {
+            conn.query_row(
+                "SELECT object FROM triples WHERE subject = ?1 AND predicate = ?2 \
+                 AND tx = (SELECT MAX(tx) FROM triples WHERE subject = ?1 AND predicate = ?2) \
+                 AND retracted = 0",
+                rusqlite::params![subject, predicate],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map(|value| value.unwrap_or_default())
+            .map_err(|error| error.to_string())
+        })
+        .await
+        .unwrap()
+}
+
 // ── interpolate ──────────────────────────────────────────────────────────────
 
 #[test]
@@ -1147,7 +1367,7 @@ fn setup_test_db_with_formula_jobs() -> rusqlite::Connection {
 }
 
 /// Bug_1781004764856 — after linking a child via foundation:iterationOf,
-/// create_instance_recalc_jobs must produce at least one job targeting the primary instance.
+/// The formula intent collector must produce a job targeting the primary instance.
 /// This validates that the FormulaWorker will be signalled to recompute triagedCount.
 #[test]
 fn test_iteration_of_link_produces_recalc_job_for_primary() {
@@ -1181,29 +1401,22 @@ fn test_iteration_of_link_produces_recalc_job_for_primary() {
     .unwrap();
 
     // Invoke the same function that the fixed run_sub_process now calls.
-    let job_ids = crate::owl::formula_worker::create_instance_recalc_jobs(
+    let intents = crate::commands::formula_worker::collect_instance_recalc_job_intents(
         &conn,
         child_iri,
         "foundation:iterationOf",
     );
 
     assert!(
-        !job_ids.is_empty(),
-        "create_instance_recalc_jobs must produce at least one recalc job after iterationOf link"
+        !intents.is_empty(),
+        "formula intent collection must produce a recalc job after iterationOf link"
     );
 
-    // The job must target the PRIMARY instance, not the child.
-    let job_targets_primary = conn
-        .query_row(
-            "SELECT COUNT(*) FROM formula_recalc_jobs WHERE instance_iri = ?",
-            rusqlite::params![primary_iri],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap_or(0);
-
     assert!(
-        job_targets_primary > 0,
+        intents
+            .iter()
+            .any(|intent| intent.instance_iri.as_deref() == Some(primary_iri)),
         "recalc job must target the primary instance '{}', not the child",
-        primary_iri
+        primary_iri,
     );
 }
