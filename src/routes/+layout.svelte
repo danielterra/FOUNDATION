@@ -34,31 +34,49 @@
     openEntity(taskIri, appState.activeConversationIri).catch(e => console.error('[toast] Failed to open entity:', e));
   }
 
-  function openAutomationExecution(event: MouseEvent) {
-    const executionIri = (event.currentTarget as HTMLElement).dataset.executionIri;
-    if (!executionIri) return;
-    invoke('widget_blackboard__add_widget', {
-      widgetType: 'workflow_execution',
-      entityId: executionIri,
-      position: null,
-      size: null,
-      conversationId: appState.activeConversationIri,
-    }).catch(e => console.error('[toast] Failed to open widget:', e));
+  function openAutomationUpdate(event: MouseEvent) {
+    const button = event.currentTarget as HTMLElement;
+    const stepIri = button.dataset.stepIri;
+    if (stepIri) {
+      openEntity(stepIri, appState.activeConversationIri)
+        .catch(e => console.error('[toast] Failed to open failed step:', e));
+      return;
+    }
+
+    const executionIri = button.dataset.executionIri;
+    if (executionIri) {
+      invoke('widget_blackboard__add_widget', {
+        widgetType: 'workflow_execution',
+        entityId: executionIri,
+        position: null,
+        size: null,
+        conversationId: appState.activeConversationIri,
+      }).catch(e => console.error('[toast] Failed to open execution widget:', e));
+      return;
+    }
+
+    const sourceEntityIri = button.dataset.sourceEntityIri;
+    if (sourceEntityIri) {
+      openEntity(sourceEntityIri, appState.activeConversationIri)
+        .catch(e => console.error('[toast] Failed to open source entity:', e));
+    }
   }
 
-  function dismissAutomationRun(event: MouseEvent) {
-    const executionIri = (event.currentTarget as HTMLElement).dataset.executionIri;
-    if (!executionIri) return;
-    const timer = automationSuccessTimers.get(executionIri);
+  function dismissAutomationUpdate(event: MouseEvent) {
+    const sourceUpdateId = (event.currentTarget as HTMLElement).dataset.sourceUpdateId;
+    if (!sourceUpdateId) return;
+    const timer = automationSuccessTimers.get(sourceUpdateId);
     if (timer) clearTimeout(timer);
-    automationSuccessTimers.delete(executionIri);
-    automationRuns = automationRuns.filter(run => run.executionIri !== executionIri);
+    automationSuccessTimers.delete(sourceUpdateId);
+    automationRuns = automationRuns.filter(run => run.sourceUpdateId !== sourceUpdateId);
+    recalcJobs = recalcJobs.filter(job => job.sourceUpdateId !== sourceUpdateId);
   }
 
   function materializationDescription(run: AutomationRun) {
     if (run.materializationStatus === 'failed') return run.reason || 'Falha ao atualizar os dados necessários';
     if (run.materializationStatus === 'cancelled') return run.reason || 'Atualização dos dados cancelada';
     if (run.materializationStatus === 'completed') return 'Dados atualizados';
+    if (run.materializationStatus === 'waiting') return 'Aguardando confirmação dos dados necessários';
     if (run.phase === 'query-properties') return 'Atualizando propriedades relacionadas';
     if (run.phase === 'calculated-properties') return 'Atualizando propriedades calculadas';
     return 'Aguardando etapa';
@@ -72,10 +90,23 @@
       && run.completedCount <= run.totalCount;
   }
 
+  function requireSourceUpdateId(sourceUpdateId: string | undefined, eventName: string) {
+    if (sourceUpdateId) return sourceUpdateId;
+    console.error(`[toast] ${eventName} is missing sourceUpdateId`);
+    return null;
+  }
+
   function handleAutomationStarted(event: { payload: AutomationExecutionEvent }) {
-    const { executionIri, processIri } = event.payload;
+    const { executionIri, processIri, sourceEntityIri } = event.payload;
+    const sourceUpdateId = requireSourceUpdateId(event.payload.sourceUpdateId, 'automation-execution-started');
+    if (!sourceUpdateId) return;
     if (automationRuns.some(run => run.executionIri === executionIri)) return;
+    const timer = automationSuccessTimers.get(sourceUpdateId);
+    if (timer) clearTimeout(timer);
+    automationSuccessTimers.delete(sourceUpdateId);
     automationRuns = [...automationRuns, {
+      sourceUpdateId,
+      sourceEntityIri,
       executionIri,
       processIri,
       currentStep: 'Preparando automação',
@@ -85,50 +116,69 @@
 
   function handleAutomationStep(event: { payload: AutomationStepEvent }) {
     const payload = event.payload;
+    const sourceUpdateId = requireSourceUpdateId(payload.sourceUpdateId, 'automation-step-progress');
+    if (!sourceUpdateId) return;
+    const run = automationRuns.find(item => item.executionIri === payload.executionIri);
+    if (run && run.sourceUpdateId !== sourceUpdateId) {
+      console.error(`[toast] Execution ${payload.executionIri} changed sourceUpdateId`);
+      return;
+    }
     automationRuns = automationRuns.map(run => {
       if (run.executionIri !== payload.executionIri) return run;
 
       if (payload.phase) {
         return {
           ...run,
+          currentStepIri: payload.stepIri,
           currentStep: payload.nodeLabel ?? run.currentStep,
           phase: payload.phase,
           materializationStatus: payload.status as AutomationRun['materializationStatus'],
           completedCount: payload.completedCount,
           totalCount: payload.totalCount,
           reason: payload.reason ?? payload.error,
+          iterationProgress: payload.iterationIndex !== undefined && payload.iterationTotal !== undefined
+            ? { current: payload.iterationIndex + 1, total: payload.iterationTotal }
+            : run.iterationProgress,
         };
       }
 
       return {
         ...run,
+        currentStepIri: payload.stepIri,
         currentStep: payload.nodeLabel ?? run.currentStep,
         phase: undefined,
         materializationStatus: undefined,
         completedCount: undefined,
         totalCount: undefined,
         reason: undefined,
+        iterationProgress: payload.iterationIndex !== undefined && payload.iterationTotal !== undefined
+          ? { current: payload.iterationIndex + 1, total: payload.iterationTotal }
+          : payload.status === 'started' || payload.status === 'completed' || payload.status === 'failed'
+            ? undefined
+            : run.iterationProgress,
         ...(payload.status === 'failed' && payload.error ? { error: payload.error } : {}),
       };
     });
   }
 
   function handleAutomationFinished(event: { payload: AutomationFinishedEvent }) {
-    const { executionIri, status, error } = event.payload;
+    const { executionIri, status, error, sourceUpdateId } = event.payload;
     const run = automationRuns.find(item => item.executionIri === executionIri);
     if (!run || run.status !== 'running') return;
+
+    const updateId = requireSourceUpdateId(sourceUpdateId, 'automation-execution-finished');
+    if (!updateId || updateId !== run.sourceUpdateId) {
+      console.error(`[toast] Execution ${executionIri} finished with a mismatched sourceUpdateId`);
+      return;
+    }
 
     automationRuns = automationRuns.map(item => item.executionIri === executionIri
       ? { ...item, status, error: error ?? item.error }
       : item);
 
-    if (status === 'completed') {
-      const timer = setTimeout(() => {
-        automationSuccessTimers.delete(executionIri);
-        automationRuns = automationRuns.filter(item => item.executionIri !== executionIri);
-      }, AUTOMATION_SUCCESS_TOAST_DURATION_MS);
-      automationSuccessTimers.set(executionIri, timer);
-    }
+    const hasPendingRuns = automationRuns.some(item => item.sourceUpdateId === updateId && item.status === 'running');
+    const hasPendingJobs = recalcJobs.some(item => item.sourceUpdateId === updateId && item.status === 'running');
+    if (!hasPendingRuns && !hasPendingJobs && status === 'completed') scheduleAutomationUpdateDismiss(updateId);
   }
 
   let taskNotifications = $state<TaskNotification[]>([]);
@@ -137,6 +187,10 @@
 
   type AutomationStepEvent = {
     executionIri: string;
+    sourceUpdateId: string;
+    sourceEntityIri?: string;
+    sourceTx?: number;
+    eventKey?: string;
     stepIri: string;
     nodeIri: string;
     nodeLabel?: string;
@@ -146,6 +200,8 @@
     propertyIri?: string;
     completedCount?: number;
     totalCount?: number;
+    iterationIndex?: number;
+    iterationTotal?: number;
     reason?: string;
     error?: string;
   };
@@ -153,24 +209,34 @@
   type AutomationExecutionEvent = {
     processIri: string;
     executionIri: string;
+    sourceUpdateId: string;
+    sourceEntityIri?: string;
+    sourceTx?: number;
   };
 
   type AutomationFinishedEvent = {
     executionIri: string;
+    sourceUpdateId: string;
+    sourceEntityIri?: string;
+    sourceTx?: number;
     status: 'completed' | 'failed' | 'cancelled';
     error?: string;
   };
 
   type AutomationRun = {
+    sourceUpdateId: string;
+    sourceEntityIri?: string;
     executionIri: string;
     processIri: string;
     currentStep: string;
+    currentStepIri?: string;
     status: 'running' | 'completed' | 'failed' | 'cancelled';
     error?: string;
     phase?: 'query-properties' | 'calculated-properties';
     materializationStatus?: 'waiting' | 'running' | 'completed' | 'failed' | 'cancelled';
     completedCount?: number;
     totalCount?: number;
+    iterationProgress?: { current: number; total: number };
     reason?: string;
   };
 
@@ -181,20 +247,110 @@
 
   type FormulaProgressEvent = {
     jobId: string;
+    sourceUpdateId: string;
+    sourceEntityIri?: string;
+    sourceTx?: number;
     propertyIri: string;
     propertyLabel: string;
     classIri: string;
     classLabel: string;
     percent: number;
-    status: 'running' | 'completed' | 'cancelled';
+    status: 'running' | 'completed' | 'failed' | 'cancelled';
+    error?: string;
   };
 
   type RecalcJob = {
     jobId: string;
+    sourceUpdateId: string;
+    sourceEntityIri?: string;
     classLabel: string;
     percent: number;
-    status: 'running' | 'completed' | 'cancelled';
+    status: 'running' | 'completed' | 'failed' | 'cancelled';
+    error?: string;
   };
+
+  type AutomationUpdate = {
+    sourceUpdateId: string;
+    sourceEntityIri?: string;
+    runs: AutomationRun[];
+    jobs: RecalcJob[];
+  };
+
+  function groupAutomationUpdates(): AutomationUpdate[] {
+    const groups = new Map<string, AutomationUpdate>();
+    for (const run of automationRuns) {
+      const group = groups.get(run.sourceUpdateId) ?? {
+        sourceUpdateId: run.sourceUpdateId,
+        sourceEntityIri: run.sourceEntityIri,
+        runs: [],
+        jobs: [],
+      };
+      group.runs.push(run);
+      groups.set(run.sourceUpdateId, group);
+    }
+    for (const job of recalcJobs) {
+      const group = groups.get(job.sourceUpdateId) ?? {
+        sourceUpdateId: job.sourceUpdateId,
+        sourceEntityIri: job.sourceEntityIri,
+        runs: [],
+        jobs: [],
+      };
+      group.jobs.push(job);
+      groups.set(job.sourceUpdateId, group);
+    }
+    return [...groups.values()];
+  }
+
+  let automationUpdates = $derived.by(groupAutomationUpdates);
+
+  function automationUpdateStatus(update: AutomationUpdate): AutomationRun['status'] {
+    if (update.runs.some(run => run.status === 'failed') || update.jobs.some(job => job.status === 'failed')) return 'failed';
+    if (update.runs.some(run => run.status === 'cancelled') || update.jobs.some(job => job.status === 'cancelled')) return 'cancelled';
+    if (update.runs.some(run => run.status === 'running') || update.jobs.some(job => job.status === 'running')) return 'running';
+    return 'completed';
+  }
+
+  function updateCurrentStep(update: AutomationUpdate) {
+    const activeRuns = update.runs.filter(run => run.status === 'running');
+    if (activeRuns.length === 1) return activeRuns[0].currentStep;
+    if (activeRuns.length > 1) return `${activeRuns.length} execuções relacionadas em andamento`;
+    if (update.jobs.some(job => job.status === 'running')) return 'Atualizando propriedades derivadas';
+    return 'Automação finalizada';
+  }
+
+  function updateError(update: AutomationUpdate) {
+    return update.runs.find(run => run.status === 'failed')?.error
+      ?? update.runs.find(run => run.status === 'failed')?.reason
+      ?? update.jobs.find(job => job.status === 'failed')?.error;
+  }
+
+  function updateExecutionIri(update: AutomationUpdate) {
+    return update.runs.find(run => run.status === 'failed')?.executionIri
+      ?? update.runs.find(run => run.status === 'running')?.executionIri
+      ?? update.runs[0]?.executionIri;
+  }
+
+  function failedStepIri(update: AutomationUpdate) {
+    return update.runs.find(run => run.status === 'failed')?.currentStepIri;
+  }
+
+  function scheduleAutomationUpdateDismiss(sourceUpdateId: string) {
+    if (automationSuccessTimers.has(sourceUpdateId)) return;
+    const timer = setTimeout(() => {
+      automationSuccessTimers.delete(sourceUpdateId);
+      automationRuns = automationRuns.filter(item => item.sourceUpdateId !== sourceUpdateId);
+      recalcJobs = recalcJobs.filter(item => item.sourceUpdateId !== sourceUpdateId);
+    }, AUTOMATION_SUCCESS_TOAST_DURATION_MS);
+    automationSuccessTimers.set(sourceUpdateId, timer);
+  }
+
+  function settleFormulaUpdate(sourceUpdateId: string) {
+    const hasPendingRuns = automationRuns.some(item => item.sourceUpdateId === sourceUpdateId && item.status === 'running');
+    const hasPendingJobs = recalcJobs.some(item => item.sourceUpdateId === sourceUpdateId && item.status === 'running');
+    const hasFailure = automationRuns.some(item => item.sourceUpdateId === sourceUpdateId && item.status !== 'completed')
+      || recalcJobs.some(item => item.sourceUpdateId === sourceUpdateId && (item.status === 'failed' || item.status === 'cancelled'));
+    if (!hasPendingRuns && !hasPendingJobs && !hasFailure) scheduleAutomationUpdateDismiss(sourceUpdateId);
+  }
 
   let recalcJobs = $state<RecalcJob[]>([]);
   let unlistenRecalc: (() => void) | undefined;
@@ -335,22 +491,24 @@
     });
 
     unlistenRecalc = await listen<FormulaProgressEvent>('formula-recalc-progress', (event) => {
-      const { jobId, classLabel, percent, status } = event.payload;
+      const { jobId, classLabel, percent, status, sourceEntityIri, error } = event.payload;
+      const sourceUpdateId = requireSourceUpdateId(event.payload.sourceUpdateId, 'formula-recalc-progress');
+      if (!sourceUpdateId) return;
+      const timer = automationSuccessTimers.get(sourceUpdateId);
+      if (timer) clearTimeout(timer);
+      automationSuccessTimers.delete(sourceUpdateId);
 
-      const existing = recalcJobs.find(j => j.jobId === jobId);
+      const existing = recalcJobs.find(j => j.jobId === jobId && j.sourceUpdateId === sourceUpdateId);
       if (existing) {
         existing.percent = percent;
         existing.status = status;
+        existing.error = error;
         recalcJobs = recalcJobs;
       } else {
-        recalcJobs = [...recalcJobs, { jobId, classLabel, percent, status }];
+        recalcJobs = [...recalcJobs, { jobId, sourceUpdateId, sourceEntityIri, classLabel, percent, status, error }];
       }
 
-      if (status === 'completed' || status === 'cancelled') {
-        setTimeout(() => {
-          recalcJobs = recalcJobs.filter(j => j.jobId !== jobId);
-        }, 2000);
-      }
+      if (status !== 'running') settleFormulaUpdate(sourceUpdateId);
     });
   });
 
@@ -381,53 +539,80 @@
 
 <GlobalModal />
 
-{#if automationRuns.length > 0 || retentionRunning || recalcJobs.length > 0 || taskNotifications.length > 0 || imapSyncs.length > 0 || imapExtractions.length > 0}
+{#if automationUpdates.length > 0 || retentionRunning || taskNotifications.length > 0 || imapSyncs.length > 0 || imapExtractions.length > 0}
   <div class="toast-stack">
-    {#each automationRuns as run (run.executionIri)}
+    {#each automationUpdates as update (update.sourceUpdateId)}
+      {@const status = automationUpdateStatus(update)}
+      {@const executionIri = updateExecutionIri(update)}
+      {@const error = updateError(update)}
+      {@const activeRun = update.runs.find(run => run.status === 'running')}
       <section
         class="automation-toast"
-        class:failed={run.status === 'failed'}
-        class:cancelled={run.status === 'cancelled'}
-        class:done={run.status === 'completed'}
-        class:running={run.status === 'running'}
+        class:failed={status === 'failed'}
+        class:cancelled={status === 'cancelled'}
+        class:done={status === 'completed'}
+        class:running={status === 'running'}
+        aria-live={status === 'failed' || status === 'cancelled' ? 'assertive' : 'polite'}
+        aria-atomic="true"
       >
-        {#if run.status === 'running'}
+        {#if status === 'running'}
           <div class="toast-thinking"><ThinkingDots /></div>
         {:else}
           <span class="material-symbols-outlined toast-icon">
-            {run.status === 'completed' ? 'check_circle' : run.status === 'cancelled' ? 'cancel' : 'error'}
+            {status === 'completed' ? 'check_circle' : status === 'cancelled' ? 'cancel' : 'error'}
           </span>
         {/if}
         <div class="toast-body">
-          {#if run.status === 'failed'}
-            <span class="toast-label" aria-live="polite" aria-atomic="true">Falha na automação: {run.currentStep}</span>
-            {#if run.error}<span class="toast-error">{run.error}</span>{/if}
-          {:else if run.status === 'cancelled'}
-            <span class="toast-label" aria-live="polite" aria-atomic="true">Automação cancelada</span>
-            {#if run.error}<span class="toast-detail">{run.error}</span>{/if}
-          {:else if run.status === 'completed'}
-            <span class="toast-label" aria-live="polite" aria-atomic="true">Automação concluída</span>
+          {#if status === 'failed'}
+            <span class="toast-label">Falha ao atualizar dados necessários</span>
+            {#if error}<span class="toast-error">{error}</span>{/if}
+          {:else if status === 'cancelled'}
+            <span class="toast-label">Atualização cancelada; etapas dependentes não foram iniciadas</span>
+            {#if error}<span class="toast-detail">{error}</span>{/if}
+          {:else if status === 'completed'}
+            <span class="toast-label">Atualização concluída</span>
           {:else}
-            <span class="toast-label" aria-live="polite" aria-atomic="true">{run.currentStep}</span>
-            {#if run.phase}
-              <span class="toast-detail" aria-live="polite" aria-atomic="true">{materializationDescription(run)}</span>
-              {#if run.materializationStatus === 'waiting' || run.materializationStatus === 'running'}
-                {#if hasDeterminateProgress(run)}
-                  <progress class="automation-progress" max={run.totalCount} value={run.completedCount} aria-label="Progresso da atualização dos dados"></progress>
-                  <span class="toast-detail">{run.completedCount} de {run.totalCount}</span>
+            <span class="toast-label">{updateCurrentStep(update)}</span>
+            {#if activeRun?.iterationProgress}
+              <span class="toast-detail">Item {activeRun.iterationProgress.current} de {activeRun.iterationProgress.total}</span>
+            {/if}
+            {#if activeRun?.phase}
+              <span class="toast-detail">{materializationDescription(activeRun)}</span>
+              {#if activeRun.materializationStatus === 'waiting' || activeRun.materializationStatus === 'running'}
+                {#if hasDeterminateProgress(activeRun)}
+                  <progress class="automation-progress" max={activeRun.totalCount} value={activeRun.completedCount} aria-label="Progresso da atualização dos dados"></progress>
+                  <span class="toast-detail">{activeRun.completedCount} de {activeRun.totalCount}</span>
                 {:else}
-                  <progress class="automation-progress" aria-label="Atualizando os dados necessários"></progress>
+                  <progress class="automation-progress" aria-label={activeRun.materializationStatus === 'waiting' ? 'Aguardando confirmação dos dados necessários' : 'Atualizando os dados necessários'}></progress>
                 {/if}
               {/if}
-              {#if run.reason}<span class="toast-error" aria-live="polite">{run.reason}</span>{/if}
             {/if}
           {/if}
+          {#if update.jobs.length > 0}
+            <div class="toast-progress-list" aria-label="Progresso das propriedades derivadas">
+              {#each update.jobs as job (`${job.jobId}:${job.sourceUpdateId}`)}
+                <div class="toast-progress-item">
+                  <span class="toast-detail">{job.classLabel}</span>
+                  {#if job.status === 'running'}
+                    <progress class="automation-progress" max="100" value={job.percent} aria-label={`Atualizando ${job.classLabel}`}></progress>
+                    <span class="toast-detail">{job.percent}%</span>
+                  {:else if job.status === 'completed'}
+                    <span class="toast-detail">Concluído</span>
+                  {:else if job.status === 'failed'}
+                    <span class="toast-error">{job.error ?? 'Falha ao recalcular'}</span>
+                  {:else}
+                    <span class="toast-detail">Cancelado</span>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
         </div>
-        <Button variant="ghost" class="automation-action-btn" data-execution-iri={run.executionIri} onclick={openAutomationExecution}>
-          Abrir execução
+        <Button variant="ghost" class="automation-action-btn" data-step-iri={status === 'failed' ? failedStepIri(update) : undefined} data-execution-iri={executionIri} data-source-entity-iri={update.sourceEntityIri} onclick={openAutomationUpdate}>
+          {status === 'failed' ? 'Inspecionar' : 'Abrir execução'}
         </Button>
-        {#if run.status !== 'running'}
-          <Button variant="ghost" size="icon-sm" class="toast-close" data-execution-iri={run.executionIri} aria-label="Fechar aviso da automação" onclick={dismissAutomationRun}>
+        {#if status !== 'running'}
+          <Button variant="ghost" size="icon-sm" class="toast-close" data-source-update-id={update.sourceUpdateId} aria-label="Fechar aviso da atualização" onclick={dismissAutomationUpdate}>
             <span class="material-symbols-outlined">close</span>
           </Button>
         {/if}
@@ -499,12 +684,6 @@
       </div>
     {/each}
 
-    {#each recalcJobs as job (job.jobId)}
-      <div class="system-toast" class:done={job.status !== 'running'}>
-        <span class="recalc-label">Recalculating <strong>{job.classLabel}</strong></span>
-        <span class="recalc-pct">{job.percent}%</span>
-      </div>
-    {/each}
   </div>
 {/if}
 
@@ -670,6 +849,35 @@
     accent-color: var(--color-transition);
   }
 
+  .toast-progress-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-1);
+  }
+
+  .toast-progress-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-1) var(--space-2);
+  }
+
+  .toast-progress-item .toast-detail:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .toast-progress-item .automation-progress {
+    grid-column: 1;
+  }
+
+  .toast-progress-item .toast-detail:last-child,
+  .toast-progress-item .toast-error:last-child {
+    grid-column: 2;
+    grid-row: 2;
+    text-align: right;
+  }
+
   :global([data-slot="button"].toast-close) {
     color: var(--text-secondary);
     flex-shrink: 0;
@@ -699,14 +907,6 @@
     box-shadow: 0 var(--size-toast-shadow-y) var(--size-toast-shadow-blur) color-mix(in srgb, var(--color-black) 55%, transparent);
   }
 
-  .system-toast.done {
-    border-top-color: var(--color-toast-complete);
-  }
-
-  .system-toast .recalc-label {
-    color: var(--text-primary);
-  }
-
   @media (max-width: 480px) {
     .toast-stack {
       right: var(--space-2);
@@ -719,9 +919,4 @@
     }
   }
 
-  .recalc-pct {
-    font-size: var(--type-caption);
-    min-width: var(--size-toast-recalc-min-width);
-    text-align: right;
-  }
 </style>

@@ -5,16 +5,13 @@ use tauri::{Emitter, Manager, State};
 
 mod individual;
 
-fn enqueue_formula_jobs(app: &tauri::AppHandle, job_ids_json: &str) {
-    let job_ids: Vec<String> = serde_json::from_str(job_ids_json).unwrap_or_default();
-    if job_ids.is_empty() {
-        return;
-    }
+fn enqueue_formula_jobs(app: &tauri::AppHandle, jobs: Vec<crate::commands::formula_worker::NewFormulaRecalcJob>) {
+    if jobs.is_empty() { return; }
     let worker = app.state::<crate::commands::formula_worker::FormulaWorker>();
-    for job_id in job_ids {
-        let _ = worker
-            .sender
-            .try_send(crate::commands::formula_worker::WorkerCommand::Enqueue { job_id });
+    for job in jobs {
+        if let Err(error) = worker.enqueue(job, vec![], vec![]) {
+            crate::commands::log_backend("error", &format!("formula job enqueue failed: {error}"));
+        }
     }
 }
 
@@ -106,18 +103,6 @@ pub struct BacklinkCursor {
     pub subject: String,
 }
 
-/// Composite keyset cursor emitted by forward property value pagination.
-/// Shape on the wire: `{ "valueTx": <i64>, "objectKey": "<string>" }`.
-/// The frontend must echo both fields verbatim as `after_value_tx`/`after_object_key` to
-/// `inspector__get_property_value_page` for the next page.
-/// `object_key` = `COALESCE(object, object_value)` of the last item returned.
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct PropertyValueCursor {
-    pub value_tx: i64,
-    pub object_key: String,
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PropertyValue {
@@ -149,13 +134,10 @@ pub struct PropertyValue {
     /// `None` when the group fits entirely in the snapshot page (no "load more").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backlink_next_cursor: Option<BacklinkCursor>,
-    /// Composite keyset cursor for the first "load more" call on this forward property group.
-    /// Shape: `{ "valueTx": i64, "objectKey": String }` — the value_tx and
-    /// COALESCE(object, object_value) of the PAGE_SIZE-th item in the
-    /// `value_tx DESC, COALESCE(object, object_value) ASC` order.
-    /// `None` for backlinks or when the group fits in the snapshot page.
+    /// Stable value-key cursor bound to this entity, property, and snapshot.
+    /// `None` when the property fits in the initial snapshot page.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub property_next_cursor: Option<PropertyValueCursor>,
+    pub property_next_cursor: Option<crate::owl::PropertyValueCursor>,
     pub is_calculated: bool,
     pub is_query_property: bool,
     pub formula_error: Option<String>,
@@ -394,60 +376,35 @@ pub struct PropertyPageItem {
 }
 
 /// Returns a keyset-paginated page of forward property values for a given entity + predicate,
-/// as-of `snapshot_tx`. Ordered by `value_tx DESC, COALESCE(object, object_value) ASC`.
+/// as-of `snapshot_tx`, ordered by the natural property value key.
 /// Covers both IRI-valued (object) and literal-valued properties.
-/// Response: `{ items, next_cursor, has_more }` where `next_cursor = { valueTx, objectKey }`.
+/// Response: `{ items, next_cursor, has_more, snapshot_tx }`.
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn inspector__get_property_value_page(
     entity_iri: String,
     predicate: String,
-    after_value_tx: Option<i64>,
-    after_object_key: Option<String>,
+    cursor: Option<crate::owl::PropertyValueCursor>,
     snapshot_tx: i64,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
     const PAGE_SIZE: usize = 5;
     executor
         .read(move |conn| {
-            let after_cursor = match (after_value_tx, after_object_key) {
-                (Some(tx), Some(key)) => Some((tx, key)),
-                _ => None,
-            };
-
-            let mut page = crate::eavto::query::get_property_values_page(
+            let page = crate::owl::get_property_values_page(
                 conn,
                 &entity_iri,
                 &predicate,
-                after_cursor,
-                PAGE_SIZE + 1,
+                PAGE_SIZE,
                 snapshot_tx,
+                cursor.as_ref(),
             )
             .map_err(|e| e.to_string())?;
 
-            let has_more = page.len() > PAGE_SIZE;
-            page.truncate(PAGE_SIZE);
-
-            let next_cursor: Option<PropertyValueCursor> = if has_more {
-                page.last().map(|row| {
-                    let obj_key = row
-                        .object
-                        .clone()
-                        .or_else(|| row.object_value.clone())
-                        .unwrap_or_default();
-                    PropertyValueCursor {
-                        value_tx: row.value_tx,
-                        object_key: obj_key,
-                    }
-                })
-            } else {
-                None
-            };
-
             let iri_rows: Vec<String> = page
+                .items
                 .iter()
-                .filter(|r| r.object_type == "iri" || r.object_type == "blank")
-                .filter_map(|r| r.object.clone())
+                .filter_map(|row| row.object.as_iri().map(str::to_string))
                 .collect::<std::collections::HashSet<_>>()
                 .into_iter()
                 .collect();
@@ -492,11 +449,12 @@ pub async fn inspector__get_property_value_page(
             }
 
             let items: Vec<PropertyPageItem> = page
+                .items
                 .iter()
                 .map(|row| {
-                    let is_object = row.object_type == "iri" || row.object_type == "blank";
+                    let is_object = row.object.as_iri().is_some();
                     if is_object {
-                        let iri = row.object.clone().unwrap_or_default();
+                        let iri = row.object.as_iri().unwrap_or_default().to_string();
                         let thing = things
                             .get(&iri)
                             .cloned()
@@ -515,14 +473,18 @@ pub async fn inspector__get_property_value_page(
                             language: None,
                         }
                     } else {
+                        let language = match &row.object {
+                            crate::owl::Object::Literal { language, .. } => language.clone(),
+                            _ => None,
+                        };
                         PropertyPageItem {
                             is_object_property: false,
-                            value: row.object_value.clone().unwrap_or_default(),
+                            value: row.object.as_literal().unwrap_or_default(),
                             value_label: None,
                             value_icon: None,
                             value_status: None,
-                            datatype: row.object_datatype.clone(),
-                            language: row.object_language.clone(),
+                            datatype: row.object.datatype().map(str::to_string),
+                            language,
                         }
                     }
                 })
@@ -530,8 +492,9 @@ pub async fn inspector__get_property_value_page(
 
             let response = serde_json::json!({
                 "items": items,
-                "next_cursor": next_cursor,
-                "has_more": has_more,
+                "next_cursor": page.next_cursor,
+                "has_more": page.has_more,
+                "snapshot_tx": page.snapshot_tx,
             });
             serde_json::to_string(&response).map_err(|e| e.to_string())
         })
@@ -621,6 +584,7 @@ pub async fn inspector__get_applicable_properties(
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn inspector__get_entity(
+    app: tauri::AppHandle,
     entity_id: String,
     executor: State<'_, DbExecutor>,
 ) -> Result<String, String> {
@@ -657,7 +621,13 @@ pub async fn inspector__get_entity(
             } else if let Some(individual) =
                 Individual::get(conn, &entity_id_for_read).map_err(|e| e.to_string())?
             {
-                individual::get_individual_data(conn, &entity_id_for_read, groups, individual)?
+                individual::get_individual_data(
+                    conn,
+                    &entity_id_for_read,
+                    groups,
+                    individual,
+                    snapshot_tx,
+                )?
             } else {
                 return Err(format!(
                     "Entity {} not found or unknown type",
@@ -720,17 +690,15 @@ pub async fn inspector__get_entity(
         .get_mut("properties")
         .and_then(serde_json::Value::as_array_mut)
     {
-        let store = crate::owl::formula_job_store::FormulaJobStore::new(executor.inner().clone());
         for property in properties {
             let Some(property_iri) = property.get("property").and_then(serde_json::Value::as_str)
             else {
                 continue;
             };
-            if let Some(error) = store
-                .get_error(entity_id.clone(), property_iri.to_string())
-                .await?
-            {
-                property["formulaError"] = serde_json::Value::String(error.error_message);
+            if let Some(worker) = app.try_state::<crate::commands::formula_worker::FormulaWorker>() {
+                if let Some(error) = worker.formula_error(&entity_id, property_iri) {
+                    property["formulaError"] = serde_json::Value::String(error);
+                }
             }
         }
     }
@@ -775,8 +743,7 @@ pub async fn widget_inspector__clear_property(
         &property_iri,
     )
     .await?;
-    let job_ids_json = serde_json::to_string(&job_ids).map_err(|e| e.to_string())?;
-    enqueue_formula_jobs(&app, &job_ids_json);
+    enqueue_formula_jobs(&app, job_ids);
     crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
 }
@@ -822,11 +789,10 @@ pub async fn widget_inspector__update_property(
             Ok(String::new())
         })
         .await?;
-    let job_ids = if is_property_formula {
-        vec![
-            crate::commands::formula_worker::cancel_and_create_property_job(&executor, &entity_id)
-                .await?,
-        ]
+    let jobs = if is_property_formula {
+        let worker = app.state::<crate::commands::formula_worker::FormulaWorker>();
+        worker.cancel_property(&entity_id);
+        vec![crate::commands::formula_worker::cancel_and_create_property_job(&executor, &entity_id).await?]
     } else {
         crate::commands::formula_worker::create_instance_recalc_jobs(
             &executor,
@@ -835,8 +801,7 @@ pub async fn widget_inspector__update_property(
         )
         .await?
     };
-    let job_ids_json = serde_json::to_string(&job_ids).map_err(|e| e.to_string())?;
-    enqueue_formula_jobs(&app, &job_ids_json);
+    enqueue_formula_jobs(&app, jobs);
     crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
 }
@@ -872,8 +837,7 @@ pub async fn widget_inspector__set_references(
         &property_iri,
     )
     .await?;
-    let job_ids_json = serde_json::to_string(&job_ids).map_err(|e| e.to_string())?;
-    enqueue_formula_jobs(&app, &job_ids_json);
+    enqueue_formula_jobs(&app, job_ids);
     crate::realtime::emit_entity_updated(&app, &entity_id);
     Ok(())
 }

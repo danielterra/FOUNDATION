@@ -1,7 +1,6 @@
 use crate::owl::vocabulary::{rdf, rdfs};
 use crate::owl::{
-    find_entities_with_property, get_all_iri_properties, get_iri_property, get_literal_property,
-    is_subclass_of, DbExecutor,
+    get_all_iri_properties, get_iri_property, get_literal_property, is_subclass_of, DbExecutor,
 };
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -727,12 +726,6 @@ pub async fn automation__find_for_types(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConversationMessage {
-    pub role: String,
-    pub content: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StepExecutionDetail {
     pub iri: String,
@@ -746,13 +739,14 @@ pub struct StepExecutionDetail {
     pub started_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<String>,
-    pub input_context: Option<String>,
-    pub execution_summary: Option<String>,
-    pub execution_output: Vec<String>,
-    pub step_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub conversation_iri: Option<String>,
-    pub messages: Vec<ConversationMessage>,
+    pub input_context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_summary: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub execution_output: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -782,36 +776,6 @@ pub struct StepExecutionPageMetadata {
     pub snapshot_tx: i64,
 }
 
-fn load_step_messages(
-    conn: &Connection,
-    conv_iri: &str,
-) -> std::result::Result<Vec<ConversationMessage>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT tr.object_value, tc.object_value \
-         FROM triples tm \
-         JOIN triples tr ON tr.subject = tm.subject \
-           AND tr.predicate = 'foundation:role' AND tr.retracted = 0 \
-         JOIN triples tc ON tc.subject = tm.subject \
-           AND tc.predicate = 'foundation:content' AND tc.retracted = 0 \
-         WHERE tm.predicate = 'foundation:partOfConversation' \
-           AND tm.object = ?1 AND tm.retracted = 0 \
-         ORDER BY tm.rowid ASC",
-        )
-        .map_err(|e| e.to_string())?;
-    let messages = stmt
-        .query_map([conv_iri], |row| {
-            Ok(ConversationMessage {
-                role: row.get(0)?,
-                content: row.get(1)?,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
-    Ok(messages)
-}
-
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn automation__get_execution(
@@ -823,33 +787,66 @@ pub async fn automation__get_execution(
 ) -> Result<String, String> {
     executor
         .read(move |conn| {
-            let process_iri = get_iri_property(conn, &execution_iri, "foundation:executesProcess")
-                .map_err(|e| e.to_string())?
-                .unwrap_or_default();
+            if cursor.is_some() && snapshot_tx.is_none() {
+                return Err("A continuation cursor requires the original snapshotTx".to_string());
+            }
+            let snapshot_tx = match snapshot_tx {
+                Some(snapshot_tx) => snapshot_tx,
+                None => crate::owl::current_snapshot_tx(conn)?,
+            };
 
-            let process_label = get_literal_property(conn, &process_iri, rdfs::LABEL)
-                .map_err(|e| e.to_string())?
-                .unwrap_or_else(|| process_iri.clone());
+            let process_iri = crate::owl::get_iri_property_as_of(
+                conn,
+                &execution_iri,
+                "foundation:executesProcess",
+                snapshot_tx,
+            )
+            .map_err(|e| e.to_string())?
+            .unwrap_or_default();
+
+            let process_label = crate::owl::get_literal_property_as_of(
+                conn,
+                &process_iri,
+                rdfs::LABEL,
+                snapshot_tx,
+            )
+            .map_err(|e| e.to_string())?
+            .unwrap_or_else(|| process_iri.clone());
 
             let (exec_status_label, exec_status_color, exec_status_icon) =
-                match crate::core_ontology::status::get_entity_status_info(conn, &execution_iri) {
-                    Some((_, label, color, icon)) => (label, color, icon),
+                match crate::owl::get_iri_property_as_of(
+                    conn,
+                    &execution_iri,
+                    "foundation:hasStatus",
+                    snapshot_tx,
+                )? {
+                    Some(status_iri) => crate::core_ontology::status::get_status_info_as_of(
+                        conn,
+                        &status_iri,
+                        snapshot_tx,
+                    )?,
                     None => ("Unknown".to_string(), None, None),
                 };
 
-            let error_message =
-                get_literal_property(conn, &execution_iri, "foundation:errorMessage")
-                    .map_err(|e| e.to_string())?;
+            let error_message = crate::owl::get_literal_property_as_of(
+                conn,
+                &execution_iri,
+                "foundation:errorMessage",
+                snapshot_tx,
+            )?;
 
-            let control_instance_iri =
-                get_iri_property(conn, &execution_iri, "foundation:controlInstance")
-                    .map_err(|e| e.to_string())?;
+            let control_instance_iri = crate::owl::get_iri_property_as_of(
+                conn,
+                &execution_iri,
+                "foundation:controlInstance",
+                snapshot_tx,
+            )?;
 
             let (step_page, step_total_count, step_next_cursor, step_has_more, step_snapshot_tx) =
                 crate::core_ontology::automation_execution::list_step_executions(
                     conn,
                     &execution_iri,
-                    snapshot_tx,
+                    Some(snapshot_tx),
                     cursor,
                     limit.unwrap_or(25),
                 )?;
@@ -857,53 +854,69 @@ pub async fn automation__get_execution(
             let mut steps = Vec::new();
             for step_page_item in step_page {
                 let step_iri = step_page_item.iri;
-                let node_iri = get_iri_property(conn, &step_iri, "foundation:executesStep")
-                    .map_err(|e| e.to_string())?
-                    .unwrap_or_default();
+                let node_iri = crate::owl::get_iri_property_as_of(
+                    conn,
+                    &step_iri,
+                    "foundation:executesStep",
+                    snapshot_tx,
+                )?
+                .unwrap_or_default();
 
-                let node_label = get_literal_property(conn, &node_iri, rdfs::LABEL)
-                    .map_err(|e| e.to_string())?
-                    .unwrap_or_else(|| node_iri.clone());
+                let node_label = crate::owl::get_literal_property_as_of(
+                    conn,
+                    &node_iri,
+                    rdfs::LABEL,
+                    snapshot_tx,
+                )?
+                .unwrap_or_else(|| node_iri.clone());
 
-                let node_type = get_iri_property(conn, &node_iri, rdf::TYPE)
-                    .map_err(|e| e.to_string())?
-                    .map(|t| extract_local_name(&t).to_string())
-                    .unwrap_or_default();
+                let node_type = crate::owl::get_all_iri_properties_as_of(
+                    conn,
+                    &node_iri,
+                    rdf::TYPE,
+                    snapshot_tx,
+                )?
+                .into_iter()
+                .next()
+                .map(|t| extract_local_name(&t).to_string())
+                .unwrap_or_default();
 
-                let step_status_label = match step_page_item.status_iri.as_deref() {
-                    Some(status_iri) => get_literal_property(conn, status_iri, rdfs::LABEL)
-                        .map_err(|e| e.to_string())?
-                        .unwrap_or_else(|| status_iri.to_string()),
-                    None => "Unknown".to_string(),
-                };
+                let (step_status_label, step_status_color, step_status_icon) =
+                    match step_page_item.status_iri.as_deref() {
+                        Some(status_iri) => crate::core_ontology::status::get_status_info_as_of(
+                            conn,
+                            status_iri,
+                            snapshot_tx,
+                        )?,
+                        None => ("Unknown".to_string(), None, None),
+                    };
 
                 let started_at = Some(step_page_item.started_at);
 
                 let finished_at = step_page_item.finished_at;
 
-                let input_context =
-                    crate::core_ontology::automation_execution::get_input_context(conn, &step_iri)?;
-                let execution_summary =
-                    get_literal_property(conn, &step_iri, "foundation:executionSummary")
-                        .map_err(|e| e.to_string())?;
+                let input_context = crate::core_ontology::automation_execution::get_input_context(
+                    conn,
+                    &step_iri,
+                    snapshot_tx,
+                )?;
+                let execution_summary = crate::owl::get_literal_property_as_of(
+                    conn,
+                    &step_iri,
+                    "foundation:executionSummary",
+                    snapshot_tx,
+                )?;
                 let execution_output =
                     crate::core_ontology::automation_execution::get_execution_output(
-                        conn, &step_iri,
+                        conn,
+                        &step_iri,
+                        snapshot_tx,
                     )?;
-                let step_error =
-                    crate::core_ontology::automation_execution::get_step_error(conn, &step_iri)?;
-
-                let conversation_iri =
-                    find_entities_with_property(conn, "foundation:generatedByStep", &step_iri)
-                        .map_err(|e| e.to_string())?
-                        .into_iter()
-                        .next();
-
-                let messages = if let Some(ref conv_iri) = conversation_iri {
-                    load_step_messages(conn, conv_iri)?
-                } else {
-                    Vec::new()
-                };
+                let step_error = crate::core_ontology::automation_execution::get_step_error(
+                    conn,
+                    &step_iri,
+                    snapshot_tx,
+                )?;
 
                 steps.push(StepExecutionDetail {
                     iri: step_iri,
@@ -911,16 +924,14 @@ pub async fn automation__get_execution(
                     node_label,
                     node_type,
                     status_label: step_status_label,
-                    status_color: None,
-                    status_icon: None,
+                    status_color: step_status_color,
+                    status_icon: step_status_icon,
                     started_at,
                     finished_at,
                     input_context,
                     execution_summary,
                     execution_output,
                     step_error,
-                    conversation_iri,
-                    messages,
                 });
             }
 

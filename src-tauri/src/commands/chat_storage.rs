@@ -2001,22 +2001,26 @@ pub async fn log_api_call(
         .map(|call_iri| {
             if conversation_id.is_some() {
                 use crate::commands::formula_worker::{
-                    create_instance_recalc_jobs, FormulaWorker, WorkerCommand,
+                    create_instance_recalc_jobs, FormulaWorker,
                 };
                 use tauri::Manager;
-                if let Some(worker) = app.try_state::<FormulaWorker>() {
-                    let worker_sender = worker.sender.clone();
+                if app.try_state::<FormulaWorker>().is_some() {
+                    let app_handle = app.clone();
                     let executor_clone = executor.clone();
                     tauri::async_runtime::spawn(async move {
-                        let job_ids = create_instance_recalc_jobs(
+                        let jobs = create_instance_recalc_jobs(
                             &executor_clone,
                             &call_iri,
                             "foundation:generatedByConversation",
                         )
                         .await
                         .unwrap_or_default();
-                        for job_id in job_ids {
-                            let _ = worker_sender.try_send(WorkerCommand::Enqueue { job_id });
+                        for job in jobs {
+                            if let Some(worker) = app_handle.try_state::<FormulaWorker>() {
+                                if let Err(error) = worker.enqueue(job, vec![], vec![]) {
+                                    crate::commands::log_backend("error", &format!("Failed to enqueue generated entity formula recalculation: {error}"));
+                                }
+                            }
                         }
                     });
                 }

@@ -1,4 +1,8 @@
 use serde::Serialize;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::watch;
 
@@ -7,6 +11,115 @@ use super::setup_system_info::{get_cpu_info, get_locale_info, get_memory_info, g
 #[derive(Clone)]
 pub struct StartupRetentionGate {
     sender: watch::Sender<bool>,
+}
+
+#[derive(Clone, Default)]
+pub struct SetupEmailVerificationState {
+    verifications: Arc<Mutex<HashMap<String, SetupEmailVerification>>>,
+    sequence: Arc<AtomicU64>,
+}
+
+#[derive(Clone)]
+struct SetupEmailVerification {
+    email: String,
+    account_fingerprint: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupEmailTestResult {
+    pub message: String,
+    pub verification_token: String,
+}
+
+pub fn setup_email_account_fingerprint(
+    host: &str,
+    port: u16,
+    use_tls: bool,
+    username: &str,
+    password: &str,
+) -> String {
+    let mut digest = Sha256::new();
+    let port_bytes = port.to_be_bytes();
+    let tls_byte = [u8::from(use_tls)];
+    for part in [
+        host.as_bytes(),
+        port_bytes.as_slice(),
+        tls_byte.as_slice(),
+        username.as_bytes(),
+        password.as_bytes(),
+    ] {
+        digest.update((part.len() as u64).to_be_bytes());
+        digest.update(part);
+    }
+    format!("{:x}", digest.finalize())
+}
+
+impl SetupEmailVerificationState {
+    pub fn record_success(&self, email: &str, account_fingerprint: &str) -> Result<String, String> {
+        let email = email.trim().to_ascii_lowercase();
+        if email.is_empty() {
+            return Err("Email is required to verify the account".to_string());
+        }
+
+        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
+        let token_material = format!(
+            "{}:{}:{}:{}",
+            email,
+            account_fingerprint,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos(),
+            sequence
+        );
+        let token = format!("{:x}", Sha256::digest(token_material.as_bytes()));
+        let mut verifications = self
+            .verifications
+            .lock()
+            .map_err(|_| "Email verification state is unavailable".to_string())?;
+        verifications.retain(|_, verification| verification.email != email);
+        verifications.insert(
+            token.clone(),
+            SetupEmailVerification {
+                email,
+                account_fingerprint: account_fingerprint.to_string(),
+            },
+        );
+        Ok(token)
+    }
+
+    pub fn validate(
+        &self,
+        token: &str,
+        email: &str,
+        account_fingerprint: &str,
+    ) -> Result<(), String> {
+        let verifications = self
+            .verifications
+            .lock()
+            .map_err(|_| "Email verification state is unavailable".to_string())?;
+        match verifications.get(token) {
+            Some(verification)
+                if verification.email == email.trim().to_ascii_lowercase()
+                    && verification.account_fingerprint == account_fingerprint =>
+            {
+                Ok(())
+            }
+            _ => Err(
+                "A successful email account test matching the saved account is required"
+                    .to_string(),
+            ),
+        }
+    }
+
+    pub fn consume(&self, token: &str) -> Result<(), String> {
+        self.verifications
+            .lock()
+            .map_err(|_| "Email verification state is unavailable".to_string())?
+            .remove(token);
+        Ok(())
+    }
 }
 
 impl Default for StartupRetentionGate {
@@ -30,7 +143,6 @@ impl StartupRetentionGate {
         self.sender.send_replace(true);
     }
 }
-use crate::commands::formula_worker::FormulaWorker;
 use crate::owl::{self, Connection, DbExecutor, Individual, Object};
 
 /// Initialize the application database
@@ -142,7 +254,6 @@ pub async fn initialize_app(app: AppHandle) -> Result<(), String> {
     )>();
     let executor = DbExecutor::new_with_notify(conn, db_path.clone(), Some(notify_tx));
     let executor_for_worker = executor.clone();
-    let executor_for_recover = executor.clone();
     app.manage(executor);
     app.manage(retention_gate.clone());
     super::log_backend(
@@ -183,7 +294,18 @@ pub async fn initialize_app(app: AppHandle) -> Result<(), String> {
                 );
                 // Non-gated backend signal: task execution / recurrence / scheduler must react
                 // to every write, independent of whether the frontend is displaying the entity.
-                crate::realtime::emit_entity_changed_internal(&app_for_notify, iri, predicates);
+                let entity_tx = written_triples
+                    .iter()
+                    .filter(|triple| triple.subject.as_str() == iri)
+                    .map(|triple| triple.tx)
+                    .max()
+                    .unwrap_or(batch_tx);
+                crate::realtime::emit_internal_write_update(
+                    &app_for_notify,
+                    iri,
+                    predicates,
+                    entity_tx,
+                );
                 seen_subjects.push(iri.clone());
             }
 
@@ -281,23 +403,17 @@ pub async fn initialize_app(app: AppHandle) -> Result<(), String> {
         }
     });
 
-    let worker = FormulaWorker::spawn(app.clone(), executor_for_worker);
+    let worker = crate::commands::formula_worker::FormulaWorker::spawn(app.clone(), executor_for_worker);
     super::log_backend(
         "debug",
         &format!("[STARTUP] formula_worker={}ms", t0.elapsed().as_millis()),
     );
 
-    let _ = app.emit(
-        "import-progress",
-        serde_json::json!({ "stage": "Recovering pending processes" }),
-    );
-    recover_pending_jobs(&executor_for_recover, &worker).await;
-    super::log_backend(
-        "debug",
-        &format!("[STARTUP] recover_jobs={}ms", t0.elapsed().as_millis()),
-    );
-
     app.manage(worker);
+    crate::commands::formula_worker::spawn_startup_recovery(
+        app.clone(),
+        app.state::<DbExecutor>().inner().clone(),
+    );
 
     // Values built on TODAY()/NOW() have no write to react to — they go stale when
     // the date changes. Refresh them at startup and once a day.
@@ -358,34 +474,6 @@ pub async fn initialize_app(app: AppHandle) -> Result<(), String> {
     let _ = app.emit("import-complete", ());
 
     Ok(())
-}
-
-async fn recover_pending_jobs(executor: &crate::owl::DbExecutor, worker: &FormulaWorker) {
-    use crate::commands::formula_worker::WorkerCommand;
-
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64;
-
-    let store = crate::owl::formula_job_store::FormulaJobStore::new(executor.clone());
-    let _ = store
-        .recover_interrupted(
-            "Formula worker was interrupted by application shutdown".into(),
-            now,
-        )
-        .await;
-    let job_ids: Vec<String> = store
-        .list_pending(None)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|job| job.id)
-        .collect();
-
-    for job_id in job_ids {
-        let _ = worker.sender.send(WorkerCommand::Enqueue { job_id }).await;
-    }
 }
 
 fn purge_old_retractions(conn: &Connection) {
@@ -680,15 +768,21 @@ pub struct FoundationInfo {
 }
 
 /// Check if setup has been completed
+fn setup_check_operation(conn: &mut crate::owl::Connection) -> Result<String, String> {
+    match crate::core_ontology::setup::ensure_setup_complete(conn) {
+        Ok(is_complete) => Ok(is_complete.to_string()),
+        Err(error) => Err(format!("Failed to check setup status: {}", error)),
+    }
+}
+
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn setup__check(executor: State<'_, DbExecutor>) -> Result<bool, String> {
-    executor
-        .read(|conn| {
-            crate::core_ontology::setup::is_setup_complete(conn)
-                .map_err(|error| format!("Failed to check setup status: {}", error))
-        })
-        .await
+    let result = executor.write(setup_check_operation).await?;
+    match result.parse::<bool>() {
+        Ok(is_complete) => Ok(is_complete),
+        Err(error) => Err(format!("Failed to parse setup status: {}", error)),
+    }
 }
 
 /// Deletes foundation:ThisFoundationInstance to force the setup wizard on next launch.
@@ -715,8 +809,12 @@ pub async fn setup__reset(
 pub async fn setup__init(
     user_name: String,
     email: Option<String>,
+    email_account_iri: String,
+    email_test_token: String,
+    ai_integration_mode: String,
     ai_service_iri: Option<String>,
     ai_model_iri: Option<String>,
+    verification_state: State<'_, SetupEmailVerificationState>,
     executor: State<'_, DbExecutor>,
 ) -> Result<SetupResult, String> {
     let email = email
@@ -726,11 +824,86 @@ pub async fn setup__init(
     if user_name.trim().is_empty() {
         return Err("Name is required to complete setup".to_string());
     }
+    let ai_mode = crate::commands::SetupAIIntegrationMode::parse(&ai_integration_mode)?;
+    let verification_state = verification_state.inner().clone();
+    let verification_state_for_write = verification_state.clone();
+    let token_to_consume = email_test_token.clone();
 
     // Setup involves writes, so we use the write executor
     let result_json = executor
         .write(move |conn| {
             // Don't check again - assume caller used setup__check first
+
+            crate::commands::validate_setup_ai_selection(
+                conn,
+                ai_mode,
+                ai_service_iri.as_deref(),
+                ai_model_iri.as_deref(),
+            )?;
+            let email_account = Individual::get(conn, &email_account_iri)
+                .map_err(|error| format!("Failed to load tested email account: {}", error))?
+                .ok_or_else(|| format!("Tested email account '{}' not found", email_account_iri))?;
+            let account_class_iris =
+                owl::find_entities_with_property(conn, "rdf:type", "foundation:IMAPAccount")
+                    .map_err(|error| {
+                        format!("Failed to validate tested email account: {}", error)
+                    })?;
+            if !account_class_iris
+                .iter()
+                .any(|iri| iri == &email_account_iri)
+            {
+                return Err(format!(
+                    "Entity '{}' is not an IMAP account",
+                    email_account_iri
+                ));
+            }
+            let account_string = |property: &str| {
+                email_account
+                    .properties
+                    .iter()
+                    .find(|(key, _)| key == property)
+                    .and_then(|(_, value)| value.as_literal())
+            };
+            let account_host = account_string("foundation:imapHost")
+                .ok_or_else(|| "Tested email account has no IMAP host".to_string())?;
+            let account_port = account_string("foundation:imapPort")
+                .and_then(|value| value.parse::<u16>().ok())
+                .ok_or_else(|| "Tested email account has no valid IMAP port".to_string())?;
+            let account_tls = account_string("foundation:imapUseTLS")
+                .and_then(|value| value.parse::<bool>().ok())
+                .ok_or_else(|| "Tested email account has no valid TLS setting".to_string())?;
+            let account_username = account_string("foundation:imapUsername")
+                .ok_or_else(|| "Tested email account has no IMAP username".to_string())?;
+            let account_credential_iri = email_account
+                .properties
+                .iter()
+                .find(|(key, _)| key == "foundation:hasCredential")
+                .and_then(|(_, value)| value.as_iri())
+                .ok_or_else(|| "Tested email account has no password credential".to_string())?;
+            let account_password = owl::get_literal_property(
+                conn,
+                account_credential_iri,
+                "foundation:credentialValue",
+            )
+            .map_err(|error| format!("Failed to read email account credential: {}", error))?
+            .ok_or_else(|| "Tested email account password is missing".to_string())?;
+            if account_username.trim().to_ascii_lowercase() != email.to_ascii_lowercase() {
+                return Err(
+                    "The tested email login must match the person's canonical email".to_string(),
+                );
+            }
+            let account_fingerprint = setup_email_account_fingerprint(
+                &account_host,
+                account_port,
+                account_tls,
+                &account_username,
+                &account_password,
+            );
+            verification_state_for_write.validate(
+                &email_test_token,
+                &email,
+                &account_fingerprint,
+            )?;
 
             let hostname = hostname::get()
                 .map_err(|e| format!("Failed to get hostname: {}", e))?
@@ -942,40 +1115,39 @@ pub async fn setup__init(
                 )
                 .map_err(|e| format!("Failed to create AI assistant: {}", e))?;
 
-            let service_iri =
-                ai_service_iri.unwrap_or_else(|| "foundation:ClaudeAIService".to_string());
-
-            let ai_description = Object::Literal {
-                value: format!("AI assistant powered by {}", service_iri),
-                datatype: Some("xsd:string".to_string()),
-                language: Some("en".to_string()),
-            };
-            ai_assistant
-                .add_property(conn, "rdfs:comment", vec![ai_description], "setup")
-                .map_err(|e| format!("Failed to add AI description: {}", e))?;
-
-            ai_assistant
-                .add_property(
-                    conn,
-                    "foundation:usesService",
-                    vec![Object::Iri(service_iri.clone())],
-                    "setup",
-                )
-                .map_err(|e| format!("Failed to link AI to service: {}", e))?;
-
-            if let Some(model_iri) = ai_model_iri {
-                Individual::get(conn, &model_iri)
-                    .map_err(|e| format!("Failed to find selected AI model: {}", e))?
-                    .ok_or_else(|| format!("Selected AI model '{}' not found", model_iri))?;
-                let model_service =
-                    crate::owl::get_iri_property(conn, &model_iri, "foundation:offeredBy")
-                        .map_err(|e| format!("Failed to find selected AI model service: {}", e))?;
-                if model_service.as_deref() != Some(service_iri.as_str()) {
-                    return Err(format!(
-                        "Selected AI model '{}' is not offered by service '{}'",
-                        model_iri, service_iri
-                    ));
-                }
+            crate::commands::persist_setup_ai_mode(conn, ai_mode)?;
+            if ai_mode == crate::commands::SetupAIIntegrationMode::Chat {
+                let service_iri = ai_service_iri
+                    .as_deref()
+                    .ok_or_else(|| "Chat mode requires an AI service".to_string())?;
+                let model_iri = ai_model_iri
+                    .as_deref()
+                    .ok_or_else(|| "Chat mode requires an AI model".to_string())?;
+                let ai_description = Object::Literal {
+                    value: format!("AI assistant powered by {}", service_iri),
+                    datatype: Some("xsd:string".to_string()),
+                    language: Some("en".to_string()),
+                };
+                ai_assistant
+                    .add_property(conn, "rdfs:comment", vec![ai_description], "setup")
+                    .map_err(|e| format!("Failed to add AI description: {}", e))?;
+                ai_assistant
+                    .add_property(
+                        conn,
+                        "foundation:usesService",
+                        vec![Object::Iri(service_iri.to_string())],
+                        "setup",
+                    )
+                    .map_err(|e| format!("Failed to link AI to service: {}", e))?;
+                ai_assistant
+                    .add_property(
+                        conn,
+                        "foundation:usesModel",
+                        vec![Object::Iri(model_iri.to_string())],
+                        "setup",
+                    )
+                    .map_err(|e| format!("Failed to link AI to model: {}", e))?;
+                crate::commands::persist_setup_ai_service(conn, service_iri)?;
                 let model_setting = Individual::get(conn, "foundation:DefaultAIModelSetting")
                     .map_err(|e| format!("Failed to get DefaultAIModelSetting: {}", e))?
                     .ok_or_else(|| "DefaultAIModelSetting not found".to_string())?;
@@ -984,7 +1156,7 @@ pub async fn setup__init(
                         conn,
                         "foundation:settingValue",
                         vec![Object::Literal {
-                            value: model_iri,
+                            value: model_iri.to_string(),
                             datatype: Some("xsd:string".to_string()),
                             language: None,
                         }],
@@ -995,7 +1167,7 @@ pub async fn setup__init(
                     .add_property(
                         conn,
                         "foundation:appliedTo",
-                        vec![Object::Iri(service_iri.clone())],
+                        vec![Object::Iri(service_iri.to_string())],
                         "setup",
                     )
                     .map_err(|e| format!("Failed to set AI model service: {}", e))?;
@@ -1139,5 +1311,79 @@ pub async fn setup__init(
         })
         .await?;
 
+    verification_state.consume(&token_to_consume)?;
+
     serde_json::from_str(&result_json).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod setup_email_verification_tests {
+    use super::{setup_email_account_fingerprint, SetupEmailVerificationState};
+
+    #[test]
+    fn setup_email_test_is_bound_to_email_and_saved_credentials() {
+        let state = SetupEmailVerificationState::default();
+        let fingerprint = setup_email_account_fingerprint(
+            "imap.example.test",
+            993,
+            true,
+            "person@example.test",
+            "password-one",
+        );
+        let token = state
+            .record_success("person@example.test", &fingerprint)
+            .unwrap();
+
+        assert!(state
+            .validate(&token, "PERSON@example.test", &fingerprint)
+            .is_ok());
+        assert!(state
+            .validate(&token, "other@example.test", &fingerprint)
+            .is_err());
+        assert!(state
+            .validate(
+                &token,
+                "person@example.test",
+                &setup_email_account_fingerprint(
+                    "imap.example.test",
+                    993,
+                    true,
+                    "person@example.test",
+                    "password-two",
+                ),
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn newer_email_test_replaces_previous_token_for_same_identity() {
+        let state = SetupEmailVerificationState::default();
+        let first_fingerprint = setup_email_account_fingerprint(
+            "imap.example.test",
+            993,
+            true,
+            "person@example.test",
+            "password-one",
+        );
+        let second_fingerprint = setup_email_account_fingerprint(
+            "imap.example.test",
+            993,
+            true,
+            "person@example.test",
+            "password-two",
+        );
+        let first_token = state
+            .record_success("person@example.test", &first_fingerprint)
+            .unwrap();
+        let second_token = state
+            .record_success("person@example.test", &second_fingerprint)
+            .unwrap();
+
+        assert!(state
+            .validate(&first_token, "person@example.test", &first_fingerprint)
+            .is_err());
+        assert!(state
+            .validate(&second_token, "person@example.test", &second_fingerprint)
+            .is_ok());
+    }
 }

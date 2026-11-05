@@ -300,6 +300,8 @@ impl QueryWorker {
         execution_iri: &str,
         step_iri: &str,
         node_iri: &str,
+        source_entity_iri: Option<&str>,
+        source_update_id: Option<&str>,
     ) -> Result<(), String> {
         let wait_started = Instant::now();
         if let Some(error) = self
@@ -338,6 +340,8 @@ impl QueryWorker {
                 execution_iri: execution_iri.to_string(),
                 step_iri: step_iri.to_string(),
                 node_iri: node_iri.to_string(),
+                source_entity_iri: source_entity_iri.map(str::to_string),
+                source_update_id: source_update_id.map(str::to_string),
                 source_tx: Some(snapshot_tx),
             }],
         }) {
@@ -822,7 +826,7 @@ async fn process_entity_update(
         if changed {
             if let Some(ref worker) = formula_worker {
                 let formula_queue_started = Instant::now();
-                let job_ids = match crate::commands::formula_worker::create_instance_recalc_jobs(
+                let jobs = match crate::commands::formula_worker::create_instance_recalc_jobs(
                     executor,
                     &owner_iri,
                     &property_iri,
@@ -857,18 +861,13 @@ async fn process_entity_update(
                         owner_iri,
                         property_iri,
                         formula_queue_started.elapsed().as_millis(),
-                        job_ids.len()
+                        jobs.len()
                     ),
                 );
 
-                for job_id in job_ids {
-                    if let Err(error) = worker.sender.try_send(
-                        crate::commands::formula_worker::WorkerCommand::EnqueueCorrelated {
-                            job_id: job_id.clone(),
-                            correlations: correlations.to_vec(),
-                            barrier_ids: vec![],
-                        },
-                    ) {
+                for job in jobs {
+                    let job_id = job.id.clone();
+                    if let Err(error) = worker.enqueue(job, correlations.to_vec(), vec![]) {
                         crate::diagnostics::log_backend(
                             "error",
                             &format!(
@@ -1173,7 +1172,15 @@ mod tests {
             ))),
         };
         let result = worker
-            .await_drained(&executor, "foundation:test", "execution", "step", "node")
+            .await_drained(
+                &executor,
+                "foundation:test",
+                "execution",
+                "step",
+                "node",
+                None,
+                None,
+            )
             .await;
         assert_eq!(
             result,
@@ -1281,12 +1288,18 @@ mod tests {
         let seen_by_forwarder = notifications_seen.clone();
         let app_for_forwarder = app_handle.clone();
         tauri::async_runtime::spawn(async move {
-            while let Some((subjects, _, _)) = notify_rx.recv().await {
+            while let Some((subjects, _, written_triples)) = notify_rx.recv().await {
+                let batch_tx = written_triples
+                    .iter()
+                    .map(|triple| triple.tx)
+                    .max()
+                    .unwrap_or(0);
                 for (entity, predicates) in subjects {
                     crate::realtime::emit_entity_changed_internal(
                         &app_for_forwarder,
                         &entity,
                         &predicates,
+                        batch_tx,
                     );
                     seen_by_forwarder.fetch_add(1, Ordering::Release);
                 }
@@ -1325,6 +1338,8 @@ mod tests {
                     "synthetic-execution",
                     "synthetic-step",
                     "synthetic-node",
+                    None,
+                    None,
                 )
                 .await
                 .unwrap();
@@ -1361,6 +1376,7 @@ mod tests {
                 &app_handle,
                 "foundation:harnessPayment-0",
                 &["rdf:type".to_string()],
+                0,
             );
         }
         worker
@@ -1370,6 +1386,8 @@ mod tests {
                 "synthetic-burst",
                 "synthetic-step",
                 "synthetic-node",
+                None,
+                None,
             )
             .await
             .unwrap();

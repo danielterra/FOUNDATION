@@ -1,5 +1,5 @@
 <script>
-  import { convertFileSrc } from '@tauri-apps/api/core';
+  import { inspectorIconSource, inspectorIconSymbol } from './iconSource';
   import ClassPropertyForm from './ClassPropertyForm.svelte';
   import DisjointSelect from './DisjointSelect.svelte';
   import ProcessSelect from './ProcessSelect.svelte';
@@ -48,19 +48,23 @@
     return [...ids];
   });
 
+  function handleEntityReferenceClick(event) {
+    const entityIri = event.currentTarget.dataset.entityIri;
+    if (entityIri) openEntityInspector(entityIri);
+  }
+
+  function handleEntityReferenceKeydown(event) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    handleEntityReferenceClick(event);
+  }
+
   function isIconUrl(icon) {
-    if (!icon) return false;
-    return icon.startsWith('http://') || icon.startsWith('https://') ||
-           icon.startsWith('data:') || icon.startsWith('file://') || icon.startsWith('/');
+    return inspectorIconSource(icon) !== null;
   }
 
   function getIconUrl(icon) {
-    if (!icon) return '';
-    if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('data:'))
-      return icon;
-    if (icon.startsWith('file://')) return convertFileSrc(icon.replace(/^file:\/\//, ''));
-    if (icon.startsWith('/')) return convertFileSrc(icon);
-    return icon;
+    return inspectorIconSource(icon) ?? '';
   }
 </script>
 
@@ -73,14 +77,15 @@
           class="item clickable"
           role="button"
           tabindex="0"
-          onclick={() => openEntityInspector(superClass.iri)}
-          onkeydown={(e) => e.key === 'Enter' && openEntityInspector(superClass.iri)}
+          data-entity-iri={superClass.iri}
+          onclick={handleEntityReferenceClick}
+          onkeydown={handleEntityReferenceKeydown}
         >
           {#if superClass.icon}
             {#if isIconUrl(superClass.icon)}
               <img src={getIconUrl(superClass.icon)} alt="" class="item-icon-image" />
             {:else}
-              <span class="material-symbols-outlined">{superClass.icon}</span>
+              <span class="material-symbols-outlined">{inspectorIconSymbol(superClass.icon)}</span>
             {/if}
           {/if}
           <span class="item-label">{superClass.label}</span>
@@ -99,14 +104,15 @@
           class="item clickable"
           role="button"
           tabindex="0"
-          onclick={() => openEntityInspector(subClass.iri)}
-          onkeydown={(e) => e.key === 'Enter' && openEntityInspector(subClass.iri)}
+          data-entity-iri={subClass.iri}
+          onclick={handleEntityReferenceClick}
+          onkeydown={handleEntityReferenceKeydown}
         >
           {#if subClass.icon}
             {#if isIconUrl(subClass.icon)}
               <img src={getIconUrl(subClass.icon)} alt="" class="item-icon-image" />
             {:else}
-              <span class="material-symbols-outlined">{subClass.icon}</span>
+              <span class="material-symbols-outlined">{inspectorIconSymbol(subClass.icon)}</span>
             {/if}
           {/if}
           <span class="item-label">{subClass.label}</span>
@@ -147,8 +153,9 @@
             class="item-body clickable"
             role="button"
             tabindex="0"
-            onclick={() => openEntityInspector(proc.iri)}
-            onkeydown={(e) => e.key === 'Enter' && openEntityInspector(proc.iri)}
+            data-entity-iri={proc.iri}
+            onclick={handleEntityReferenceClick}
+            onkeydown={handleEntityReferenceKeydown}
           >
             <span class="material-symbols-outlined">
               {proc.type === 'foundation:Automation' ? 'bolt' : 'schema'}
@@ -198,8 +205,9 @@
             class="item-body clickable"
             role="button"
             tabindex="0"
-            onclick={() => openEntityInspector(auto.iri)}
-            onkeydown={(e) => e.key === 'Enter' && openEntityInspector(auto.iri)}
+            data-entity-iri={auto.iri}
+            onclick={handleEntityReferenceClick}
+            onkeydown={handleEntityReferenceKeydown}
           >
             <span class="material-symbols-outlined">bolt</span>
             <span class="item-label">{auto.label}</span>
@@ -292,14 +300,15 @@
               class="item-body clickable"
               role="button"
               tabindex="0"
-              onclick={() => openEntityInspector(m.iri)}
-              onkeydown={(e) => e.key === 'Enter' && openEntityInspector(m.iri)}
+              data-entity-iri={m.iri}
+              onclick={handleEntityReferenceClick}
+              onkeydown={handleEntityReferenceKeydown}
             >
               {#if m.icon}
                 {#if isIconUrl(m.icon)}
                   <img src={getIconUrl(m.icon)} alt="" class="item-icon-image" />
                 {:else}
-                  <span class="material-symbols-outlined">{m.icon}</span>
+                  <span class="material-symbols-outlined">{inspectorIconSymbol(m.icon)}</span>
                 {/if}
               {/if}
               <span class="item-label">{m.label ?? m.iri}</span>
@@ -327,14 +336,15 @@
                   class="item clickable disjoint-member"
                   role="button"
                   tabindex="0"
-                  onclick={() => openEntityInspector(m.iri)}
-                  onkeydown={(e) => e.key === 'Enter' && openEntityInspector(m.iri)}
+                  data-entity-iri={m.iri}
+                  onclick={handleEntityReferenceClick}
+                  onkeydown={handleEntityReferenceKeydown}
                 >
                   {#if m.icon}
                     {#if isIconUrl(m.icon)}
                       <img src={getIconUrl(m.icon)} alt="" class="item-icon-image" />
                     {:else}
-                      <span class="material-symbols-outlined">{m.icon}</span>
+                      <span class="material-symbols-outlined">{inspectorIconSymbol(m.icon)}</span>
                     {/if}
                   {/if}
                   <span class="item-label">{m.label ?? m.iri}</span>
@@ -358,14 +368,15 @@
           style="--status-color: {status.color || 'var(--color-neutral)'}"
           role="button"
           tabindex="0"
-          onclick={() => openEntityInspector(status.iri)}
-          onkeydown={(e) => e.key === 'Enter' && openEntityInspector(status.iri)}
+          data-entity-iri={status.iri}
+          onclick={handleEntityReferenceClick}
+          onkeydown={handleEntityReferenceKeydown}
         >
           {#if status.icon}
             {#if isIconUrl(status.icon)}
               <img src={getIconUrl(status.icon)} alt="" class="item-icon-image" />
             {:else}
-              <span class="material-symbols-outlined status-dot">{status.icon}</span>
+              <span class="material-symbols-outlined status-dot">{inspectorIconSymbol(status.icon)}</span>
             {/if}
           {:else}
             <span class="material-symbols-outlined status-dot">radio_button_checked</span>
@@ -442,14 +453,15 @@
         class="item instance clickable"
         role="button"
         tabindex="0"
-        onclick={() => openEntityInspector(instance.iri)}
-        onkeydown={(e) => e.key === 'Enter' && openEntityInspector(instance.iri)}
+        data-entity-iri={instance.iri}
+        onclick={handleEntityReferenceClick}
+        onkeydown={handleEntityReferenceKeydown}
       >
         {#if instance.icon}
           {#if isIconUrl(instance.icon)}
             <img src={getIconUrl(instance.icon)} alt="" class="item-icon-image" />
           {:else}
-            <span class="material-symbols-outlined">{instance.icon}</span>
+            <span class="material-symbols-outlined">{inspectorIconSymbol(instance.icon)}</span>
           {/if}
         {/if}
         <span class="item-label">{instance.label}</span>

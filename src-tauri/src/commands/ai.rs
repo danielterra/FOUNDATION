@@ -1,7 +1,105 @@
 use crate::owl::DbExecutor;
 use crate::owl::{self, Individual, Object, Triple};
 use chrono::{DateTime, SecondsFormat, Utc};
+use std::collections::HashSet;
 use tauri::{AppHandle, Emitter, Manager, State};
+
+const OPENROUTER_MODELS_PAGE_SIZE: u64 = 1_000;
+
+struct OpenRouterModelPage {
+    data: Vec<serde_json::Value>,
+    total_count: u64,
+}
+
+fn parse_openrouter_model_page(body: serde_json::Value) -> Result<OpenRouterModelPage, String> {
+    let data = body
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .ok_or_else(|| {
+            "Unexpected response format from /models endpoint: data must be an array".to_string()
+        })?;
+    let total_count = body
+        .get("total_count")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "Unexpected response format from /models endpoint: total_count must be a non-negative integer".to_string())?;
+
+    Ok(OpenRouterModelPage { data, total_count })
+}
+
+fn append_openrouter_model_page(
+    page: OpenRouterModelPage,
+    expected_total: &mut Option<u64>,
+    models: &mut Vec<serde_json::Value>,
+    model_ids: &mut HashSet<String>,
+) -> Result<u64, String> {
+    match expected_total {
+        Some(expected) if *expected != page.total_count => {
+            return Err(format!(
+                "OpenRouter catalog changed during pagination: total_count was {} and is now {}",
+                expected, page.total_count
+            ));
+        }
+        None => *expected_total = Some(page.total_count),
+        _ => {}
+    }
+
+    for model in page.data {
+        let id = model
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| {
+                "OpenRouter model response contains an item without a valid id".to_string()
+            })?;
+        if model_ids.insert(id.to_string()) {
+            models.push(model);
+        }
+    }
+
+    expected_total.ok_or_else(|| "OpenRouter response omitted total_count".to_string())
+}
+
+fn validate_complete_openrouter_catalog(
+    models: &[serde_json::Value],
+    total_count: u64,
+) -> Result<(), String> {
+    let collected = u64::try_from(models.len())
+        .map_err(|_| "OpenRouter catalog exceeds the supported item count".to_string())?;
+    if collected != total_count {
+        return Err(format!(
+            "OpenRouter catalog is incomplete: collected {} unique models but total_count is {}",
+            collected, total_count
+        ));
+    }
+    Ok(())
+}
+
+fn advance_openrouter_offset(
+    offset: u64,
+    page_len: u64,
+    total_count: u64,
+) -> Result<Option<u64>, String> {
+    let next_offset = offset
+        .checked_add(page_len)
+        .ok_or_else(|| "OpenRouter pagination offset exceeds the supported range".to_string())?;
+    if next_offset > total_count {
+        return Err(format!(
+            "OpenRouter catalog returned more records than total_count: offset {} plus page size {} exceeds {}",
+            offset, page_len, total_count
+        ));
+    }
+    if next_offset == total_count {
+        return Ok(None);
+    }
+    if page_len == 0 || page_len != OPENROUTER_MODELS_PAGE_SIZE {
+        return Err(format!(
+            "OpenRouter catalog is incomplete at offset {}: received {} models, expected another page of {} before total_count {}",
+            offset, page_len, OPENROUTER_MODELS_PAGE_SIZE, total_count
+        ));
+    }
+    Ok(Some(next_offset))
+}
 
 #[derive(Debug, PartialEq)]
 struct ParameterCounts {
@@ -83,8 +181,8 @@ fn parse_parameter_counts_segment(description: &str) -> ParameterCounts {
             (parse_parameter_quantity(token, None), 0)
         };
         let Some(quantity) = quantity else { continue };
-        let start = index.saturating_sub(2);
-        let end = (index + consumed_unit + 4).min(tokens.len());
+        let start = index.saturating_sub(5);
+        let end = (index + consumed_unit + 6).min(tokens.len());
         let context = tokens[start..end]
             .iter()
             .enumerate()
@@ -96,7 +194,7 @@ fn parse_parameter_counts_segment(description: &str) -> ParameterCounts {
                 )
             })
             .collect::<Vec<_>>();
-        let parameter_is_nearby = context
+        let parameter_positions = context
             .iter()
             .filter(|(_, word)| {
                 matches!(
@@ -104,13 +202,24 @@ fn parse_parameter_counts_segment(description: &str) -> ParameterCounts {
                     "parameter" | "parameters" | "param" | "params"
                 )
             })
-            .any(|(position, _)| index.abs_diff(*position) <= 3);
-        if !parameter_is_nearby {
+            .map(|(position, _)| *position)
+            .collect::<Vec<_>>();
+        if !parameter_positions
+            .iter()
+            .any(|position| index.abs_diff(*position) <= 5)
+        {
             continue;
         }
         let mut labels = context
             .iter()
             .filter(|(_, word)| word == "total" || word == "active")
+            .filter(|(label_position, _)| {
+                index.abs_diff(*label_position) <= 1
+                    || parameter_positions.iter().any(|parameter_position| {
+                        index.abs_diff(*parameter_position) <= 3
+                            && parameter_position.abs_diff(*label_position) <= 1
+                    })
+            })
             .map(|(label_index, word)| (index.abs_diff(*label_index), word.as_str()))
             .collect::<Vec<_>>();
         labels.sort_by_key(|(distance, _)| *distance);
@@ -138,44 +247,202 @@ fn unique(values: Vec<u64>) -> Option<u64> {
     values.iter().all(|value| *value == first).then_some(first)
 }
 
+fn extract_recommendation(description: &str, start: usize, marker_len: usize) -> Option<String> {
+    let recommendation = description[start + marker_len..]
+        .trim_start_matches(|character: char| {
+            character.is_whitespace() || matches!(character, '-' | '—' | ':')
+        })
+        .split(['\n', '.', ';'])
+        .next()?
+        .trim();
+    (!recommendation.is_empty()).then(|| recommendation.to_string())
+}
+
+fn parse_recommended_use(description: &str) -> Option<String> {
+    let lower = description.to_ascii_lowercase();
+    let markers = [
+        "recommended use",
+        "recommended for",
+        "recommended application",
+        "best for",
+    ];
+    let recommendations = markers
+        .iter()
+        .flat_map(|marker| {
+            lower
+                .match_indices(marker)
+                .filter_map(|(start, _)| extract_recommendation(description, start, marker.len()))
+        })
+        .collect::<HashSet<_>>();
+
+    (recommendations.len() == 1)
+        .then(|| recommendations.into_iter().next())
+        .flatten()
+}
+
+const OPENROUTER_BENCHMARK_SOURCE: &str = "artificial-analysis";
+
+fn parse_openrouter_benchmarks(body: serde_json::Value) -> Result<serde_json::Value, String> {
+    let meta = body
+        .get("meta")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| {
+            "Unexpected response format from /benchmarks: meta must be an object".to_string()
+        })?;
+    let as_of = meta
+        .get("as_of")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "OpenRouter benchmark response omitted meta.as_of".to_string())?;
+    chrono::DateTime::parse_from_rfc3339(as_of).map_err(|_| {
+        "OpenRouter benchmark response has an invalid meta.as_of timestamp".to_string()
+    })?;
+    let data = body
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            "Unexpected response format from /benchmarks: data must be an array".to_string()
+        })?;
+
+    let mut counts = std::collections::HashMap::<String, usize>::new();
+    for item in data {
+        if item.get("source").and_then(serde_json::Value::as_str)
+            != Some(OPENROUTER_BENCHMARK_SOURCE)
+        {
+            continue;
+        }
+        if let Some(model_id) = item
+            .get("model_permaslug")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+        {
+            *counts.entry(model_id.to_string()).or_default() += 1;
+        }
+    }
+
+    let models = data
+        .iter()
+        .filter(|item| {
+            item.get("source").and_then(serde_json::Value::as_str)
+                == Some(OPENROUTER_BENCHMARK_SOURCE)
+        })
+        .filter_map(|item| {
+            let model_id = item
+                .get("model_permaslug")
+                .and_then(serde_json::Value::as_str)?;
+            if counts.get(model_id) != Some(&1) {
+                return None;
+            }
+
+            let score = |key: &str, dimension: &str| {
+                let value = item.get(key).and_then(serde_json::Value::as_f64)?;
+                (value.is_finite() && value >= 0.0).then(|| {
+                    serde_json::json!({
+                        "score": value,
+                        "dimension": dimension,
+                        "source": OPENROUTER_BENCHMARK_SOURCE,
+                        "asOf": as_of,
+                    })
+                })
+            };
+            let mut benchmarks = serde_json::Map::new();
+            for (key, dimension) in [
+                ("intelligence_index", "intelligence"),
+                ("coding_index", "coding"),
+                ("agentic_index", "agentic"),
+            ] {
+                if let Some(value) = score(key, dimension) {
+                    benchmarks.insert(dimension.to_string(), value);
+                }
+            }
+            (!benchmarks.is_empty())
+                .then(|| serde_json::json!({ "modelId": model_id, "benchmarks": benchmarks }))
+        })
+        .collect::<Vec<_>>();
+
+    let ambiguous_model_ids = counts
+        .into_iter()
+        .filter_map(|(model_id, count)| (count > 1).then_some(model_id))
+        .collect::<Vec<_>>();
+    let available_dimensions = ["intelligence", "coding", "agentic"]
+        .into_iter()
+        .filter(|dimension| {
+            models
+                .iter()
+                .any(|model| model["benchmarks"][dimension].is_object())
+        })
+        .collect::<Vec<_>>();
+
+    Ok(serde_json::json!({
+        "available": !available_dimensions.is_empty(),
+        "availableDimensions": available_dimensions,
+        "source": OPENROUTER_BENCHMARK_SOURCE,
+        "sourceUrl": meta.get("source_url").and_then(serde_json::Value::as_str),
+        "citation": meta.get("citation").and_then(serde_json::Value::as_str),
+        "asOf": as_of,
+        "models": models,
+        "ambiguousModelIds": ambiguous_model_ids,
+    }))
+}
+
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn ai__list_openrouter_models(
     api_key: String,
     base_url: String,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let url = format!(
-        "{}/models?supported_parameters=tools",
-        base_url.trim_end_matches('/')
-    );
+    let base_url = base_url.trim_end_matches('/');
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-    let response = client
-        .get(&url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .send()
-        .await
-        .map_err(|e| format!("Failed to fetch models from {}: {}", url, e))?;
+    let mut models = Vec::new();
+    let mut model_ids = HashSet::new();
+    let mut expected_total = None;
+    let mut offset = 0_u64;
 
-    if !response.status().is_success() {
-        let status = response.status();
-        return Err(format!(
-            "OpenRouter models endpoint returned HTTP {}",
-            status
-        ));
+    loop {
+        let url = format!(
+            "{}/models?supported_parameters=tools&limit={}&offset={}",
+            base_url, OPENROUTER_MODELS_PAGE_SIZE, offset
+        );
+        let response = client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch models from {}: {}", url, e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            return Err(format!(
+                "OpenRouter models endpoint returned HTTP {} at offset {}",
+                status, offset
+            ));
+        }
+
+        let body: serde_json::Value = response.json().await.map_err(|e| {
+            format!(
+                "Failed to parse models response at offset {}: {}",
+                offset, e
+            )
+        })?;
+        let page = parse_openrouter_model_page(body)?;
+        let page_len = u64::try_from(page.data.len())
+            .map_err(|_| "OpenRouter page exceeds the supported item count".to_string())?;
+        let total_count =
+            append_openrouter_model_page(page, &mut expected_total, &mut models, &mut model_ids)?;
+
+        let Some(next_offset) = advance_openrouter_offset(offset, page_len, total_count)? else {
+            break;
+        };
+        offset = next_offset;
     }
 
-    let body: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse models response: {}", e))?;
-
-    let models = body["data"]
-        .as_array()
-        .ok_or_else(|| "Unexpected response format from /models endpoint".to_string())?;
+    let total_count =
+        expected_total.ok_or_else(|| "OpenRouter returned no catalog page".to_string())?;
+    validate_complete_openrouter_catalog(&models, total_count)?;
 
     let result = models
         .iter()
@@ -188,6 +455,8 @@ pub async fn ai__list_openrouter_models(
                 .and_then(|s| s.parse::<f64>().ok());
             let description = m["description"].as_str().unwrap_or_default();
             let parameters = parse_parameter_counts(description);
+            let recommended_use = parse_recommended_use(description);
+            let recommendation_was_provided = recommended_use.is_some();
             let input_modalities = m["architecture"]["input_modalities"]
                 .as_array()
                 .cloned()
@@ -212,6 +481,8 @@ pub async fn ai__list_openrouter_models(
                 "name": m["name"].as_str().unwrap_or(""),
                 "publisher": publisher,
                 "description": description,
+                "recommendedUse": recommended_use,
+                "recommendedUseStatus": if recommendation_was_provided { "provided" } else { "not_provided" },
                 "contextLength": m["context_length"].as_u64(),
                 "inputCostPerToken": input_cost,
                 "outputCostPerToken": output_cost,
@@ -220,6 +491,7 @@ pub async fn ai__list_openrouter_models(
                 "supportedParameters": supported_parameters,
                 "parameterCountTotal": parameters.total,
                 "parameterCountActive": parameters.active,
+                "parameterCountStatus": if parameters.total.is_some() || parameters.active.is_some() { "reported" } else { "not_provided_or_ambiguous" },
                 "supportsTools": supports_tools,
             })
         })
@@ -228,12 +500,242 @@ pub async fn ai__list_openrouter_models(
     Ok(result)
 }
 
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn ai__list_openrouter_benchmarks(
+    api_key: String,
+    base_url: String,
+) -> Result<serde_json::Value, String> {
+    let url = format!(
+        "{}/benchmarks?source={}",
+        base_url.trim_end_matches('/'),
+        OPENROUTER_BENCHMARK_SOURCE
+    );
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|error| format!("Failed to create HTTP client: {}", error))?;
+    let response = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await
+        .map_err(|error| format!("Failed to fetch OpenRouter benchmarks: {}", error))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "OpenRouter benchmarks endpoint returned HTTP {}",
+            response.status()
+        ));
+    }
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|error| format!("Failed to parse OpenRouter benchmarks response: {}", error))?;
+    parse_openrouter_benchmarks(body)
+}
+
 #[cfg(test)]
 mod openrouter_metadata_tests {
     use super::{
-        openrouter_context_length, openrouter_price_per_million, parse_parameter_counts,
-        ParameterCounts,
+        advance_openrouter_offset, append_openrouter_model_page, openrouter_context_length,
+        openrouter_price_per_million, parse_openrouter_benchmarks, parse_openrouter_model_page,
+        parse_parameter_counts, parse_recommended_use, validate_complete_openrouter_catalog,
+        OpenRouterModelPage, ParameterCounts, OPENROUTER_MODELS_PAGE_SIZE,
     };
+    use std::collections::HashSet;
+
+    fn model_page(ids: &[&str], total_count: u64) -> OpenRouterModelPage {
+        OpenRouterModelPage {
+            data: ids
+                .iter()
+                .map(|id| serde_json::json!({ "id": id }))
+                .collect(),
+            total_count,
+        }
+    }
+
+    fn benchmark_response(data: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "data": data,
+            "meta": {
+                "as_of": "2026-11-04T00:00:00Z",
+                "source_url": "https://artificialanalysis.ai/",
+                "citation": "Artificial Analysis Intelligence Index"
+            }
+        })
+    }
+
+    #[test]
+    fn parses_supported_benchmark_dimensions_with_provenance() {
+        let parsed = parse_openrouter_benchmarks(benchmark_response(serde_json::json!([{
+            "model_permaslug": "provider/model",
+            "source": "artificial-analysis",
+            "intelligence_index": 70.2,
+            "coding_index": 66.1,
+            "agentic_index": 58.3
+        }])))
+        .unwrap();
+
+        assert_eq!(parsed["models"][0]["modelId"], "provider/model");
+        for (dimension, expected) in [("intelligence", 70.2), ("coding", 66.1), ("agentic", 58.3)] {
+            assert_eq!(
+                parsed["models"][0]["benchmarks"][dimension]["score"],
+                expected
+            );
+            assert_eq!(
+                parsed["models"][0]["benchmarks"][dimension]["dimension"],
+                dimension
+            );
+            assert_eq!(
+                parsed["models"][0]["benchmarks"][dimension]["source"],
+                "artificial-analysis"
+            );
+            assert_eq!(
+                parsed["models"][0]["benchmarks"][dimension]["asOf"],
+                "2026-11-04T00:00:00Z"
+            );
+        }
+    }
+
+    #[test]
+    fn benchmark_model_without_scores_is_explicitly_unscored() {
+        let parsed =
+            parse_openrouter_benchmarks(benchmark_response(serde_json::json!([]))).unwrap();
+        assert_eq!(parsed["available"], false);
+        assert_eq!(parsed["availableDimensions"], serde_json::json!([]));
+        assert_eq!(parsed["models"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn incomplete_benchmark_rows_only_expose_verified_dimensions() {
+        let parsed = parse_openrouter_benchmarks(benchmark_response(serde_json::json!([{
+            "model_permaslug": "provider/model",
+            "source": "artificial-analysis",
+            "coding_index": 66.1
+        }])))
+        .unwrap();
+        assert_eq!(parsed["models"][0]["benchmarks"]["coding"]["score"], 66.1);
+        assert_eq!(parsed["availableDimensions"], serde_json::json!(["coding"]));
+        assert!(parsed["models"][0]["benchmarks"]
+            .get("intelligence")
+            .is_none());
+        assert!(parsed["models"][0]["benchmarks"].get("agentic").is_none());
+
+        assert!(parse_openrouter_benchmarks(serde_json::json!({
+            "data": [], "meta": {}
+        }))
+        .is_err());
+        assert!(parse_openrouter_benchmarks(serde_json::json!({
+            "data": [], "meta": { "as_of": "yesterday" }
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn ambiguous_model_mapping_is_reported_and_not_selected() {
+        let row = serde_json::json!({
+            "model_permaslug": "provider/model",
+            "source": "artificial-analysis",
+            "coding_index": 66.1
+        });
+        let parsed =
+            parse_openrouter_benchmarks(benchmark_response(serde_json::json!([row.clone(), row])))
+                .unwrap();
+        assert_eq!(parsed["models"], serde_json::json!([]));
+        assert_eq!(
+            parsed["ambiguousModelIds"],
+            serde_json::json!(["provider/model"])
+        );
+    }
+
+    #[test]
+    fn parses_openrouter_catalog_page_and_rejects_missing_fields() {
+        let page = parse_openrouter_model_page(serde_json::json!({
+            "data": [{ "id": "publisher/model" }],
+            "total_count": 1
+        }))
+        .unwrap();
+        assert_eq!(page.data.len(), 1);
+        assert_eq!(page.total_count, 1);
+
+        assert!(parse_openrouter_model_page(serde_json::json!({ "data": [] })).is_err());
+        assert!(parse_openrouter_model_page(serde_json::json!({ "total_count": 0 })).is_err());
+        assert!(parse_openrouter_model_page(serde_json::json!({
+            "data": [],
+            "total_count": -1
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn combines_pages_by_model_id_and_rejects_total_count_changes() {
+        let mut expected_total = None;
+        let mut models = Vec::new();
+        let mut ids = HashSet::new();
+        append_openrouter_model_page(
+            model_page(&["publisher/a"], 2),
+            &mut expected_total,
+            &mut models,
+            &mut ids,
+        )
+        .unwrap();
+        append_openrouter_model_page(
+            model_page(&["publisher/a", "publisher/b"], 2),
+            &mut expected_total,
+            &mut models,
+            &mut ids,
+        )
+        .unwrap();
+        validate_complete_openrouter_catalog(&models, 2).unwrap();
+        assert_eq!(models.len(), 2);
+
+        assert!(append_openrouter_model_page(
+            model_page(&["publisher/c"], 3),
+            &mut expected_total,
+            &mut models,
+            &mut ids,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn pagination_advances_full_pages_and_rejects_incomplete_pages() {
+        assert_eq!(
+            advance_openrouter_offset(0, OPENROUTER_MODELS_PAGE_SIZE, 1_500).unwrap(),
+            Some(1_000)
+        );
+        assert_eq!(advance_openrouter_offset(1_000, 500, 1_500).unwrap(), None);
+        assert_eq!(advance_openrouter_offset(0, 0, 0).unwrap(), None);
+        assert!(advance_openrouter_offset(0, 999, 1_500).is_err());
+        assert!(advance_openrouter_offset(0, 1_001, 1_000).is_err());
+    }
+
+    #[test]
+    fn empty_catalog_is_valid_but_missing_models_are_not() {
+        let mut expected_total = None;
+        let mut models = Vec::new();
+        let mut ids = HashSet::new();
+        append_openrouter_model_page(
+            model_page(&[], 0),
+            &mut expected_total,
+            &mut models,
+            &mut ids,
+        )
+        .unwrap();
+        validate_complete_openrouter_catalog(&models, 0).unwrap();
+
+        let mut incomplete_total = None;
+        let mut incomplete = Vec::new();
+        let mut incomplete_ids = HashSet::new();
+        append_openrouter_model_page(
+            model_page(&["publisher/a"], 2),
+            &mut incomplete_total,
+            &mut incomplete,
+            &mut incomplete_ids,
+        )
+        .unwrap();
+        assert!(validate_complete_openrouter_catalog(&incomplete, 2).is_err());
+    }
 
     #[test]
     fn preserves_missing_and_explicit_zero_context_lengths() {
@@ -262,6 +764,13 @@ mod openrouter_metadata_tests {
             ParameterCounts {
                 total: Some(70_000_000_000),
                 active: Some(13_000_000_000),
+            }
+        );
+        assert_eq!(
+            parse_parameter_counts("12B active parameters out of 120B total"),
+            ParameterCounts {
+                total: Some(120_000_000_000),
+                active: Some(12_000_000_000),
             }
         );
     }
@@ -299,6 +808,34 @@ mod openrouter_metadata_tests {
                 total: None,
                 active: None,
             }
+        );
+    }
+
+    #[test]
+    fn extracts_only_explicit_recommended_use() {
+        assert_eq!(
+            parse_recommended_use(
+                "Recommended for: coding and software engineering. Additional text."
+            ),
+            Some("coding and software engineering".to_string())
+        );
+        assert_eq!(
+            parse_recommended_use("The model is recommended for legal document review."),
+            Some("legal document review".to_string())
+        );
+        assert_eq!(
+            parse_recommended_use("A capable model for coding and analysis."),
+            None
+        );
+        assert_eq!(
+            parse_recommended_use(
+                "Recommended for coding. Best for research and long-form analysis."
+            ),
+            None
+        );
+        assert_eq!(
+            parse_recommended_use("Recommended for coding. Recommended for coding."),
+            Some("coding".to_string())
         );
     }
 }

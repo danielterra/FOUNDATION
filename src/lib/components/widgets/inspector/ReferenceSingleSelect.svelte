@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core'
-  import { convertFileSrc } from '@tauri-apps/api/core'
+  import { inspectorIconSource, inspectorIconSymbol } from './iconSource'
   import EntitySearchCombobox from './EntitySearchCombobox.svelte'
   import { Button } from '$lib/components/ui/button'
 
@@ -15,19 +15,11 @@
   } = $props()
 
   function isIconUrl(icon: string): boolean {
-    return (
-      icon.startsWith('http://') ||
-      icon.startsWith('https://') ||
-      icon.startsWith('data:') ||
-      icon.startsWith('file://') ||
-      icon.startsWith('/')
-    )
+    return inspectorIconSource(icon) !== null
   }
 
   function getIconUrl(icon: string): string {
-    if (icon.startsWith('file://')) return convertFileSrc(icon.replace(/^file:\/\//, ''))
-    if (icon.startsWith('/')) return convertFileSrc(icon)
-    return icon
+    return inspectorIconSource(icon) ?? ''
   }
 
   async function searchFn(query: string) {
@@ -57,7 +49,7 @@
         {#if isIconUrl(currentValue.icon)}
           <img src={getIconUrl(currentValue.icon)} alt="" class="current-icon-img" />
         {:else}
-          <span class="material-symbols-outlined current-icon">{currentValue.icon}</span>
+          <span class="material-symbols-outlined current-icon">{inspectorIconSymbol(currentValue.icon)}</span>
         {/if}
       {/if}
       <span class="current-label">{currentValue.label ?? currentValue.iri}</span>

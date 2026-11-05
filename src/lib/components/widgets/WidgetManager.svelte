@@ -20,6 +20,7 @@
   import EmailViewerWidget from './EmailViewerWidget.svelte';
   import JsonRenderWidget from './JsonRenderWidget.svelte';
   import WidgetSidebar from './WidgetSidebar.svelte';
+  import { openEntity } from '$lib/blackboard';
 
   let { activeBlackboardIri = null, activeConversationIri = null } = $props();
 
@@ -48,7 +49,7 @@
   const premaximizePosition = new Map();
   const preminimizeState = new Map();
   const widgetDefaultSize = new Map();
-  const pendingInspectorOpens = new Set();
+  const pendingEntityOpens = new Set();
   let widgetAnnouncement = $state('');
 
   const widgetTypeInfo = new Map();
@@ -194,46 +195,28 @@
     );
   }
 
-  function inspectorOpenKey(entityIri) {
-    return `${activeBlackboardIri ?? 'default'}:inspector:${entityIri}`;
+  function entityOpenKey(entityIri) {
+    return `${activeBlackboardIri ?? 'default'}:${entityIri}`;
   }
 
-  async function openOrPromoteInspector(entityIri) {
+  async function openReferencedEntity(entityIri) {
     if (!entityIri) return;
 
-    const existing = widgets.find(widget =>
-      widget.blackboard_iri === activeBlackboardIri &&
-      widget.widget_type === 'inspector' &&
-      widget.entity_id === entityIri
-    );
-
-    if (existing) {
-      if (existing.window_state === 'minimized') restoreFromMinimized(existing.id);
-      else bringToFront(existing.id);
-      widgetAnnouncement = `Inspector promovido para o topo: ${entityResolutionByIri.get(entityIri)?.label ?? entityIri}`;
+    const key = entityOpenKey(entityIri);
+    if (pendingEntityOpens.has(key)) {
+      widgetAnnouncement = 'Entidade já está sendo aberta.';
       return;
     }
 
-    const key = inspectorOpenKey(entityIri);
-    if (pendingInspectorOpens.has(key)) {
-      widgetAnnouncement = 'Inspector já está sendo aberto.';
-      return;
-    }
-
-    pendingInspectorOpens.add(key);
-    widgetAnnouncement = `Abrindo inspector: ${entityResolutionByIri.get(entityIri)?.label ?? entityIri}`;
+    pendingEntityOpens.add(key);
+    widgetAnnouncement = `Abrindo entidade: ${entityResolutionByIri.get(entityIri)?.label ?? entityIri}`;
     try {
-      await invoke('widget_blackboard__add_widget', {
-        widgetType: 'inspector',
-        entityId: entityIri,
-        position: null,
-        size: null,
-        conversationId: activeConversationIri ?? null,
-      });
+      await openEntity(entityIri, activeConversationIri);
     } catch (error) {
-      pendingInspectorOpens.delete(key);
-      widgetAnnouncement = 'Não foi possível abrir o inspector.';
-      console.error('Failed to open entity inspector:', error);
+      widgetAnnouncement = 'Não foi possível abrir a entidade.';
+      console.error('Failed to open referenced entity:', error);
+    } finally {
+      pendingEntityOpens.delete(key);
     }
   }
 
@@ -425,15 +408,17 @@
     const w = event.payload;
     if (w.blackboard_iri !== activeBlackboardIri) return;
 
-    if (w.widget_type === 'inspector' && w.entity_id) {
-      pendingInspectorOpens.delete(inspectorOpenKey(w.entity_id));
-      widgetAnnouncement = `Inspector aberto: ${entityResolutionByIri.get(w.entity_id)?.label ?? w.entity_id}`;
+    if (w.entity_id) {
+      pendingEntityOpens.delete(entityOpenKey(w.entity_id));
+      widgetAnnouncement = `Entidade aberta: ${entityResolutionByIri.get(w.entity_id)?.label ?? w.entity_id}`;
     }
 
     widgetLoadRequestId += 1;
     const existingIdx = widgets.findIndex(existing => existing.id === w.id);
     if (existingIdx >= 0) {
-      bringToFront(w.id);
+      const existing = widgets[existingIdx];
+      if (existing.window_state === 'minimized') restoreFromMinimized(w.id);
+      else bringToFront(w.id);
       return;
     }
 
@@ -553,7 +538,7 @@
       onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && startResize(e, widget)}
     ></div>
     {#if widget.widget_type === 'inspector'}
-      <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} refreshKey={widget.refreshKey ?? 0} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} onOpenEntityInspector={openOrPromoteInspector} conversationIri={activeConversationIri} />
+      <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} refreshKey={widget.refreshKey ?? 0} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} onOpenEntityInspector={openReferencedEntity} conversationIri={activeConversationIri} />
     {:else if widget.widget_type === 'mermaid'}
       <MermaidWidget widgetId={widget.id} entityId={widget.entity_id} conversationIri={activeConversationIri} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {:else if widget.widget_type === 'process_status'}

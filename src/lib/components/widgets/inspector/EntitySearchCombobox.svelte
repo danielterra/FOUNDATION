@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { convertFileSrc } from '@tauri-apps/api/core'
+  import { inspectorIconSource, inspectorIconSymbol } from './iconSource'
   import { onDestroy } from 'svelte'
   import { Input } from '$lib/components/ui/input'
   import { Button } from '$lib/components/ui/button'
@@ -44,19 +44,11 @@
   let listWidth = $state(0)
 
   function isIconUrl(icon: string): boolean {
-    return (
-      icon.startsWith('http://') ||
-      icon.startsWith('https://') ||
-      icon.startsWith('data:') ||
-      icon.startsWith('file://') ||
-      icon.startsWith('/')
-    )
+    return inspectorIconSource(icon) !== null
   }
 
   function getIconUrl(icon: string): string {
-    if (icon.startsWith('file://')) return convertFileSrc(icon.replace(/^file:\/\//, ''))
-    if (icon.startsWith('/')) return convertFileSrc(icon)
-    return icon
+    return inspectorIconSource(icon) ?? ''
   }
 
   function updateListPosition() {
@@ -255,7 +247,7 @@
               {#if isIconUrl(item.icon)}
                 <img src={getIconUrl(item.icon)} alt="" class="esc-item-img" />
               {:else}
-                <span class="material-symbols-outlined esc-item-icon">{item.icon}</span>
+                <span class="material-symbols-outlined esc-item-icon">{inspectorIconSymbol(item.icon)}</span>
               {/if}
             {/if}
             <span class="esc-item-label">{item.label ?? item.id}</span>

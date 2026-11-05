@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { convertFileSrc } from '@tauri-apps/api/core';
+  import { inspectorIconSource, inspectorIconSymbol } from './iconSource';
   import * as Collapsible from '$lib/components/ui/collapsible';
 
   interface BacklinkEntity {
@@ -68,19 +68,23 @@
     openStates = m;
   }
 
+  function handleEntityReferenceClick(event: Event) {
+    const entityIri = (event.currentTarget as HTMLElement).dataset.entityIri;
+    if (entityIri) openEntityInspector(entityIri);
+  }
+
+  function handleEntityReferenceKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    handleEntityReferenceClick(event);
+  }
+
   function isIconUrl(icon: string | null): boolean {
-    if (!icon) return false;
-    return icon.startsWith('http://') || icon.startsWith('https://') ||
-           icon.startsWith('data:') || icon.startsWith('file://') || icon.startsWith('/');
+    return inspectorIconSource(icon) !== null;
   }
 
   function getIconUrl(icon: string): string {
-    if (!icon) return '';
-    if (icon.startsWith('http://') || icon.startsWith('https://') || icon.startsWith('data:'))
-      return icon;
-    if (icon.startsWith('file://')) return convertFileSrc(icon.replace(/^file:\/\//, ''));
-    if (icon.startsWith('/')) return convertFileSrc(icon);
-    return icon;
+    return inspectorIconSource(icon) ?? '';
   }
 </script>
 
@@ -112,14 +116,15 @@
                   class="entity-item clickable"
                   role="button"
                   tabindex="0"
-                  onclick={() => openEntityInspector(entity.iri)}
-                  onkeydown={(e) => e.key === 'Enter' && openEntityInspector(entity.iri)}
+                  data-entity-iri={entity.iri}
+                  onclick={handleEntityReferenceClick}
+                  onkeydown={handleEntityReferenceKeydown}
                 >
                   {#if entity.icon}
                     {#if isIconUrl(entity.icon)}
                       <img src={getIconUrl(entity.icon)} alt="" class="entity-icon-image" />
                     {:else}
-                      <span class="material-symbols-outlined entity-icon">{entity.icon}</span>
+                      <span class="material-symbols-outlined entity-icon">{inspectorIconSymbol(entity.icon)}</span>
                     {/if}
                   {:else}
                     <span class="material-symbols-outlined entity-icon">link</span>

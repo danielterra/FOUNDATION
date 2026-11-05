@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte'
-  import { invoke, convertFileSrc } from '@tauri-apps/api/core'
+  import { invoke } from '@tauri-apps/api/core'
+  import { inspectorIconSource, inspectorIconSymbol } from './iconSource'
   import { Button } from '$lib/components/ui/button'
   import EntitySearchCombobox from './EntitySearchCombobox.svelte'
 
@@ -65,19 +66,11 @@
   }
 
   function isIconUrl(icon: string): boolean {
-    return (
-      icon.startsWith('http://') ||
-      icon.startsWith('https://') ||
-      icon.startsWith('data:') ||
-      icon.startsWith('file://') ||
-      icon.startsWith('/')
-    )
+    return inspectorIconSource(icon) !== null
   }
 
   function getIconUrl(icon: string): string {
-    if (icon.startsWith('file://')) return convertFileSrc(icon.replace(/^file:\/\//, ''))
-    if (icon.startsWith('/')) return convertFileSrc(icon)
-    return icon
+    return inspectorIconSource(icon) ?? ''
   }
 
   async function save() {
@@ -95,7 +88,7 @@
             {#if isIconUrl(item.icon)}
               <img src={getIconUrl(item.icon)} alt="" class="chip-img" />
             {:else}
-              <span class="material-symbols-outlined chip-icon">{item.icon}</span>
+              <span class="material-symbols-outlined chip-icon">{inspectorIconSymbol(item.icon)}</span>
             {/if}
           {/if}
           <span class="chip-label">{item.label ?? item.iri}</span>

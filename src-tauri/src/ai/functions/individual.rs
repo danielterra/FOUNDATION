@@ -1,6 +1,6 @@
 use super::ToolResult;
 use crate::eavto::Connection;
-use crate::owl::{Individual, Object, Property, PropertyType};
+use crate::owl::{Individual, Object, Property, PropertyType, PropertyValueCursor};
 use serde_json::Value;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -376,6 +376,14 @@ pub fn read_property_page(conn: &Connection, args: &Value) -> ToolResult {
 }
 
 pub fn describe_individual(conn: &Connection, args: &Value) -> ToolResult {
+    let continuation_fields = ["individual_iri", "property_iri", "snapshot_tx", "cursor"];
+    let continuation_requested = continuation_fields
+        .iter()
+        .any(|field| args.get(field).is_some());
+    if continuation_requested {
+        return describe_individual_property_page(conn, args);
+    }
+
     let iris = match args.get("iris").and_then(|v| v.as_array()) {
         Some(arr) => arr,
         None => {
@@ -416,6 +424,205 @@ pub fn describe_individual(conn: &Connection, args: &Value) -> ToolResult {
     }
 }
 
+fn describe_object_value(object: &Object) -> Value {
+    match object {
+        Object::Iri(value) | Object::Blank(value) => serde_json::json!({
+            "kind": object.object_type(),
+            "value": value,
+        }),
+        Object::Literal {
+            value,
+            datatype,
+            language,
+        } => serde_json::json!({
+            "kind": "literal",
+            "value": value,
+            "datatype": datatype,
+            "language": language,
+        }),
+        Object::Integer(value) => {
+            serde_json::json!({ "kind": "literal", "value": value, "datatype": "xsd:integer" })
+        }
+        Object::Number(value) => {
+            serde_json::json!({ "kind": "literal", "value": value, "datatype": "xsd:decimal" })
+        }
+        Object::Boolean(value) => {
+            serde_json::json!({ "kind": "literal", "value": value, "datatype": "xsd:boolean" })
+        }
+        Object::DateTime(value) => {
+            serde_json::json!({ "kind": "literal", "value": value, "datatype": "xsd:dateTime" })
+        }
+    }
+}
+
+fn describe_property_cursor(
+    cursor: &PropertyValueCursor,
+    individual_iri: &str,
+    property_iri: &str,
+) -> Value {
+    serde_json::json!({
+        "individual_iri": individual_iri,
+        "property_iri": property_iri,
+        "snapshot_tx": cursor.snapshot_tx,
+        "value_key": cursor.value_key,
+        "value_tx": cursor.value_tx,
+        "datatype": cursor.datatype,
+        "language": cursor.language,
+        "object_type": cursor.object_type,
+    })
+}
+
+fn describe_individual_property_page(conn: &Connection, args: &Value) -> ToolResult {
+    let individual_iri = args.get("individual_iri").and_then(Value::as_str);
+    let property_iri = args.get("property_iri").and_then(Value::as_str);
+    let snapshot_tx = args.get("snapshot_tx").and_then(Value::as_i64);
+    let cursor = args.get("cursor");
+    let (Some(individual_iri), Some(property_iri), Some(snapshot_tx), Some(cursor)) =
+        (individual_iri, property_iri, snapshot_tx, cursor)
+    else {
+        return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Continuation requires individual_iri, property_iri, snapshot_tx, and cursor from the previous page".to_string()),
+            concept: None,
+        };
+    };
+    if args.get("iris").is_some() {
+        return ToolResult {
+            success: false,
+            result: None,
+            error: Some("Use either iris for an initial description or continuation parameters for the next property page, not both".to_string()),
+            concept: None,
+        };
+    }
+
+    let cursor_snapshot_tx = cursor.get("snapshot_tx").and_then(Value::as_i64);
+    let value_key = cursor.get("value_key").and_then(Value::as_str);
+    let value_tx = cursor.get("value_tx").and_then(Value::as_i64);
+    let object_type = cursor.get("object_type").and_then(Value::as_str);
+    let datatype = match cursor.get("datatype") {
+        Some(Value::String(value)) => Some(value.clone()),
+        Some(Value::Null) => None,
+        _ => return invalid_property_cursor(),
+    };
+    let language = match cursor.get("language") {
+        Some(Value::String(value)) => Some(value.clone()),
+        Some(Value::Null) => None,
+        _ => return invalid_property_cursor(),
+    };
+    let (Some(cursor_snapshot_tx), Some(value_key), Some(value_tx), Some(object_type)) =
+        (cursor_snapshot_tx, value_key, value_tx, object_type)
+    else {
+        return invalid_property_cursor();
+    };
+    if !matches!(object_type, "iri" | "blank" | "literal") {
+        return invalid_property_cursor();
+    }
+    if cursor.get("individual_iri").and_then(Value::as_str) != Some(individual_iri)
+        || cursor.get("property_iri").and_then(Value::as_str) != Some(property_iri)
+    {
+        return ToolResult {
+            success: false,
+            result: None,
+            error: Some(
+                "Property cursor must belong to the requested individual_iri and property_iri"
+                    .to_string(),
+            ),
+            concept: None,
+        };
+    }
+    if cursor_snapshot_tx != snapshot_tx {
+        return ToolResult {
+            success: false,
+            result: None,
+            error: Some(
+                "Property cursor snapshot_tx must match the requested snapshot_tx".to_string(),
+            ),
+            concept: None,
+        };
+    }
+
+    const PAGE_SIZE: usize = 5;
+    let after = PropertyValueCursor {
+        entity_iri: individual_iri.to_string(),
+        predicate: property_iri.to_string(),
+        snapshot_tx: cursor_snapshot_tx,
+        value_key: value_key.to_string(),
+        value_tx,
+        datatype,
+        language,
+        object_type: object_type.to_string(),
+    };
+    match crate::owl::get_property_values_page(
+        conn,
+        individual_iri,
+        property_iri,
+        PAGE_SIZE,
+        snapshot_tx,
+        Some(&after),
+    ) {
+        Ok(page) => {
+            let secret_props =
+                match crate::core_ontology::property_configuration::secret_property_iris(conn) {
+                    Ok(properties) => properties,
+                    Err(error) => {
+                        return ToolResult {
+                            success: false,
+                            result: None,
+                            error: Some(error.to_string()),
+                            concept: None,
+                        }
+                    }
+                };
+            let is_secret = secret_props.contains(property_iri);
+            let values = if is_secret {
+                vec![serde_json::json!(
+                    crate::core_ontology::property_configuration::SECRET_MASK
+                )]
+            } else {
+                page.items
+                    .iter()
+                    .map(|triple| describe_object_value(&triple.object))
+                    .collect::<Vec<_>>()
+            };
+            let result = serde_json::json!({
+                "individual_iri": individual_iri,
+                "property": property_iri,
+                "values": values,
+                "pagination": {
+                    "total": if is_secret { Some(1) } else { None::<usize> },
+                    "loaded": if is_secret { 1 } else { page.items.len() },
+                    "has_more": if is_secret { false } else { page.has_more },
+                    "snapshot_tx": page.snapshot_tx,
+                    "cursor": if is_secret { None } else { page.next_cursor.as_ref().map(|cursor| describe_property_cursor(cursor, individual_iri, property_iri)) },
+                },
+                "isSecret": is_secret,
+            });
+            ToolResult {
+                success: true,
+                result: Some(result),
+                error: None,
+                concept: None,
+            }
+        }
+        Err(error) => ToolResult {
+            success: false,
+            result: None,
+            error: Some(error.to_string()),
+            concept: None,
+        },
+    }
+}
+
+fn invalid_property_cursor() -> ToolResult {
+    ToolResult {
+        success: false,
+        result: None,
+        error: Some("cursor must contain individual_iri, property_iri, snapshot_tx, value_key, value_tx, datatype, language, and object_type from the previous property page".to_string()),
+        concept: None,
+    }
+}
+
 fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
     let iri = match args
         .get("iri")
@@ -439,7 +646,20 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
         .unwrap_or(false);
 
     match (|| {
-        let individual = Individual::get(conn, iri)?
+        let snapshot_tx =
+            crate::owl::current_snapshot_tx(conn).map_err(crate::owl::OwlError::DatabaseError)?;
+        const PROPERTY_PAGE_SIZE: usize = 5;
+
+        let individual = Individual::get_with_property_page(
+            conn,
+            iri,
+            snapshot_tx,
+            foundation_core::owl::vocabulary::rdfs::LABEL,
+            foundation_core::owl::vocabulary::rdfs::COMMENT,
+            "foundation:hasIcon",
+            foundation_core::owl::vocabulary::rdf::TYPE,
+            PROPERTY_PAGE_SIZE,
+        )?
             .ok_or_else(|| crate::owl::OwlError::NotFound(format!(
                 "'{}' not found. Do NOT retry this IRI — use the `search` tool to find the correct IRI first.",
                 iri
@@ -536,30 +756,64 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
             cb.cmp(&ca)
         });
 
-        let mut properties = individual.serializable_properties(conn);
-        for (i, (_, obj)) in individual.properties.iter().enumerate() {
-            if let Object::DateTime(rfc3339) = obj {
-                if let Some(entry) = properties.get_mut(i) {
-                    entry["value"] = serde_json::json!(rfc3339);
-                }
+        let mut property_iris: Vec<String> = individual
+            .properties
+            .iter()
+            .map(|(predicate, _)| predicate.clone())
+            .collect();
+        property_iris.sort();
+        property_iris.dedup();
+        let mut properties = Vec::new();
+        for property_iri in property_iris {
+            let page = crate::owl::get_property_values_page(
+                conn,
+                iri,
+                &property_iri,
+                PROPERTY_PAGE_SIZE,
+                snapshot_tx,
+                None,
+            )
+            .map_err(crate::owl::OwlError::DatabaseError)?;
+            let property = Property::get(conn, &property_iri).ok().flatten();
+            let property_type = property
+                .as_ref()
+                .map(|value| value.classification().as_str())
+                .unwrap_or("value");
+            let mut entry = serde_json::json!({
+                "property": property_iri,
+                "propertyType": property_type,
+                "values": page.items.iter().map(|triple| describe_object_value(&triple.object)).collect::<Vec<_>>(),
+                "pagination": {
+                    "total": Option::<usize>::None,
+                    "loaded": page.items.len(),
+                    "has_more": page.has_more,
+                    "snapshot_tx": page.snapshot_tx,
+                    "cursor": page.next_cursor.as_ref().map(|cursor| describe_property_cursor(cursor, iri, &property_iri)),
+                },
+            });
+            if let Some(unit) = property.as_ref().and_then(|value| value.unit.as_ref()) {
+                entry["unit"] = serde_json::json!(unit);
             }
+            if let Some(rules) = property.and_then(|value| value.ai_behavior_rules) {
+                entry["aiBehaviorRules"] = serde_json::json!(rules);
+            }
+            properties.push(entry);
         }
 
         if include_retracted {
             let retracted_triples = Individual::get_retracted_properties(conn, iri)?;
             for triple in &retracted_triples {
-                let value: serde_json::Value = match &triple.object {
-                    Object::Iri(s) | Object::Blank(s) => serde_json::json!(s),
-                    Object::Literal { value: v, .. } => serde_json::json!(v),
-                    Object::Integer(i) => serde_json::json!(i),
-                    Object::Number(n) => serde_json::json!(n),
-                    Object::Boolean(b) => serde_json::json!(b),
-                    Object::DateTime(rfc3339) => serde_json::json!(rfc3339),
-                };
                 properties.push(serde_json::json!({
                     "property": triple.predicate,
-                    "value": value,
+                    "values": [describe_object_value(&triple.object)],
                     "retracted": true,
+                    "pagination": {
+                        "total": 1,
+                        "loaded": 1,
+                        "has_more": false,
+                        "snapshot_tx": snapshot_tx,
+                        "cursor": null,
+                    },
                 }));
             }
         }
@@ -569,39 +823,20 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
         // otherwise land in its transcript.
         let secret_props =
             crate::core_ontology::property_configuration::secret_property_iris(conn)?;
-        if !secret_props.is_empty() {
-            for prop in &mut properties {
-                let is_secret = prop
-                    .get("property")
-                    .and_then(|v| v.as_str())
-                    .map(|p| secret_props.contains(p))
-                    .unwrap_or(false);
-                if is_secret {
-                    prop["value"] = serde_json::json!(
-                        crate::core_ontology::property_configuration::SECRET_MASK
-                    );
-                    prop["isSecret"] = serde_json::json!(true);
-                }
-            }
-        }
-
-        const LITERAL_MAX: usize = 2000;
         for prop in &mut properties {
-            if prop.get("isSecret").is_some() {
-                continue;
-            }
-            if let Some(value) = prop.get("value").and_then(|v| v.as_str()) {
-                let char_count = value.chars().count();
-                if char_count > LITERAL_MAX {
-                    let cut = value
-                        .char_indices()
-                        .nth(LITERAL_MAX)
-                        .map(|(i, _)| i)
-                        .unwrap_or(value.len());
-                    let truncated =
-                        format!("{}…[truncated: {} chars total]", &value[..cut], char_count);
-                    prop["value"] = serde_json::json!(truncated);
-                }
+            let is_secret = prop
+                .get("property")
+                .and_then(Value::as_str)
+                .map(|predicate| secret_props.contains(predicate))
+                .unwrap_or(false);
+            if is_secret {
+                prop["values"] =
+                    serde_json::json!([crate::core_ontology::property_configuration::SECRET_MASK]);
+                prop["isSecret"] = serde_json::json!(true);
+                prop["pagination"]["total"] = serde_json::json!(1);
+                prop["pagination"]["loaded"] = serde_json::json!(1);
+                prop["pagination"]["has_more"] = serde_json::json!(false);
+                prop["pagination"]["cursor"] = Value::Null;
             }
         }
 
@@ -649,16 +884,6 @@ fn describe_individual_one(conn: &Connection, args: &Value) -> ToolResult {
                         }
                     }
                 }
-            }
-        }
-
-        for (i, (prop_iri, _)) in individual.properties.iter().enumerate() {
-            let ai_behavior_rules = Property::get(conn, prop_iri)
-                .ok()
-                .flatten()
-                .and_then(|p| p.ai_behavior_rules);
-            if let (Some(entry), Some(rules)) = (properties.get_mut(i), ai_behavior_rules) {
-                entry["aiBehaviorRules"] = serde_json::json!(rules);
             }
         }
 
@@ -1439,6 +1664,297 @@ fn restore_property_one(conn: &mut Connection, args: &Value) -> ToolResult {
             error: Some(e.to_string()),
             concept: None,
         },
+    }
+}
+
+#[cfg(test)]
+mod property_page_tests {
+    use super::*;
+    use crate::eavto::{store, test_helpers::setup_test_db, Triple};
+
+    const SUBJECT: &str = "foundation:PaginationTestEntity";
+    const PROPERTY: &str = "foundation:paginationTestValue";
+
+    fn seed_values(conn: &mut Connection, values: &[String]) {
+        let mut triples = vec![
+            Triple::new(SUBJECT, "rdf:type", Object::Iri("owl:Thing".to_string())),
+            Triple::new(
+                SUBJECT,
+                "rdfs:label",
+                Object::Literal {
+                    value: "Pagination test entity".to_string(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                },
+            ),
+        ];
+        triples.extend(values.iter().map(|value| {
+            Triple::new(
+                SUBJECT,
+                PROPERTY,
+                Object::Literal {
+                    value: value.clone(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                },
+            )
+        }));
+        store::assert_triples(conn, &triples, "pagination-test").unwrap();
+    }
+
+    fn first_property(result: &ToolResult) -> Value {
+        result.result.as_ref().unwrap()["individuals"][0]["properties"][0].clone()
+    }
+
+    fn property(result: &ToolResult, property_iri: &str) -> Value {
+        result.result.as_ref().unwrap()["individuals"][0]["properties"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["property"] == property_iri)
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    // Covers adapter pagination and snapshot stability only; it does not test replacement/removal semantics.
+    fn describe_individual_paginates_all_values_at_one_stable_snapshot() {
+        let mut conn = setup_test_db();
+        let expected: Vec<String> = (0..12).map(|index| format!("value-{index:02}")).collect();
+        seed_values(&mut conn, &expected);
+
+        let initial = describe_individual(&conn, &serde_json::json!({ "iris": [SUBJECT] }));
+        assert!(initial.success, "{:?}", initial.error);
+        let first = first_property(&initial);
+        assert_eq!(first["values"].as_array().unwrap().len(), 5);
+        assert!(first["pagination"]["total"].is_null());
+        assert_eq!(first["pagination"]["loaded"], 5);
+        assert_eq!(first["pagination"]["has_more"], true);
+        let snapshot_tx = first["pagination"]["snapshot_tx"].as_i64().unwrap();
+        let mut cursor = first["pagination"]["cursor"].clone();
+
+        seed_values(&mut conn, &["value-after-snapshot".to_string()]);
+        let mut values: Vec<String> = first["values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value["value"].as_str().unwrap().to_string())
+            .collect();
+
+        loop {
+            let page = describe_individual(
+                &conn,
+                &serde_json::json!({
+                    "individual_iri": SUBJECT,
+                    "property_iri": PROPERTY,
+                    "snapshot_tx": snapshot_tx,
+                    "cursor": cursor,
+                }),
+            );
+            assert!(page.success, "{:?}", page.error);
+            let result = page.result.unwrap();
+            assert_eq!(result["pagination"]["snapshot_tx"], snapshot_tx);
+            values.extend(
+                result["values"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|value| value["value"].as_str().unwrap().to_string()),
+            );
+            if !result["pagination"]["has_more"].as_bool().unwrap() {
+                break;
+            }
+            cursor = result["pagination"]["cursor"].clone();
+        }
+
+        assert_eq!(values, expected);
+    }
+
+    #[test]
+    fn property_continuation_rejects_snapshot_or_scope_mismatch() {
+        let mut conn = setup_test_db();
+        seed_values(
+            &mut conn,
+            &(0..7)
+                .map(|index| format!("value-{index:02}"))
+                .collect::<Vec<_>>(),
+        );
+        let first = describe_individual(&conn, &serde_json::json!({ "iris": [SUBJECT] }));
+        let cursor = first_property(&first)["pagination"]["cursor"].clone();
+        let snapshot_tx = cursor["snapshot_tx"].as_i64().unwrap();
+
+        let mismatch = describe_individual(
+            &conn,
+            &serde_json::json!({
+                "individual_iri": SUBJECT,
+                "property_iri": PROPERTY,
+                "snapshot_tx": snapshot_tx + 1,
+                "cursor": cursor,
+            }),
+        );
+        assert!(!mismatch.success);
+        assert!(mismatch.error.unwrap().contains("snapshot_tx"));
+
+        let mismatch = describe_individual(
+            &conn,
+            &serde_json::json!({
+                "individual_iri": SUBJECT,
+                "property_iri": "foundation:anotherProperty",
+                "snapshot_tx": snapshot_tx,
+                "cursor": first_property(&first)["pagination"]["cursor"],
+            }),
+        );
+        assert!(!mismatch.success);
+        assert!(mismatch.error.unwrap().contains("belong"));
+
+        let mismatch = describe_individual(
+            &conn,
+            &serde_json::json!({
+                "individual_iri": "foundation:anotherIndividual",
+                "property_iri": PROPERTY,
+                "snapshot_tx": snapshot_tx,
+                "cursor": first_property(&first)["pagination"]["cursor"],
+            }),
+        );
+        assert!(!mismatch.success);
+        assert!(mismatch.error.unwrap().contains("belong"));
+    }
+
+    #[test]
+    fn property_cursor_round_trips_unchanged_and_requires_value_tx() {
+        let mut conn = setup_test_db();
+        seed_values(
+            &mut conn,
+            &(0..7)
+                .map(|index| format!("value-{index:02}"))
+                .collect::<Vec<_>>(),
+        );
+        let first = describe_individual(&conn, &serde_json::json!({ "iris": [SUBJECT] }));
+        let cursor = first_property(&first)["pagination"]["cursor"].clone();
+        assert!(cursor["value_tx"].as_i64().is_some());
+
+        let continuation = describe_individual(
+            &conn,
+            &serde_json::json!({
+                "individual_iri": SUBJECT,
+                "property_iri": PROPERTY,
+                "snapshot_tx": cursor["snapshot_tx"],
+                "cursor": cursor,
+            }),
+        );
+        assert!(continuation.success, "{:?}", continuation.error);
+
+        let mut incomplete_cursor = first_property(&first)["pagination"]["cursor"].clone();
+        incomplete_cursor
+            .as_object_mut()
+            .unwrap()
+            .remove("value_tx");
+        let rejected = describe_individual(
+            &conn,
+            &serde_json::json!({
+                "individual_iri": SUBJECT,
+                "property_iri": PROPERTY,
+                "snapshot_tx": incomplete_cursor["snapshot_tx"],
+                "cursor": incomplete_cursor,
+            }),
+        );
+        assert!(!rejected.success);
+        assert!(rejected.error.unwrap().contains("value_tx"));
+
+        let cursor_schema = crate::ai::functions::get_available_tools()
+            .into_iter()
+            .find(|tool| tool.name == "describe_individual")
+            .unwrap()
+            .parameters
+            .into_iter()
+            .find(|parameter| parameter.name == "cursor")
+            .unwrap()
+            .schema
+            .unwrap();
+        assert_eq!(cursor_schema["additionalProperties"], false);
+        assert!(cursor_schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|name| name == "value_tx"));
+        assert_eq!(cursor_schema["properties"]["value_tx"]["type"], "integer");
+    }
+
+    #[test]
+    fn secret_property_has_same_mask_shape_on_initial_and_continuation_pages() {
+        const SECRET_SUBJECT: &str = "foundation:PaginationSecretTestEntity";
+        const SECRET_PROPERTY: &str = "foundation:paginationSecretTestValue";
+        let mut conn = setup_test_db();
+        let mut triples = vec![
+            Triple::new(
+                SECRET_SUBJECT,
+                "rdf:type",
+                Object::Iri("owl:Thing".to_string()),
+            ),
+            Triple::new(
+                SECRET_SUBJECT,
+                "rdfs:label",
+                Object::Literal {
+                    value: "Pagination secret test entity".to_string(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                },
+            ),
+            Triple::new(
+                SECRET_PROPERTY,
+                "foundation:isSecret",
+                Object::Boolean(true),
+            ),
+        ];
+        triples.extend((0..7).map(|index| {
+            Triple::new(
+                SECRET_SUBJECT,
+                SECRET_PROPERTY,
+                Object::Literal {
+                    value: format!("secret-value-{index}"),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                },
+            )
+        }));
+        store::assert_triples(&mut conn, &triples, "pagination-secret-test").unwrap();
+
+        let initial = describe_individual(&conn, &serde_json::json!({ "iris": [SECRET_SUBJECT] }));
+        assert!(initial.success, "{:?}", initial.error);
+        let initial_values = property(&initial, SECRET_PROPERTY)["values"].clone();
+        assert_eq!(
+            initial_values,
+            serde_json::json!([crate::core_ontology::property_configuration::SECRET_MASK])
+        );
+
+        let page = crate::owl::get_property_values_page(
+            &conn,
+            SECRET_SUBJECT,
+            SECRET_PROPERTY,
+            5,
+            property(&initial, SECRET_PROPERTY)["pagination"]["snapshot_tx"]
+                .as_i64()
+                .unwrap(),
+            None,
+        )
+        .unwrap();
+        let cursor = describe_property_cursor(
+            page.next_cursor.as_ref().unwrap(),
+            SECRET_SUBJECT,
+            SECRET_PROPERTY,
+        );
+        let continuation = describe_individual(
+            &conn,
+            &serde_json::json!({
+                "individual_iri": SECRET_SUBJECT,
+                "property_iri": SECRET_PROPERTY,
+                "snapshot_tx": page.snapshot_tx,
+                "cursor": cursor,
+            }),
+        );
+        assert!(continuation.success, "{:?}", continuation.error);
+        let continuation_result = continuation.result.unwrap();
+        assert_eq!(continuation_result["values"], initial_values);
     }
 }
 

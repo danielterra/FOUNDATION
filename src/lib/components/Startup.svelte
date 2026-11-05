@@ -4,7 +4,6 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import SetupWizard from "$lib/components/SetupWizard.svelte";
-  import ImportProgress from "$lib/components/ImportProgress.svelte";
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
 
@@ -15,9 +14,9 @@
   let folderError = $state('');
 
   let setupComplete = $state(null); // null = verificando, true = done, false = not done
-  let importing = $state(null);     // null = verificando, true = importing, false = already imported
 
   let initError = $state(null);     // string com erro de inicialização, ou null
+  let startupFailure = $state(null);
   let switchingFolder = $state(false);
   let copyFeedback = $state('');
 
@@ -75,7 +74,7 @@
     return Math.min(99, Math.max(0, Math.floor((recoveryBytes / recoveryTotal) * 100)));
   }
 
-  let startupStage = $state('Verificando banco de dados');
+  let startupStage = $state('Aguardando serviço local');
   let startupStartedAt = $state(0);
   let startupElapsedSec = $state(0);
   let startupTimer = null;
@@ -88,15 +87,16 @@
   }
 
   async function beginStartupTracking() {
+    stopStartupTracking();
     startupStartedAt = Date.now();
     startupElapsedSec = 0;
+    unlistenStartupProgress = await listen('import-progress', (event) => {
+      const payload = event.payload;
+      if (payload && payload.stage) startupStage = stageLabel(payload.stage);
+    });
     startupTimer = setInterval(() => {
       startupElapsedSec = Math.floor((Date.now() - startupStartedAt) / 1000);
     }, 1000);
-    unlistenStartupProgress = await listen('import-progress', (event) => {
-      const payload = event.payload;
-      if (payload && payload.stage) startupStage = payload.stage;
-    });
   }
 
   function stopStartupTracking() {
@@ -106,7 +106,12 @@
 
   onDestroy(() => { stopStartupTracking(); });
 
-  onMount(async () => {
+  onMount(() => {
+    loadStartupConfiguration();
+  });
+
+  async function loadStartupConfiguration() {
+    startupFailure = null;
     try {
       const configured = await invoke('settings__is_folder_configured');
       folderPath = await invoke('settings__get_foundation_dir');
@@ -114,15 +119,13 @@
         folderConfigured = false;
       } else {
         folderConfigured = true;
-        await beginStartupTracking();
         await initializeApp();
       }
-    } catch {
+    } catch (error) {
+      startupFailure = { kind: 'settings', message: String(error) };
       folderConfigured = true;
-      await beginStartupTracking();
-      await initializeApp();
     }
-  });
+  }
 
   async function selectFolder() {
     const { open } = await import('@tauri-apps/plugin-dialog');
@@ -145,20 +148,47 @@
   }
 
   async function initializeApp() {
+    startupFailure = null;
+    initError = null;
+    setupComplete = null;
+    folderSaving = false;
+
+    try {
+      startupStage = 'Conectando ao serviço local';
+      await beginStartupTracking();
+    } catch (err) {
+      stopStartupTracking();
+      startupFailure = { kind: 'listener', message: String(err) };
+      return;
+    }
+
     try {
       await invoke('initialize_app');
     } catch (err) {
       const errorMsg = String(err);
-      if (errorMsg.includes('state already managed')) {
-        checkDatabaseStatus();
-        return;
-      }
-      console.error('[Startup] Failed to initialize database:', err);
       stopStartupTracking();
-      initError = errorMsg;
+      if (isCorruptionError(errorMsg)) {
+        initError = errorMsg;
+      } else {
+        startupFailure = { kind: 'initialize', message: errorMsg };
+      }
       return;
     }
-    checkDatabaseStatus();
+
+    startupStage = 'Verificando configuração';
+    try {
+      const isSetupDone = await invoke('setup__check');
+      stopStartupTracking();
+      if (isSetupDone) {
+        setupComplete = true;
+        await goto('/home');
+      } else {
+        setupComplete = false;
+      }
+    } catch (error) {
+      stopStartupTracking();
+      startupFailure = { kind: 'setup-check', message: String(error) };
+    }
   }
 
   function isCorruptionError(msg) {
@@ -208,9 +238,14 @@
   }
 
   async function retryInit() {
+    const retrySettings = startupFailure?.kind === 'settings' || folderConfigured === null;
     initError = null;
-    await beginStartupTracking();
-    await initializeApp();
+    startupFailure = null;
+    if (retrySettings) {
+      await loadStartupConfiguration();
+    } else {
+      await initializeApp();
+    }
   }
 
   function stageLabel(stage) {
@@ -223,6 +258,33 @@
       case 'rollback': return 'Restaurando backup';
       case 'done': return 'Concluído';
       default: return stage || 'Preparando';
+    }
+  }
+
+  function startupFailureTitle(kind) {
+    switch (kind) {
+      case 'settings': return 'Não foi possível consultar a configuração';
+      case 'listener': return 'Não foi possível acompanhar a inicialização';
+      case 'setup-check': return 'Não foi possível verificar a configuração inicial';
+      default: return 'Não foi possível iniciar o serviço local';
+    }
+  }
+
+  function startupFailureLabel(kind) {
+    switch (kind) {
+      case 'settings': return 'Leitura das configurações';
+      case 'listener': return 'Conexão do acompanhamento';
+      case 'setup-check': return 'Verificação do assistente inicial';
+      default: return 'Inicialização do serviço local';
+    }
+  }
+
+  function startupFailureHint(kind) {
+    switch (kind) {
+      case 'settings': return 'O Foundation não conseguiu ler as configurações locais necessárias para iniciar.';
+      case 'listener': return 'O acompanhamento das etapas de inicialização não foi registrado. Tente novamente para conectar ao serviço local.';
+      case 'setup-check': return 'O serviço local iniciou, mas não foi possível confirmar se a configuração inicial está concluída.';
+      default: return 'O serviço local não confirmou que a inicialização foi concluída.';
     }
   }
 
@@ -284,59 +346,6 @@
     }
   }
 
-  async function checkDatabaseStatus() {
-    try {
-      const isSetupDone = await invoke('setup__check');
-      stopStartupTracking();
-      importing = false;
-      if (isSetupDone) {
-        setupComplete = true;
-        goto("/home");
-      } else {
-        setupComplete = false;
-      }
-    } catch (error) {
-      const errorMsg = String(error);
-
-      if (errorMsg.includes('state not managed')) {
-        if (importing === null) {
-          stopStartupTracking();
-          importing = true;
-        }
-        const unlisten = await listen('import-complete', async () => {
-          unlisten();
-          await checkDatabaseStatus();
-        });
-      } else {
-        stopStartupTracking();
-        importing = true;
-      }
-    }
-  }
-
-  async function handleImportComplete() {
-    importing = false;
-
-    try {
-      const isDone = await invoke('setup__check');
-
-      if (isDone) {
-        setupComplete = true;
-        goto("/home");
-      } else {
-        setupComplete = false;
-      }
-    } catch (error) {
-      const errorMsg = String(error);
-
-      if (errorMsg.includes('state not managed') || errorMsg.includes('conn')) {
-        setTimeout(() => checkDatabaseStatus(), 500);
-      } else {
-        setupComplete = false;
-      }
-    }
-  }
-
   function handleSetupComplete(event) {
     setupComplete = true;
     goto("/home");
@@ -375,6 +384,28 @@
         >
           {folderSaving ? 'Iniciando…' : 'Continuar'}
         </Button>
+      </div>
+    </div>
+
+  {:else if startupFailure}
+    <div class="error-screen" role="alert">
+      <h1 class="logo">FOUNDATION</h1>
+      <div class="error-card">
+        <span class="material-symbols-outlined error-icon">error</span>
+        <h2>{startupFailureTitle(startupFailure.kind)}</h2>
+        <p class="error-hint">{startupFailureHint(startupFailure.kind)}</p>
+        <div class="error-detail">
+          <div class="error-detail-label">Etapa</div>
+          <div class="error-detail-value">{startupFailureLabel(startupFailure.kind)}</div>
+          <div class="error-detail-label">Detalhe</div>
+          <div class="error-detail-value error-message">{startupFailure.message}</div>
+        </div>
+        <div class="error-actions">
+          <Button variant="default" class="error-action-btn" onclick={retryInit}>
+            <span class="material-symbols-outlined">refresh</span>
+            Tentar novamente
+          </Button>
+        </div>
       </div>
     </div>
 
@@ -526,7 +557,7 @@
       </div>
     {/if}
 
-  {:else if importing === null}
+  {:else if setupComplete === null}
     <section class="startup-screen">
       <div class="startup-grid" aria-hidden="true"></div>
       <div class="startup-panel">
@@ -540,7 +571,7 @@
           <h1 aria-live="polite" aria-atomic="true">{startupStage}</h1>
         </div>
 
-        <div class="startup-progress" role="progressbar" aria-label="Progresso da inicialização"><span></span></div>
+        <div class="startup-progress" role="progressbar" aria-label="Inicialização em andamento" aria-valuetext={startupStage}><span></span></div>
 
         <div class="startup-panel-footer">
           <span>PREPARANDO A SESSÃO</span>
@@ -548,12 +579,6 @@
         </div>
       </div>
     </section>
-
-  {:else if importing === true}
-    <ImportProgress onComplete={handleImportComplete} />
-
-  {:else if setupComplete === null}
-    <p class="redirecting">Verificando configuração…</p>
 
   {:else if setupComplete === false}
     <SetupWizard onComplete={handleSetupComplete} />

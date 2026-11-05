@@ -156,6 +156,7 @@ pub fn run() {
         .manage(commands::AiCancellationState::new())
         .manage(commands::ConversationProcessingState::new())
         .manage(commands::LocalModelDownloadState::default())
+        .manage(commands::SetupEmailVerificationState::default())
         .manage(realtime::SubscriptionRegistry::default())
         .setup(|app| {
             let app_handle = app.handle().clone();
@@ -224,6 +225,8 @@ pub fn run() {
             commands::inspector__get_backlink_page,
             commands::inspector__get_property_value_page,
             commands::inspector__get_applicable_properties,
+            commands::inspector__record_criterion_validation,
+            commands::inspector__list_criterion_validations,
             commands::owl__search_entities,
             commands::graph__get_node_type_config,
             commands::notification__count_pending,
@@ -253,6 +256,7 @@ pub fn run() {
             commands::ai__delete_api_key,
             commands::ai__list_api_calls,
             commands::ai__list_openrouter_models,
+            commands::ai__list_openrouter_benchmarks,
             commands::ai__ensure_openrouter_model,
             commands::ai__get_fallback_models,
             commands::ai__save_fallback_models,

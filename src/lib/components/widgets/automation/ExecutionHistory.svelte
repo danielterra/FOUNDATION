@@ -2,26 +2,28 @@
   import { onMount, onDestroy, tick } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
   import { createEntitySubscription, type EntityEvent } from '$lib/realtime/subscriptions'
+  import MarkdownValue from '../inspector/MarkdownValue.svelte'
 
-  type Cursor = { orderKey: string; iri: string }
+  type Cursor = { orderKey: number; iri: string }
   type Execution = { iri: string; startedAt: string | null; statusIri: string | null; finishedAt: string | null }
   type Step = {
     iri: string
     label?: string | null
     nodeLabel?: string | null
     statusIri?: string | null
+    statusLabel?: string | null
     inputContext: unknown | null
     executionSummary?: string | null
-    executionOutput: unknown[]
+    executionOutput?: unknown[]
     stepError: unknown | null
   }
-  type Page<T> = { items: T[]; totalCount: number | null; loadedCount: number; nextCursor: Cursor | null; hasMore: boolean; snapshotTx: number }
-  type ExecutionDetail = { steps: Step[]; stepPage: Omit<Page<Step>, 'items'> }
+  type Page<T> = { items: T[]; totalCount: number; loadedCount: number; nextCursor: Cursor | null; hasMore: boolean; snapshotTx: number }
+  type ExecutionDetail = { steps: Step[]; errorMessage: string | null; stepPage: Omit<Page<Step>, 'items'> }
   type Kpis = { totalStarted: number; terminalCount: number; minDurationMs: number | null; averageDurationMs: number | null; maxDurationMs: number | null; errorRate: number | null }
   type ExecutionPage = Page<Execution> & { kpis: Kpis }
 
-  let { automationIri } = $props<{ automationIri: string }>()
-  const PAGE_SIZE = 25
+  let { automationIri, onOpenEntity } = $props<{ automationIri: string; onOpenEntity: (entityIri: string) => Promise<void> }>()
+  const PAGE_SIZE = 50
   let rangeEnd = $state(new Date())
   let rangeStart = $state(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000))
   let page = $state<ExecutionPage | null>(null)
@@ -122,12 +124,12 @@
       return
     }
     refreshInFlight = true
-    const preservedSelection = selectedIri
     const preservedScrollTop = executionItemsElement?.scrollTop ?? 0
+    const preservedLoadedCount = page?.loadedCount ?? PAGE_SIZE
     const focusedIri = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('[data-execution-iri]')?.dataset.executionIri ?? null
     try {
       await loadExecutions(true, true)
-      while (preservedSelection && page?.hasMore && !page.items.some(item => item.iri === preservedSelection)) {
+      while (page?.hasMore && page.loadedCount < preservedLoadedCount) {
         await loadExecutions(false, true)
       }
       await tick()
@@ -199,6 +201,34 @@
     return { label: 'Em execução', icon: 'progress_activity', tone: 'running' }
   }
 
+  function stepFailed(step: Step) {
+    const status = step.statusIri ?? ''
+    const label = step.statusLabel ?? ''
+    return status.includes('Failed') || status.includes('Falhou') || status.includes('Error') || status.includes('1772993026091') || label.includes('Falha') || label.includes('Erro')
+  }
+
+  function stepTone(step: Step) {
+    if (stepFailed(step)) return 'danger'
+    const status = `${step.statusIri ?? ''} ${step.statusLabel ?? ''}`
+    if (status.includes('Completed') || status.includes('Concluído') || status.includes('Sucesso')) return 'success'
+    if (status.includes('Cancelled') || status.includes('Cancelado') || status.includes('foundation:Status_1772570972069')) return 'warning'
+    return 'running'
+  }
+
+  function stepStatusLabel(step: Step, tone: string) {
+    if (tone === 'warning') return 'Cancelada'
+    if (tone === 'danger') return 'Falha'
+    if (tone === 'success') return 'Concluída'
+    return step.statusLabel ?? 'Em execução'
+  }
+
+  function stepStatusIcon(tone: string) {
+    if (tone === 'warning') return 'cancel'
+    if (tone === 'danger') return 'error'
+    if (tone === 'success') return 'check_circle'
+    return 'progress_activity'
+  }
+
   function formatDate(value: string | null) {
     if (!value) return 'Data não registrada'
     const date = new Date(value)
@@ -230,6 +260,7 @@
 
   function displayValue(value: unknown) {
     if (value == null || value === '') return 'Não registrado'
+    if (Array.isArray(value) && value.length === 0) return 'Não registrado'
     if (typeof value === 'string') {
       try { return JSON.stringify(JSON.parse(value), null, 2) } catch { return value }
     }
@@ -283,7 +314,7 @@
 
   <div class="history-body">
     <aside class="execution-list" aria-label="Execuções">
-      <div class="list-heading"><span>Execuções recentes</span><span class="pagination-count" aria-live="polite">{#if page}{#if page.totalCount != null}Mostrando {page.loadedCount} de {page.totalCount}{:else}{page.loadedCount} carregadas{/if}{/if}</span></div>
+      <div class="list-heading"><span>Execuções recentes</span><span class="pagination-count" aria-live="polite">{#if page}Mostrando {page.loadedCount} de {page.totalCount}{/if}</span></div>
       {#if loading && !page}
         <div class="skeleton-list" aria-label="Carregando execuções">{#each [1, 2, 3, 4, 5] as item}<div class="skeleton" aria-hidden="true"></div>{/each}</div>
       {:else if error}
@@ -313,19 +344,33 @@
         {@const status = statusFor(selected)}
         <div class="detail-heading"><div><span class="eyebrow">EXECUÇÃO</span><h2>{formatDate(selected.startedAt)}</h2></div><span class="execution-state {status.tone}"><span class="material-symbols-outlined" aria-hidden="true">{status.icon}</span>{status.label}</span></div>
         <div class="detail-meta"><span>Início · {formatDate(selected.startedAt)}</span><span>Tempo · {formatDuration(selected.startedAt, selected.finishedAt)}</span><span>Resultado · {selected.finishedAt ? status.label : 'Em andamento'}</span></div>
+        {#if detail?.errorMessage}<div class="execution-error" role="alert"><span class="material-symbols-outlined" aria-hidden="true">error</span><div><h3>Erro da execução</h3><p>{detail.errorMessage}</p></div></div>{/if}
         <div class="step-list" aria-label="Etapas da execução">
-          {#if detail}<div class="step-count">{#if detail.stepPage.totalCount != null}Mostrando {detail.stepPage.loadedCount} de {detail.stepPage.totalCount} etapas{:else}{detail.stepPage.loadedCount} etapas carregadas{/if}</div>{/if}
+          {#if detail}<div class="step-count">Mostrando {detail.stepPage.loadedCount} de {detail.stepPage.totalCount} etapas</div>{/if}
           {#each detail?.steps ?? [] as step, index (step.iri)}
+            {@const executionOutput = step.executionOutput ?? []}
+            {@const stepState = stepTone(step)}
             <section class="step">
               <button class="step-toggle" aria-expanded={expandedSteps.has(step.iri)} onclick={() => toggleStep(step.iri)}>
-                <span class="step-index">{String(index + 1).padStart(2, '0')}</span><span class="step-name">{stepLabel(step, index)}</span><span class="material-symbols-outlined disclosure" aria-hidden="true">{expandedSteps.has(step.iri) ? 'expand_less' : 'expand_more'}</span>
+                <span class="step-index">{String(index + 1).padStart(2, '0')}</span><span class="step-name">{stepLabel(step, index)}</span><span class="step-status {stepState}"><span class="material-symbols-outlined" aria-hidden="true">{stepStatusIcon(stepState)}</span>{stepStatusLabel(step, stepState)}</span><span class="material-symbols-outlined disclosure" aria-hidden="true">{expandedSteps.has(step.iri) ? 'expand_less' : 'expand_more'}</span>
               </button>
               {#if expandedSteps.has(step.iri)}
                 <div class="step-content">
                   <div class="data-block"><h3>Entrada</h3><pre>{displayValue(step.inputContext)}</pre></div>
-                  {#if step.executionSummary}<div class="data-block"><h3>Resumo</h3><pre>{displayValue(step.executionSummary)}</pre></div>{/if}
-                  <div class="data-block"><h3>Saída</h3><pre>{displayValue(step.executionOutput)}</pre></div>
-                  {#if step.stepError != null}<div class="data-block failure"><h3>Erro</h3><pre>{displayValue(step.stepError)}</pre></div>{/if}
+                  <div class="data-block"><h3>Saída</h3>
+                    {#if step.executionSummary}
+                      <div class="output-part"><h4>Resultado</h4><MarkdownValue value={displayValue(step.executionSummary)} openEntityInspector={onOpenEntity} /></div>
+                    {/if}
+                    {#if executionOutput.length > 0}
+                      <div class="output-part"><h4>Entidades produzidas</h4>
+                        {#each executionOutput as output, outputIndex (outputIndex)}
+                          <MarkdownValue value={displayValue(output)} openEntityInspector={onOpenEntity} />
+                        {/each}
+                      </div>
+                    {/if}
+                    {#if !step.executionSummary && executionOutput.length === 0}<p class="no-output">Sem saída registrada</p>{/if}
+                  </div>
+                  {#if step.stepError != null || stepFailed(step)}<div class="data-block failure"><h3>Erro</h3><pre>{displayValue(step.stepError)}</pre></div>{/if}
                 </div>
               {/if}
             </section>
@@ -377,16 +422,25 @@
   .eyebrow { color: var(--text-secondary); font-size: var(--type-caption-compact); letter-spacing: .08em; }
   h2 { margin: var(--spacing-label-to-value) 0 0; color: var(--text-primary); font-size: var(--type-heading); font-weight: 400; overflow-wrap: anywhere; }
   .detail-meta { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--spacing-section); padding: var(--spacing-field-group) 0; color: var(--text-secondary); font-size: var(--type-caption-compact); }
+  .execution-error { display: flex; align-items: start; gap: var(--spacing-inline-related); margin-bottom: var(--spacing-field-group); padding: var(--space-2); border-left: var(--size-toast-edge) solid var(--color-danger); background: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface-2)); color: var(--color-danger-hover); }
+  .execution-error > .material-symbols-outlined { flex: 0 0 auto; font-size: var(--type-icon-medium); }
+  .execution-error h3, .execution-error p { margin: 0; font-size: var(--type-body-compact); overflow-wrap: anywhere; }
+  .execution-error h3 { margin-bottom: var(--spacing-label-to-value); color: var(--text-primary); }
+  .execution-error p { white-space: pre-wrap; }
   .step-list { flex: 1; }
   .step { border-top: var(--size-hud-frame-line) solid var(--color-hud-line-subtle); }
   .step-count { padding: var(--space-2) var(--space-1); color: var(--text-secondary); font-size: var(--type-caption-compact); }
   .step-toggle { display: flex; align-items: center; gap: var(--spacing-inline-related); width: 100%; min-height: var(--size-touch-target); padding: var(--space-2) var(--space-1); border: 0; background: transparent; color: var(--text-primary); text-align: left; cursor: pointer; }
   .step-index { color: var(--color-interactive); font-family: var(--font-mono); font-size: var(--type-caption-compact); }
   .step-name { flex: 1; min-width: 0; font-size: var(--type-body-compact); overflow-wrap: anywhere; }
+  .step-status { flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--spacing-label-to-value); font-size: var(--type-caption-compact); }
+  .step-status .material-symbols-outlined { font-size: var(--type-icon-small); }
   .disclosure { color: var(--text-secondary); font-size: var(--type-icon-medium); }
   .step-content { display: grid; gap: var(--spacing-field-group); padding: 0 0 var(--spacing-widget-inset) var(--spacing-section); }
   .data-block { min-width: 0; }
   .data-block h3 { margin: 0 0 var(--spacing-label-to-value); color: var(--text-secondary); font-size: var(--type-caption-compact); font-weight: 400; }
+  .output-part { display: grid; gap: var(--spacing-label-to-value); margin-top: var(--spacing-label-to-value); }
+  .output-part h4, .no-output { margin: 0; color: var(--text-secondary); font-size: var(--type-caption-compact); font-weight: 400; }
   .data-block pre { max-height: var(--size-code-editor-max-height); margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: var(--space-2); border-left: var(--size-hud-frame-line) solid var(--color-hud-line); background: var(--color-surface-2); color: var(--text-primary); font: var(--type-body-compact)/var(--line-height-body) var(--font-mono); }
   .data-block.failure pre { color: var(--color-danger-hover); }
   .no-steps { color: var(--text-secondary); font-size: var(--type-body-compact); }

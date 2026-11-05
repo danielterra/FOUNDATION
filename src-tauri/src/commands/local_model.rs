@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 const MODEL_DOWNLOAD_URL: &str =
     "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf";
-const MODEL_IDENTIFIER: &str = "gemma-4-E4B-it-Q4_K_M.gguf";
+pub(crate) const MODEL_IDENTIFIER: &str = "gemma-4-E4B-it-Q4_K_M.gguf";
 const MODEL_EXPECTED_SIZE: u64 = 5_267_070_912;
 
 pub struct LocalModelDownloadState {

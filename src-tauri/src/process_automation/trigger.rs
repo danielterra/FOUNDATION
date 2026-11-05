@@ -8,16 +8,34 @@ use crate::owl::DbExecutor;
 /// For each event key, queries MessageEventDefinitions whose eventType matches, then runs the
 /// linked process via the executor.
 pub fn register_listeners(app: AppHandle) {
-    register_event(&app, "entity-created");
-    register_event(&app, "entity-updated");
-}
-
-fn register_event(app: &AppHandle, event_key: &'static str) {
     let app_clone = app.clone();
-    app.listen(event_key, move |_event| {
+    app.listen("entity-changed-internal", move |event| {
+        let payload: serde_json::Value = match serde_json::from_str(event.payload()) {
+            Ok(payload) => payload,
+            Err(error) => {
+                log_backend(
+                    "error",
+                    &format!("[trigger] Invalid entity-change payload: {}", error),
+                );
+                return;
+            }
+        };
+        let entity_iri = payload["entityId"].as_str().map(str::to_string);
+        let source_tx = payload["tx"].as_i64();
+        let event_key = payload["eventKey"].as_str().map(str::to_string);
+        let (Some(entity_iri), Some(source_tx), Some(event_key)) =
+            (entity_iri, source_tx, event_key)
+        else {
+            log_backend(
+                "error",
+                "[trigger] Internal trigger payload requires eventKey, entityId and tx",
+            );
+            return;
+        };
         let app2 = app_clone.clone();
         tauri::async_runtime::spawn(async move {
-            if let Err(e) = fire_processes_for_event(&app2, event_key).await {
+            if let Err(e) = fire_processes_for_event(&app2, &event_key, entity_iri, source_tx).await
+            {
                 log_backend(
                     "error",
                     &format!("[trigger] Error handling '{}': {}", event_key, e),
@@ -27,7 +45,12 @@ fn register_event(app: &AppHandle, event_key: &'static str) {
     });
 }
 
-async fn fire_processes_for_event(app: &AppHandle, event_key: &str) -> Result<(), String> {
+async fn fire_processes_for_event(
+    app: &AppHandle,
+    event_key: &str,
+    entity_iri: String,
+    source_tx: i64,
+) -> Result<(), String> {
     let executor = app.state::<DbExecutor>();
     let event_key = event_key.to_string();
 
@@ -36,7 +59,14 @@ async fn fire_processes_for_event(app: &AppHandle, event_key: &str) -> Result<()
         .await?;
 
     for process_iri in process_iris {
-        if let Err(e) = super::executor::run_process(app, &process_iri, None, false).await {
+        if let Err(e) = super::executor::run_process_for_entity_update(
+            app,
+            &process_iri,
+            &entity_iri,
+            source_tx,
+        )
+        .await
+        {
             log_backend(
                 "error",
                 &format!("[trigger] Error running process {}: {}", process_iri, e),

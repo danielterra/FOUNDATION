@@ -8,6 +8,7 @@
   import MetaFields from './inspector/MetaFields.svelte';
   import PropertyList from './inspector/PropertyList.svelte';
   import InspectorClassView from './inspector/InspectorClassView.svelte';
+  import CriterionEvidencePanel from './inspector/CriterionEvidencePanel.svelte';
   import WidgetContainer from './WidgetContainer.svelte';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
@@ -297,6 +298,13 @@
     }
   }
 
+  function criterionPropertyValue(propertyIri) {
+    for (const property of entityData?.properties ?? []) {
+      if (property.property === propertyIri) return property.value ?? '';
+    }
+    return '';
+  }
+
   // Clearing a parent field discards its dependents' values too: the inspector stops
   // showing a dependent once the parent is empty, so a value left behind is orphaned
   // data nobody can see or correct.
@@ -482,9 +490,8 @@
     const raw = await invoke('inspector__get_property_value_page', {
       entityIri: entityId,
       predicate,
-      afterValueTx: cursor?.valueTx ?? null,
-      afterObjectKey: cursor?.objectKey ?? null,
       snapshotTx,
+      cursor: cursor ?? null,
     });
     return JSON.parse(raw);
   }
@@ -834,6 +841,16 @@
           onSave={isLocked ? null : saveProperty}
           {openEntityInspector}
         />
+
+        {#if entityData.types?.some(type => type.iri === 'foundation:AcceptanceCriterion')}
+          <CriterionEvidencePanel
+            criterionIri={entityId}
+            allowedStatuses={entityData.allowedStatuses ?? []}
+            refreshKey={entityData.snapshotTx ?? 0}
+            howToTest={criterionPropertyValue('foundation:howToTest')}
+            successResult={criterionPropertyValue('foundation:successResult')}
+          />
+        {/if}
 
         <FilePreview {entityData} />
 

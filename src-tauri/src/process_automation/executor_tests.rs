@@ -2,6 +2,30 @@ use super::*;
 use crate::eavto::test_helpers::setup_test_db;
 use crate::eavto::{store, Object, Triple};
 
+#[test]
+fn concurrent_automation_contexts_share_origin_update_id_and_distinguish_later_updates() {
+    let mut first_execution = ExecutionContext::new();
+    let mut concurrent_execution = ExecutionContext::new();
+    seed_source_update_context(&mut first_execution, "foundation:Conversation_origin", 812);
+    seed_source_update_context(
+        &mut concurrent_execution,
+        "foundation:Conversation_origin",
+        812,
+    );
+
+    assert_eq!(
+        first_execution.get("__sourceUpdateId"),
+        concurrent_execution.get("__sourceUpdateId")
+    );
+
+    let mut later_update = ExecutionContext::new();
+    seed_source_update_context(&mut later_update, "foundation:Conversation_origin", 813);
+    assert_ne!(
+        first_execution.get("__sourceUpdateId"),
+        later_update.get("__sourceUpdateId")
+    );
+}
+
 // ── step output → inputIRIs (regression: Bug_1774382679925) ──────────────────
 
 #[test]
@@ -149,10 +173,11 @@ async fn materialization_barrier_terminals_persist_and_return_abort() {
         cancellation_reason.to_string(),
     );
     let mut cancellation_context = ExecutionContext::new();
-
-    let cancellation_result =
-        abort_materialization_barrier(&mut cancellation_context, &cancellation);
-    assert_eq!(cancellation_result, Err(cancellation_reason.to_string()));
+    record_materialization_terminal(&mut cancellation_context, &cancellation);
+    assert_eq!(
+        ensure_execution_can_advance(&cancellation_context),
+        Err(cancellation_reason.to_string())
+    );
     assert_eq!(
         cancellation_context
             .get("__executionCancelled")
@@ -193,7 +218,10 @@ async fn materialization_barrier_terminals_persist_and_return_abort() {
         crate::owl::materialization::MaterializationTerminal::Failed(failure_reason.to_string());
     let mut failure_context = ExecutionContext::new();
     assert_eq!(
-        abort_materialization_barrier(&mut failure_context, &failure),
+        {
+            record_materialization_terminal(&mut failure_context, &failure);
+            ensure_execution_can_advance(&failure_context)
+        },
         Err(failure_reason.to_string())
     );
     assert!(!failure_context.contains_key("__executionCancelled"));
@@ -224,6 +252,362 @@ async fn materialization_barrier_terminals_persist_and_return_abort() {
     let execution_status =
         read_current_iri_value(&executor, failed_execution, "foundation:hasStatus").await;
     assert_eq!(execution_status, STATUS_FAILED);
+}
+
+// Regression for Bug_1793842876153 / AC_1793842836264. The test crosses the
+// production executor barrier and real FormulaWorker using only an in-memory DB.
+#[tokio::test]
+async fn email_triage_formula_barrier_materializes_count_before_downstream_node() {
+    run_email_triage_barrier_case(false).await;
+    run_email_triage_barrier_case(true).await;
+}
+
+async fn run_email_triage_barrier_case(formula_fails: bool) {
+    use tauri::Manager;
+
+    let app = tauri::test::mock_app();
+    let db_path = std::path::PathBuf::from(format!(
+        "file:formula_barrier_{}?mode=memory&cache=shared",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock should be after Unix epoch")
+            .as_nanos()
+    ));
+    let conn = rusqlite::Connection::open(&db_path).expect("temporary database should open");
+    conn.execute_batch(
+        "CREATE TABLE origins (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, description TEXT
+        );
+        CREATE TABLE transactions (
+            tx INTEGER PRIMARY KEY AUTOINCREMENT, origin TEXT NOT NULL, created_at INTEGER NOT NULL
+        );
+        CREATE TABLE triples (
+            subject TEXT NOT NULL, predicate TEXT NOT NULL, object TEXT, object_value TEXT,
+            object_type TEXT NOT NULL, object_datatype TEXT, object_language TEXT,
+            object_number REAL, object_integer INTEGER, object_boolean INTEGER,
+            object_datetime INTEGER, tx INTEGER NOT NULL, origin_id INTEGER NOT NULL,
+            created_at INTEGER NOT NULL, retracted INTEGER NOT NULL DEFAULT 0,
+            is_current INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE VIEW triples_current AS
+            SELECT subject, predicate, object, object_value, object_datatype, object_language,
+                   object_number, object_integer, object_boolean, tx, origin_id, object_type, created_at
+            FROM triples WHERE is_current = 1 AND retracted = 0;
+        INSERT INTO origins (name, description) VALUES ('test', 'in-memory-equivalent fixture');",
+    )
+    .expect("temporary EAV schema should initialize");
+    let executor = crate::owl::DbExecutor::new(conn, db_path);
+    let handle = app.handle().clone();
+    app.manage(executor.clone());
+    app.manage(crate::commands::formula_worker::FormulaWorker::spawn(
+        handle,
+        executor.clone(),
+    ));
+
+    let primary = "foundation:EmailBatchTriageRun_barrier_fixture";
+    let count_property = "foundation:triagedCount";
+    let formula = if formula_fails {
+        "NOT_A_REAL_AGGREGATION({{foundation:iterationOf}})"
+    } else {
+        "CONTAR({{foundation:iterationOf}})"
+    };
+    let formula = formula.to_string();
+    executor
+        .write(move |conn| {
+            let triples = vec![
+                Triple::new(
+                    "foundation:EmailBatchTriageRun",
+                    "rdf:type",
+                    Object::Iri("owl:Class".into()),
+                ),
+                Triple::new(
+                    "foundation:EmailTriageItemRun",
+                    "rdf:type",
+                    Object::Iri("owl:Class".into()),
+                ),
+                Triple::new(
+                    primary,
+                    "rdf:type",
+                    Object::Iri("foundation:EmailBatchTriageRun".into()),
+                ),
+                Triple::new(
+                    "foundation:EmailTriageItemRun_barrier_one",
+                    "rdf:type",
+                    Object::Iri("foundation:EmailTriageItemRun".into()),
+                ),
+                Triple::new(
+                    "foundation:EmailTriageItemRun_barrier_two",
+                    "rdf:type",
+                    Object::Iri("foundation:EmailTriageItemRun".into()),
+                ),
+                Triple::new(
+                    "foundation:EmailTriageItemRun_barrier_one",
+                    "foundation:iterationOf",
+                    Object::Iri(primary.into()),
+                ),
+                Triple::new(
+                    "foundation:EmailTriageItemRun_barrier_two",
+                    "foundation:iterationOf",
+                    Object::Iri(primary.into()),
+                ),
+                Triple::new(
+                    "foundation:iterationOf",
+                    "rdf:type",
+                    Object::Iri("owl:ObjectProperty".into()),
+                ),
+                Triple::new(
+                    "foundation:iterationOf",
+                    "rdfs:domain",
+                    Object::Iri("foundation:EmailTriageItemRun".into()),
+                ),
+                Triple::new(
+                    "foundation:iterationOf",
+                    "rdfs:range",
+                    Object::Iri("foundation:EmailBatchTriageRun".into()),
+                ),
+                Triple::new(
+                    count_property,
+                    "rdf:type",
+                    Object::Iri("owl:DatatypeProperty".into()),
+                ),
+                Triple::new(
+                    count_property,
+                    "rdfs:domain",
+                    Object::Iri("foundation:EmailBatchTriageRun".into()),
+                ),
+                Triple::new(
+                    count_property,
+                    "rdfs:range",
+                    Object::Iri("xsd:integer".into()),
+                ),
+                Triple::new(count_property, "foundation:aggregation", lit_str(&formula)),
+                Triple::new(
+                    "foundation:StepExecution",
+                    "rdf:type",
+                    Object::Iri("owl:Class".into()),
+                ),
+                Triple::new(
+                    "foundation:Status",
+                    "rdf:type",
+                    Object::Iri("owl:Class".into()),
+                ),
+                Triple::new(
+                    "foundation:InProgress",
+                    "rdf:type",
+                    Object::Iri("foundation:Status".into()),
+                ),
+                Triple::new(
+                    "foundation:Status_1772993026091",
+                    "rdf:type",
+                    Object::Iri("foundation:Status".into()),
+                ),
+                Triple::new(
+                    "foundation:hasStatus",
+                    "rdf:type",
+                    Object::Iri("owl:ObjectProperty".into()),
+                ),
+                Triple::new(
+                    "foundation:hasStatus",
+                    "rdfs:domain",
+                    Object::Iri("foundation:StepExecution".into()),
+                ),
+                Triple::new(
+                    "foundation:hasStatus",
+                    "rdfs:range",
+                    Object::Iri("foundation:Status".into()),
+                ),
+                Triple::new(
+                    "foundation:stepFinishedAt",
+                    "rdf:type",
+                    Object::Iri("owl:DatatypeProperty".into()),
+                ),
+                Triple::new(
+                    "foundation:stepFinishedAt",
+                    "rdfs:domain",
+                    Object::Iri("foundation:StepExecution".into()),
+                ),
+                Triple::new(
+                    "foundation:stepFinishedAt",
+                    "rdfs:range",
+                    Object::Iri("xsd:dateTime".into()),
+                ),
+                Triple::new(
+                    "foundation:hasEndTime",
+                    "rdf:type",
+                    Object::Iri("owl:DatatypeProperty".into()),
+                ),
+                Triple::new(
+                    "foundation:hasEndTime",
+                    "rdfs:domain",
+                    Object::Iri("foundation:StepExecution".into()),
+                ),
+                Triple::new(
+                    "foundation:hasEndTime",
+                    "rdfs:range",
+                    Object::Iri("xsd:dateTime".into()),
+                ),
+                Triple::new(
+                    "foundation:stepError",
+                    "rdf:type",
+                    Object::Iri("owl:DatatypeProperty".into()),
+                ),
+                Triple::new(
+                    "foundation:stepError",
+                    "rdfs:domain",
+                    Object::Iri("foundation:StepExecution".into()),
+                ),
+                Triple::new(
+                    "foundation:stepError",
+                    "rdfs:range",
+                    Object::Iri("xsd:string".into()),
+                ),
+                Triple::new(
+                    "foundation:StepExecution_formula_barrier_fixture",
+                    "rdf:type",
+                    Object::Iri("foundation:StepExecution".into()),
+                ),
+                Triple::new(
+                    "foundation:StepExecution_formula_barrier_fixture",
+                    "foundation:hasStatus",
+                    Object::Iri(STATUS_IN_PROGRESS.into()),
+                ),
+            ];
+            store::assert_triples(conn, &triples, "formula_barrier_regression")
+                .map(|_| String::new())
+                .map_err(|error| error.to_string())
+        })
+        .await
+        .expect("in-memory triage fixture should be seeded");
+
+    let correlation = crate::owl::materialization::MaterializationCorrelation {
+        execution_iri: "foundation:WorkflowExecution_formula_barrier_fixture".into(),
+        step_iri: "foundation:StepExecution_formula_barrier_fixture".into(),
+        node_iri: "foundation:CodeTask_read_triaged_count".into(),
+        source_entity_iri: None,
+        source_update_id: None,
+        source_tx: None,
+    };
+    let barrier =
+        await_formula_materialization_barrier(&app.handle(), &executor, primary, correlation).await;
+
+    if formula_fails {
+        assert!(
+            barrier.is_err(),
+            "formula worker failure must fail the real barrier"
+        );
+        let error = app
+            .state::<crate::commands::formula_worker::FormulaWorker>()
+            .formula_error(primary, count_property)
+            .expect("formula worker should expose its transient failure");
+        assert!(!error.is_empty());
+        let mut downstream_ran = false;
+        if barrier.is_ok() {
+            execute_dependent_triage_count_node(&executor, primary)
+                .await
+                .unwrap();
+            downstream_ran = true;
+        }
+        assert!(
+            !downstream_ran,
+            "downstream node must not run after barrier failure"
+        );
+        let marker = executor
+            .read(move |conn| {
+                crate::owl::get_literal_property(
+                    conn,
+                    primary,
+                    "foundation:formulaBarrierObservedCount",
+                )
+                .map_err(|error| error.to_string())
+            })
+            .await
+            .unwrap();
+        assert!(marker.is_none());
+        let step_error = executor
+            .read(|conn| {
+                crate::owl::get_literal_property(
+                    conn,
+                    "foundation:StepExecution_formula_barrier_fixture",
+                    "foundation:stepError",
+                )
+                .map_err(|error| error.to_string())
+            })
+            .await
+            .unwrap();
+        assert!(
+            step_error.is_some(),
+            "executor barrier should persist step failure"
+        );
+    } else {
+        assert!(
+            barrier.is_ok(),
+            "formula worker should drain successfully: {:?}",
+            barrier
+        );
+        execute_dependent_triage_count_node(&executor, primary)
+            .await
+            .expect("dependent node should read the materialized count");
+        let values = executor
+            .read(move |conn| {
+                let count = crate::owl::get_literal_property(conn, primary, count_property)
+                    .map_err(|error| error.to_string())?;
+                let marker = crate::owl::get_literal_property(
+                    conn,
+                    primary,
+                    "foundation:formulaBarrierObservedCount",
+                )
+                .map_err(|error| error.to_string())?;
+                let datatype =
+                    crate::eavto::query::get_by_entity_predicate(conn, primary, count_property)
+                        .map_err(|error| error.to_string())?
+                        .triples
+                        .into_iter()
+                        .next()
+                        .and_then(|triple| triple.object.datatype().map(str::to_string));
+                serde_json::to_string(&(count, marker, datatype)).map_err(|error| error.to_string())
+            })
+            .await
+            .unwrap();
+        let (count, marker, datatype): (Option<String>, Option<String>, Option<String>) =
+            serde_json::from_str(&values).unwrap();
+        assert_eq!(count.as_deref(), Some("2"));
+        assert_eq!(marker.as_deref(), Some("2"));
+        assert_eq!(datatype.as_deref(), Some("xsd:integer"));
+    }
+}
+
+async fn execute_dependent_triage_count_node(
+    executor: &crate::owl::DbExecutor,
+    primary: &str,
+) -> std::result::Result<(), String> {
+    let instance = primary.to_string();
+    let count = executor
+        .read(move |conn| {
+            crate::owl::get_literal_property(conn, &instance, "foundation:triagedCount")
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| "triagedCount was not materialized".to_string())
+        })
+        .await?;
+    if count != "2" {
+        return Err(format!("expected triagedCount=2, found {}", count));
+    }
+    let primary = primary.to_string();
+    executor
+        .write(move |conn| {
+            store::assert_triples(
+                conn,
+                &[Triple::new(
+                    primary,
+                    "foundation:formulaBarrierObservedCount",
+                    lit_str(&count),
+                )],
+                "formula_barrier_downstream",
+            )
+            .map(|_| String::new())
+            .map_err(|error| error.to_string())
+        })
+        .await?;
+    Ok(())
 }
 
 async fn read_current_iri_value(
@@ -1333,31 +1717,6 @@ fn test_loop_iteration_terminal_status_distinguishable() {
 
 fn setup_test_db_with_formula_jobs() -> rusqlite::Connection {
     let conn = setup_test_db();
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS formula_recalc_jobs (
-            id              TEXT    PRIMARY KEY,
-            property_iri    TEXT    NOT NULL,
-            property_label  TEXT,
-            class_iri       TEXT    NOT NULL,
-            class_label     TEXT,
-            status          TEXT    NOT NULL DEFAULT 'pending',
-            total           INTEGER NOT NULL DEFAULT 0,
-            processed       INTEGER NOT NULL DEFAULT 0,
-            last_offset     INTEGER NOT NULL DEFAULT 0,
-            error_message   TEXT,
-            created_at      INTEGER NOT NULL,
-            updated_at      INTEGER NOT NULL,
-            instance_iri    TEXT
-        );
-        CREATE TABLE IF NOT EXISTS formula_instance_errors (
-            instance_iri    TEXT NOT NULL,
-            property_iri    TEXT NOT NULL,
-            error_message   TEXT NOT NULL,
-            created_at      INTEGER NOT NULL,
-            PRIMARY KEY (instance_iri, property_iri)
-        );",
-    )
-    .unwrap();
     // Seed origin row needed by assert_triples.
     let _ = conn.execute(
         "INSERT OR IGNORE INTO origins (name, description) VALUES ('test', 'test')",

@@ -1,6 +1,6 @@
 <script>
   import { openUrl } from '@tauri-apps/plugin-opener';
-  import { convertFileSrc } from '@tauri-apps/api/core';
+  import { inspectorIconSource, inspectorIconSymbol } from './iconSource';
   import NumberFlow from '@number-flow/svelte';
   import { Button } from '$lib/components/ui/button';
   import MarkdownValue from './MarkdownValue.svelte';
@@ -36,6 +36,17 @@
 
   function editKey(propertyIri, valueIdx) {
     return `${propertyIri}::${valueIdx}`;
+  }
+
+  function handleEntityReferenceClick(event) {
+    const entityIri = event.currentTarget.dataset.entityIri;
+    if (entityIri) openEntityInspector(entityIri);
+  }
+
+  function handleEntityReferenceKeydown(event) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    handleEntityReferenceClick(event);
   }
 
   function isUrl(datatype) {
@@ -166,18 +177,11 @@
   }
 
   function isIconUrl(icon) {
-    if (!icon) return false;
-    return icon.startsWith('http://') || icon.startsWith('https://') ||
-           icon.startsWith('data:') || icon.startsWith('file://') || icon.startsWith('/');
+    return inspectorIconSource(icon) !== null;
   }
 
   function getIconUrl(icon) {
-    if (!icon) return '';
-    if (icon.startsWith('http://') || icon.startsWith('https://') ||
-        icon.startsWith('data:')) return icon;
-    if (icon.startsWith('file://')) return convertFileSrc(icon.replace(/^file:\/\//, ''));
-    if (icon.startsWith('/')) return convertFileSrc(icon);
-    return icon;
+    return inspectorIconSource(icon) ?? '';
   }
 </script>
 
@@ -296,14 +300,15 @@
         class:calculated={detailGroup.isCalculated}
         role="button"
         tabindex="0"
-        onclick={() => openEntityInspector(val.value)}
-        onkeydown={(e) => e.key === 'Enter' && openEntityInspector(val.value)}
+        data-entity-iri={val.value}
+        onclick={handleEntityReferenceClick}
+        onkeydown={handleEntityReferenceKeydown}
       >
         {#if val.valueIcon}
           {#if isIconUrl(val.valueIcon)}
             <img src={getIconUrl(val.valueIcon)} alt="" class="value-icon-image" />
           {:else}
-            <span class="material-symbols-outlined value-icon">{val.valueIcon}</span>
+            <span class="material-symbols-outlined value-icon">{inspectorIconSymbol(val.valueIcon)}</span>
           {/if}
         {/if}
         {#if val.unitLabel && !isCurrencyCode(val.unitLabel)}

@@ -2,7 +2,7 @@ use chrono::Utc;
 use futures_util::FutureExt;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::commands::log_backend;
 use crate::eavto::query;
@@ -689,6 +689,32 @@ pub async fn run_process(
         .map(|_| ())
 }
 
+pub async fn run_process_for_entity_update(
+    app: &AppHandle,
+    process_iri: &str,
+    source_entity_iri: &str,
+    source_tx: i64,
+) -> Result<()> {
+    let mut ctx = ExecutionContext::new();
+    seed_source_update_context(&mut ctx, source_entity_iri, source_tx);
+    run_process_with_context(app, process_iri, &mut ctx)
+        .await
+        .map(|_| ())
+}
+
+fn seed_source_update_context(ctx: &mut ExecutionContext, source_entity_iri: &str, source_tx: i64) {
+    ctx.insert("inputIRIs".to_string(), source_entity_iri.to_string());
+    ctx.insert(
+        "__sourceEntityIri".to_string(),
+        source_entity_iri.to_string(),
+    );
+    ctx.insert("__sourceUpdateTx".to_string(), source_tx.to_string());
+    ctx.insert(
+        "__sourceUpdateId".to_string(),
+        crate::owl::materialization::source_update_id(source_entity_iri, source_tx),
+    );
+}
+
 /// Runs a BPMN process triggered by a TimerStartEvent, seeding controlInstanceDefaults
 /// onto the newly-created control instance before the first node executes.
 /// Only timer-triggered dispatches go through this path; external/manual runs use run_process.
@@ -744,6 +770,8 @@ pub async fn run_process_with_context(
         .await?;
     let (exec_iri, control_instance_iri): (String, String) =
         serde_json::from_str(&init_json).map_err(|e| e.to_string())?;
+    ctx.entry("__sourceUpdateId".to_string())
+        .or_insert_with(|| exec_iri.clone());
 
     ctx.insert("self".to_string(), control_instance_iri.clone());
 
@@ -757,13 +785,12 @@ pub async fn run_process_with_context(
             .await?;
     }
 
-    if let Err(e) = app.emit(
-        "automation-execution-started",
-        serde_json::json!({
-            "processIri": process_iri,
-            "executionIri": exec_iri,
-        }),
-    ) {
+    let mut started_payload = serde_json::json!({
+        "processIri": process_iri,
+        "executionIri": exec_iri,
+    });
+    add_source_update_fields(&mut started_payload, ctx);
+    if let Err(e) = app.emit("automation-execution-started", started_payload) {
         log_backend(
             "warn",
             &format!(
@@ -861,15 +888,14 @@ pub async fn run_process_with_context(
     } else {
         "failed"
     };
-    if let Err(e) = app.emit(
-        "automation-execution-finished",
-        serde_json::json!({
-            "processIri": process_iri,
-            "executionIri": exec_iri,
-            "status": finished_status,
-            "error": run_result.as_ref().err().map(|e| e.as_str()),
-        }),
-    ) {
+    let mut finished_payload = serde_json::json!({
+        "processIri": process_iri,
+        "executionIri": exec_iri,
+        "status": finished_status,
+        "error": run_result.as_ref().err().map(|e| e.as_str()),
+    });
+    add_source_update_fields(&mut finished_payload, ctx);
+    if let Err(e) = app.emit("automation-execution-finished", finished_payload) {
         log_backend(
             "warn",
             &format!(
@@ -981,6 +1007,8 @@ async fn execute_nodes(
     let mut resuming = resume_from.is_some();
 
     for (node_iri, node_type) in nodes {
+        let (node_iri, node_type) = with_execution_gate(ctx, || (node_iri, node_type))?;
+
         if resuming {
             if resume_from.as_deref() == Some(node_iri.as_str()) {
                 resuming = false;
@@ -1066,6 +1094,7 @@ async fn execute_nodes(
                 "nodeLabel": node_label,
                 "status": "started",
             });
+            add_source_update_fields(&mut payload, ctx);
             if let Some(ref iri) = iteration_of {
                 payload["iterationOf"] = serde_json::Value::String(iri.clone());
                 if let Some(idx) = iteration_index {
@@ -1222,11 +1251,19 @@ async fn execute_nodes(
         // finished materialising when the next node reads `ctx["self"]`.
         if step_error.is_none() {
             if let Some(ref ci_iri) = ctx.get("self").cloned() {
+                let materialization_correlation =
+                    crate::owl::materialization::MaterializationCorrelation {
+                        execution_iri: exec_iri.to_string(),
+                        step_iri: step_iri.to_string(),
+                        node_iri: node_iri.to_string(),
+                        source_entity_iri: ctx.get("__sourceEntityIri").cloned(),
+                        source_update_id: ctx.get("__sourceUpdateId").cloned(),
+                        source_tx: ctx.get("__sourceUpdateTx").and_then(|tx| tx.parse().ok()),
+                    };
                 emit_materialization_progress(
                     app,
-                    exec_iri,
-                    &step_iri,
-                    &node_iri,
+                    &materialization_correlation,
+                    ci_iri,
                     "query-properties",
                     "waiting",
                     None,
@@ -1238,7 +1275,15 @@ async fn execute_nodes(
                     })?;
                 let drain_started = std::time::Instant::now();
                 match query_worker
-                    .await_drained(&executor, ci_iri, exec_iri, &step_iri, &node_iri)
+                    .await_drained(
+                        &executor,
+                        ci_iri,
+                        exec_iri,
+                        &step_iri,
+                        &node_iri,
+                        materialization_correlation.source_entity_iri.as_deref(),
+                        materialization_correlation.source_update_id.as_deref(),
+                    )
                     .await
                 {
                     Ok(()) => log_backend(
@@ -1264,15 +1309,22 @@ async fn execute_nodes(
                             ),
                         );
                         persist_materialization_failure(&executor, &step_iri, &error).await?;
-                        emit_materialization_progress(app, exec_iri, &step_iri, &node_iri, "query-properties", "failed", Some(&error));
-                        return Err(error);
+                        emit_materialization_progress(
+                            app,
+                            &materialization_correlation,
+                            ci_iri,
+                            "query-properties",
+                            "failed",
+                            Some(&error),
+                        );
+                        ctx.insert("__executionFailed".to_string(), error);
+                        continue;
                     }
             }
                 emit_materialization_progress(
                     app,
-                    exec_iri,
-                    &step_iri,
-                    &node_iri,
+                    &materialization_correlation,
+                    ci_iri,
                     "query-properties",
                     "completed",
                     None,
@@ -1284,89 +1336,17 @@ async fn execute_nodes(
                 // Without this second barrier, a node that writes a value and a next node
                 // that reads a total derived from it disagree: the total is one step
                 // behind, and nothing in the read says so.
-                let formula_drain_started = std::time::Instant::now();
-                emit_materialization_progress(
+                if let Err(terminal) = await_formula_materialization_barrier(
                     app,
-                    exec_iri,
-                    &step_iri,
-                    &node_iri,
-                    "calculated-properties",
-                    "waiting",
-                    None,
-                );
-                let formula_correlation = crate::owl::materialization::MaterializationCorrelation {
-                    execution_iri: exec_iri.to_string(),
-                    step_iri: step_iri.to_string(),
-                    node_iri: node_iri.to_string(),
-                    source_tx: None,
-                };
-                if let Err(terminal) =
-                    crate::commands::formula_worker::FormulaWorker::await_drained(
-                        app,
-                        &executor,
-                        ci_iri,
-                        formula_correlation,
-                    )
-                    .await
-                {
-                    let timeout_msg = terminal.to_string();
-                    log_backend(
-                    "error",
-                    &format!(
-                        "[executor] formula materialization barrier failed execution={} step={} entity={} duration_ms={} error={}",
-                        exec_iri,
-                        step_iri,
-                        ci_iri,
-                        formula_drain_started.elapsed().as_millis(),
-                        timeout_msg
-                    ),
-                );
-                    match &terminal {
-                        crate::owl::materialization::MaterializationTerminal::Cancelled(reason) => {
-                            persist_materialization_cancellation(&executor, &step_iri, reason)
-                                .await?;
-                        }
-                        crate::owl::materialization::MaterializationTerminal::Failed(reason) => {
-                            persist_materialization_failure(&executor, &step_iri, reason).await?;
-                        }
-                    }
-                    emit_materialization_progress(
-                        app,
-                        exec_iri,
-                        &step_iri,
-                        &node_iri,
-                        "calculated-properties",
-                        match terminal {
-                            crate::owl::materialization::MaterializationTerminal::Cancelled(_) => {
-                                "cancelled"
-                            }
-                            crate::owl::materialization::MaterializationTerminal::Failed(_) => {
-                                "failed"
-                            }
-                        },
-                        Some(&timeout_msg),
-                    );
-                    return abort_materialization_barrier(ctx, &terminal);
-                }
-                emit_materialization_progress(
-                    app,
-                    exec_iri,
-                    &step_iri,
-                    &node_iri,
-                    "calculated-properties",
-                    "completed",
-                    None,
-                );
-                log_backend(
-                "debug",
-                &format!(
-                    "[executor] formula materialization barrier completed execution={} step={} entity={} duration_ms={}",
-                    exec_iri,
-                    step_iri,
+                    &executor,
                     ci_iri,
-                    formula_drain_started.elapsed().as_millis()
-                ),
-            );
+                    materialization_correlation,
+                )
+                .await
+                {
+                    record_materialization_terminal(ctx, &terminal);
+                    continue;
+                }
             }
         }
 
@@ -1390,6 +1370,7 @@ async fn execute_nodes(
                     "status": "failed",
                     "error": e,
                 });
+                add_source_update_fields(&mut payload, ctx);
                 if let Some(ref iri) = iteration_of {
                     payload["iterationOf"] = serde_json::Value::String(iri.clone());
                     if let Some(idx) = iteration_index {
@@ -1432,6 +1413,7 @@ async fn execute_nodes(
                 "nodeLabel": node_label,
                 "status": "completed",
             });
+            add_source_update_fields(&mut payload, ctx);
             if let Some(ref iri) = iteration_of {
                 payload["iterationOf"] = serde_json::Value::String(iri.clone());
                 if let Some(idx) = iteration_index {
@@ -1469,20 +1451,37 @@ async fn execute_nodes(
         }
     }
 
+    ensure_execution_can_advance(ctx)?;
     Ok(None)
 }
 
-fn abort_materialization_barrier(
+fn record_materialization_terminal(
     ctx: &mut ExecutionContext,
     terminal: &crate::owl::materialization::MaterializationTerminal,
-) -> Result<Option<String>> {
+) {
     match terminal {
         crate::owl::materialization::MaterializationTerminal::Cancelled(reason) => {
             ctx.insert("__executionCancelled".to_string(), reason.clone());
-            Err(reason.clone())
         }
-        crate::owl::materialization::MaterializationTerminal::Failed(reason) => Err(reason.clone()),
+        crate::owl::materialization::MaterializationTerminal::Failed(reason) => {
+            ctx.insert("__executionFailed".to_string(), reason.clone());
+        }
     }
+}
+
+fn ensure_execution_can_advance(ctx: &ExecutionContext) -> Result<()> {
+    if let Some(reason) = ctx.get("__executionCancelled") {
+        return Err(reason.clone());
+    }
+    if let Some(reason) = ctx.get("__executionFailed") {
+        return Err(reason.clone());
+    }
+    Ok(())
+}
+
+fn with_execution_gate<T>(ctx: &ExecutionContext, start_node: impl FnOnce() -> T) -> Result<T> {
+    ensure_execution_can_advance(ctx)?;
+    Ok(start_node())
 }
 
 async fn persist_materialization_failure(
@@ -1543,26 +1542,134 @@ async fn persist_materialization_cancellation(
         .map(|_| ())
 }
 
-fn emit_materialization_progress(
-    app: &AppHandle,
-    execution_iri: &str,
-    step_iri: &str,
-    node_iri: &str,
+pub(super) async fn await_formula_materialization_barrier<R: Runtime>(
+    app: &AppHandle<R>,
+    executor: &DbExecutor,
+    entity_iri: &str,
+    correlation: crate::owl::materialization::MaterializationCorrelation,
+) -> std::result::Result<(), crate::owl::materialization::MaterializationTerminal> {
+    let started = std::time::Instant::now();
+    emit_materialization_progress(
+        app,
+        &correlation,
+        entity_iri,
+        "calculated-properties",
+        "waiting",
+        None,
+    );
+    match crate::commands::formula_worker::FormulaWorker::await_drained(
+        app,
+        executor,
+        entity_iri,
+        correlation.clone(),
+    )
+    .await
+    {
+        Ok(()) => {
+            emit_materialization_progress(
+                app,
+                &correlation,
+                entity_iri,
+                "calculated-properties",
+                "completed",
+                None,
+            );
+            log_backend(
+                "debug",
+                &format!(
+                    "[executor] formula materialization barrier completed execution={} step={} entity={} duration_ms={}",
+                    correlation.execution_iri,
+                    correlation.step_iri,
+                    entity_iri,
+                    started.elapsed().as_millis()
+                ),
+            );
+            Ok(())
+        }
+        Err(terminal) => {
+            let reason = terminal.to_string();
+            log_backend(
+                "error",
+                &format!(
+                    "[executor] formula materialization barrier failed execution={} step={} entity={} duration_ms={} error={}",
+                    correlation.execution_iri,
+                    correlation.step_iri,
+                    entity_iri,
+                    started.elapsed().as_millis(),
+                    reason
+                ),
+            );
+            match &terminal {
+                crate::owl::materialization::MaterializationTerminal::Cancelled(reason) => {
+                    persist_materialization_cancellation(executor, &correlation.step_iri, reason)
+                        .await
+                        .map_err(|error| {
+                            crate::owl::materialization::MaterializationTerminal::Failed(error)
+                        })?;
+                }
+                crate::owl::materialization::MaterializationTerminal::Failed(reason) => {
+                    persist_materialization_failure(executor, &correlation.step_iri, reason)
+                        .await
+                        .map_err(|error| {
+                            crate::owl::materialization::MaterializationTerminal::Failed(error)
+                        })?;
+                }
+            }
+            let status = match terminal {
+                crate::owl::materialization::MaterializationTerminal::Cancelled(_) => "cancelled",
+                crate::owl::materialization::MaterializationTerminal::Failed(_) => "failed",
+            };
+            emit_materialization_progress(
+                app,
+                &correlation,
+                entity_iri,
+                "calculated-properties",
+                status,
+                Some(&reason),
+            );
+            Err(terminal)
+        }
+    }
+}
+
+fn emit_materialization_progress<R: Runtime>(
+    app: &AppHandle<R>,
+    correlation: &crate::owl::materialization::MaterializationCorrelation,
+    entity_iri: &str,
     phase: &str,
     status: &str,
     error: Option<&str>,
 ) {
     let mut payload = serde_json::json!({
-        "executionIri": execution_iri,
-        "stepIri": step_iri,
-        "nodeIri": node_iri,
+        "executionIri": correlation.execution_iri,
+        "stepIri": correlation.step_iri,
+        "nodeIri": correlation.node_iri,
         "status": status,
         "phase": phase,
+        "entityIri": entity_iri,
     });
+    if let Some(source_entity_iri) = correlation.source_entity_iri.as_deref() {
+        payload["sourceEntityIri"] = serde_json::Value::String(source_entity_iri.to_string());
+    }
+    if let Some(source_update_id) = correlation.source_update_id.as_deref() {
+        payload["sourceUpdateId"] = serde_json::Value::String(source_update_id.to_string());
+    }
+    if let Some(source_tx) = correlation.source_tx {
+        payload["sourceTx"] = serde_json::Value::Number(source_tx.into());
+    }
     if let Some(reason) = error {
         payload["error"] = serde_json::Value::String(reason.to_string());
     }
     app.emit("automation-step-progress", payload).ok();
+}
+
+fn add_source_update_fields(payload: &mut serde_json::Value, ctx: &ExecutionContext) {
+    if let Some(source_entity_iri) = ctx.get("__sourceEntityIri") {
+        payload["sourceEntityIri"] = serde_json::Value::String(source_entity_iri.clone());
+    }
+    if let Some(source_update_id) = ctx.get("__sourceUpdateId") {
+        payload["sourceUpdateId"] = serde_json::Value::String(source_update_id.clone());
+    }
 }
 
 async fn run_sub_process(
@@ -1835,16 +1942,16 @@ async fn run_sub_process(
 
         if let Some(worker) = app.try_state::<crate::commands::formula_worker::FormulaWorker>() {
             for child_iri in children_for_link {
-                let job_ids = crate::commands::formula_worker::create_instance_recalc_jobs(
+                let jobs = crate::commands::formula_worker::create_instance_recalc_jobs(
                     executor.inner(),
                     &child_iri,
                     "foundation:iterationOf",
                 )
                 .await?;
-                for job_id in job_ids {
-                    let _ = worker.sender.try_send(
-                        crate::commands::formula_worker::WorkerCommand::Enqueue { job_id },
-                    );
+                for job in jobs {
+                    if let Err(error) = worker.enqueue(job, vec![], vec![]) {
+                        log_backend("error", &format!("formula job enqueue failed for iteration {child_iri}: {error}"));
+                    }
                 }
             }
         }
@@ -2026,15 +2133,14 @@ async fn resume_workflow_execution(app: &AppHandle, exec_iri: &str) -> Result<()
         ),
     );
 
-    app.emit(
-        "automation-execution-started",
-        serde_json::json!({
-            "processIri": process_iri,
-            "executionIri": exec_iri,
-            "resumed": true,
-        }),
-    )
-    .ok();
+    let mut started_payload = serde_json::json!({
+        "processIri": process_iri,
+        "executionIri": exec_iri,
+        "resumed": true,
+    });
+    add_source_update_fields(&mut started_payload, &ctx);
+    app.emit("automation-execution-started", started_payload)
+        .ok();
 
     if let Some(active) = app.try_state::<ActiveExecutions>() {
         active.insert(exec_iri);
@@ -2058,6 +2164,7 @@ async fn resume_workflow_execution(app: &AppHandle, exec_iri: &str) -> Result<()
         Some(node_iri),
     )
     .await;
+    let cancelled_reason = ctx.get("__executionCancelled").cloned();
 
     if let Some(active) = app.try_state::<ActiveExecutions>() {
         active.remove(exec_iri);
@@ -2067,9 +2174,16 @@ async fn resume_workflow_execution(app: &AppHandle, exec_iri: &str) -> Result<()
         .write({
             let exec_iri = exec_iri.to_string();
             let error = run_result.as_ref().err().cloned();
+            let cancelled_reason = cancelled_reason.clone();
             move |conn| {
-                finish_execution_record(conn, &exec_iri, error.as_deref())?;
-                let terminal_status = if error.is_none() {
+                if let Some(reason) = cancelled_reason.as_deref() {
+                    finish_execution_cancelled_record(conn, &exec_iri, reason)?;
+                } else {
+                    finish_execution_record(conn, &exec_iri, error.as_deref())?;
+                }
+                let terminal_status = if cancelled_reason.is_some() {
+                    STATUS_CANCELLED
+                } else if error.is_none() {
                     STATUS_COMPLETED
                 } else {
                     STATUS_FAILED
@@ -2091,21 +2205,22 @@ async fn resume_workflow_execution(app: &AppHandle, exec_iri: &str) -> Result<()
         })
         .await?;
 
-    let finished_status = if run_result.is_ok() {
+    let finished_status = if cancelled_reason.is_some() {
+        "cancelled"
+    } else if run_result.is_ok() {
         "completed"
     } else {
         "failed"
     };
-    app.emit(
-        "automation-execution-finished",
-        serde_json::json!({
-            "processIri": process_iri,
-            "executionIri": exec_iri,
-            "status": finished_status,
-            "error": run_result.as_ref().err().map(|e| e.as_str()),
-        }),
-    )
-    .ok();
+    let mut finished_payload = serde_json::json!({
+        "processIri": process_iri,
+        "executionIri": exec_iri,
+        "status": finished_status,
+        "error": run_result.as_ref().err().map(|e| e.as_str()),
+    });
+    add_source_update_fields(&mut finished_payload, &ctx);
+    app.emit("automation-execution-finished", finished_payload)
+        .ok();
 
     run_result.map(|_| ())
 }

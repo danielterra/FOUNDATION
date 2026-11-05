@@ -8,7 +8,6 @@
 		agents = [],
 		onOpenAgentInspector,
 		onSwitchAgent,
-		onNewConversation,
 		onDownloadChat,
 		cameraEnabled = true,
 		onToggleCamera = null,
@@ -88,7 +87,6 @@
 				><span class="material-symbols-outlined">{thinkingEnabled ? 'psychology' : 'psychology_alt'}</span></Button>
 			</span>
 		{/if}
-		<Button variant="ghost" size="icon" title="New conversation" onclick={onNewConversation}><span class="material-symbols-outlined">add</span></Button>
 		<Button variant="ghost" size="icon" title="Download chat" onclick={onDownloadChat}><span class="material-symbols-outlined">download</span></Button>
 	</div>
 </div>

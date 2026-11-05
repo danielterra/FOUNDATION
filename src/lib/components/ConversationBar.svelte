@@ -3,12 +3,16 @@
 	import { tick } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
+	import * as Dialog from '$lib/components/ui/dialog';
 
 	let {
 		conversations = $bindable([]),
 		activeConversationIri = $bindable(null),
 		onSwitch,
 		onDelete,
+		onCreate,
+		onRefresh,
+		conversationsLoading = false,
 	} = $props();
 
 	let isOpen = $state(false);
@@ -18,9 +22,12 @@
 	let confirmDeleteIri = $state(null);
 	let searchInputEl = $state(null);
 	let renameInputEl = $state(null);
+	let isCreateOpen = $state(false);
+	let newSubject = $state('');
+	let subjectInputEl = $state(null);
 
 	const activeLabel = $derived(
-		conversations.find(c => c.iri === activeConversationIri)?.label ?? 'Select conversation'
+		conversations.find(c => c.iri === activeConversationIri)?.label ?? 'Selecionar conversa'
 	);
 
 	const filteredConversations = $derived(
@@ -36,6 +43,31 @@
 		confirmDeleteIri = null;
 		await tick();
 		searchInputEl?.focus();
+	}
+
+	async function openCreateDialog() {
+		newSubject = '';
+		isCreateOpen = true;
+		await tick();
+		subjectInputEl?.focus();
+	}
+
+	function closeCreateDialog() {
+		isCreateOpen = false;
+		newSubject = '';
+	}
+
+	function submitCreate(event) {
+		event.preventDefault();
+		const subject = newSubject.trim();
+		if (!subject) return;
+		closeCreateDialog();
+		onCreate?.(subject);
+	}
+
+	function handleCreateOpenChange(open) {
+		if (open) isCreateOpen = true;
+		else closeCreateDialog();
 	}
 
 	function closeDropdown() {
@@ -68,8 +100,7 @@
 			conversations = conversations.map(c => c.iri === iri ? { ...c, label } : c);
 		} catch (err) {
 			console.error('Failed to rename:', err);
-			const result = await invoke('chat__list_conversations');
-			conversations = result.items;
+			await onRefresh?.();
 		}
 	}
 
@@ -88,8 +119,7 @@
 			onDelete?.(iri);
 		} catch (err) {
 			console.error('Failed to delete:', err);
-			const result = await invoke('chat__list_conversations');
-			conversations = result.items;
+			await onRefresh?.();
 		}
 	}
 
@@ -105,7 +135,9 @@
 		variant="ghost"
 		class={`conversation-trigger${isOpen ? ' open' : ''}`}
 		onclick={() => isOpen ? closeDropdown() : openDropdown()}
-		title="Switch conversation"
+		title="Selecionar conversa"
+		aria-label="Selecionar conversa"
+		aria-expanded={isOpen}
 	>
 		<span class="trigger-label">{activeLabel}</span>
 		<span class="material-symbols-outlined trigger-chevron" class:rotated={isOpen}>expand_more</span>
@@ -120,7 +152,7 @@
 					bind:ref={searchInputEl}
 					bind:value={searchQuery}
 					class="dropdown-search-input"
-					placeholder="Search conversations…"
+					placeholder="Buscar conversas…"
 					onkeydown={(e) => e.key === 'Escape' && closeDropdown()}
 				/>
 			</div>
@@ -180,12 +212,33 @@
 					</div>
 				{/each}
 				{#if filteredConversations.length === 0}
-					<div class="dropdown-empty">No conversations found</div>
+					<div class="dropdown-empty">Nenhuma conversa encontrada</div>
 				{/if}
 			</div>
 		</div>
 	{/if}
 </div>
+
+<Button variant="ghost" size="icon" onclick={openCreateDialog} title="Nova conversa" aria-label="Criar nova conversa">
+	<span class="material-symbols-outlined">add</span>
+</Button>
+
+<Dialog.Root open={isCreateOpen} onOpenChange={handleCreateOpenChange}>
+	<Dialog.Content class="create-dialog">
+		<Dialog.Header>
+			<Dialog.Title>Nova conversa</Dialog.Title>
+			<Dialog.Description>Defina um assunto para identificar esta conversa.</Dialog.Description>
+		</Dialog.Header>
+		<form onsubmit={submitCreate}>
+			<label for="new-conversation-subject">Assunto</label>
+			<Input bind:ref={subjectInputEl} id="new-conversation-subject" bind:value={newSubject} required maxlength="120" autocomplete="off" />
+			<div class="create-actions">
+				<Button variant="ghost" type="button" onclick={closeCreateDialog}>Cancelar</Button>
+				<Button variant="default" type="submit" disabled={!newSubject.trim() || conversationsLoading}>Criar</Button>
+			</div>
+		</form>
+	</Dialog.Content>
+</Dialog.Root>
 
 <style>
 	.conversation-bar {
@@ -194,6 +247,7 @@
 		align-items: center;
 		padding: 0 10px 0 14px;
 		flex-shrink: 0;
+		max-width: 15rem;
 	}
 
 	:global([data-slot="button"].conversation-trigger) {
@@ -359,5 +413,28 @@
 		font-size: 12px;
 		color: var(--muted-foreground);
 		text-align: center;
+	}
+
+	:global(.create-dialog) {
+		width: min(26rem, calc(100vw - 2 * var(--space-4)));
+		background: var(--color-surface-2);
+		color: var(--color-neutral);
+	}
+
+	:global(.create-dialog form) {
+		display: grid;
+		gap: var(--space-2);
+	}
+
+	:global(.create-dialog label) {
+		font-size: var(--type-label);
+		color: var(--color-neutral);
+	}
+
+	.create-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: var(--space-2);
+		margin-top: var(--space-3);
 	}
 </style>

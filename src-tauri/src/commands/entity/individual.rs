@@ -1,8 +1,8 @@
 use super::{
     resolve_entity_status, resolve_unit_label, BacklinkCursor, EntityData, FileInfo, GraphLink,
-    GraphNode, PropertyValue, PropertyValueCursor, StatusInfo,
+    GraphNode, PropertyValue, StatusInfo,
 };
-use crate::owl::{self, Class, Connection, Individual, Property};
+use crate::owl::{self, Class, Connection, Individual, Property, PropertyValueCursor};
 use std::collections::HashMap;
 
 pub(super) fn get_individual_data(
@@ -10,6 +10,7 @@ pub(super) fn get_individual_data(
     individual_id: &str,
     groups: (u8, u8, u8),
     individual: Individual,
+    snapshot_tx: i64,
 ) -> Result<EntityData, String> {
     let t0 = std::time::Instant::now();
     let (group_class, group_individual, group_literal) = groups;
@@ -98,6 +99,32 @@ pub(super) fn get_individual_data(
         ),
     );
 
+    let property_iris: std::collections::HashSet<String> = individual
+        .properties
+        .iter()
+        .map(|(property_iri, _)| property_iri.clone())
+        .collect();
+    let mut stable_properties = Vec::new();
+    let mut fwd_cursors: HashMap<String, Option<PropertyValueCursor>> = HashMap::new();
+    for property_iri in property_iris {
+        let page = owl::get_property_values_page(
+            conn,
+            individual_id,
+            &property_iri,
+            5,
+            snapshot_tx,
+            None,
+        )?;
+        if page.has_more {
+            fwd_cursors.insert(property_iri.clone(), page.next_cursor);
+        }
+        stable_properties.extend(
+            page.items
+                .into_iter()
+                .map(|triple| (property_iri.clone(), triple.object)),
+        );
+    }
+
     // Pre-fetch Thing metadata for all range/source class IRIs in one batch.
     let mut thing_iris: std::collections::HashSet<String> = std::collections::HashSet::new();
     for prop in prop_cache.values() {
@@ -116,7 +143,7 @@ pub(super) fn get_individual_data(
     }
     // Also include IRI-valued property objects so the property loop can resolve
     // labels/icons from the cache instead of making one Thing::get call per value.
-    for (_, value_obj) in &individual.properties {
+    for (_, value_obj) in &stable_properties {
         if let Some(iri) = value_obj.as_iri() {
             thing_iris.insert(iri.to_string());
         }
@@ -127,8 +154,7 @@ pub(super) fn get_individual_data(
     // Pre-fetch hasStatus for all forward IRI-valued properties in one batch,
     // replacing per-property resolve_status_for_entity calls that each load the
     // entire target entity just to find one IRI value.
-    let object_value_iris: Vec<String> = individual
-        .properties
+    let object_value_iris: Vec<String> = stable_properties
         .iter()
         .filter_map(|(_, v)| v.as_iri())
         .map(|s| s.to_string())
@@ -191,25 +217,8 @@ pub(super) fn get_individual_data(
         ),
     );
 
-    // Build a one-shot cursor map for forward property groups that were truncated.
-    // `.remove()` inside the loop ensures the cursor is assigned only to the first
-    // PropertyValue entry for each predicate (consistent with backlink cursor placement).
-    let mut fwd_cursors: HashMap<String, Option<PropertyValueCursor>> = individual
-        .forward_value_cutoffs
-        .iter()
-        .map(|(pred, (tx, key))| {
-            (
-                pred.clone(),
-                Some(PropertyValueCursor {
-                    value_tx: *tx,
-                    object_key: key.clone(),
-                }),
-            )
-        })
-        .collect();
-
     let mut properties = Vec::new();
-    for (property_iri, value_obj) in &individual.properties {
+    for (property_iri, value_obj) in &stable_properties {
         let prop_opt = prop_cache.get(property_iri.as_str());
         let (
             property_label,
@@ -398,10 +407,6 @@ pub(super) fn get_individual_data(
 
         let formula_error: Option<String> = None;
 
-        let fwd_group_total = individual
-            .forward_group_totals
-            .get(property_iri.as_str())
-            .copied();
         let property_next_cursor = fwd_cursors.remove(property_iri.as_str()).flatten();
 
         properties.push(PropertyValue {
@@ -421,7 +426,7 @@ pub(super) fn get_individual_data(
             unit_label,
             datatype,
             value_status,
-            group_total: fwd_group_total,
+            group_total: None,
             backlink_next_cursor: None,
             property_next_cursor,
             is_calculated,

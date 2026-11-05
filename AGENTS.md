@@ -25,6 +25,7 @@
 - ALWAYS implement ONE canonical behavior; when the model changes, migrate existing data/individuals to the new model instead of branching to keep the old one working.
 - ALWAYS surface any design tension that tempts a fallback and ask the user before adding one.
 - NEVER add a fallback/default branch in render dispatch maps either (e.g. a `bpmn_FlowNode → NodeTask` catch-all in a frontend node-type map) — fix the real cause so every concrete type maps to its own component; a missing mapping is a bug to fix, not to mask.
+- ALWAYS present Settings as a dedicated full screen, not a modal; use a left vertical navigation menu instead of top tabs, with AI model selection first and remaining settings grouped by task, and use the available horizontal space well.
 
 ## Visual language
 - ALWAYS preserve the reviewed Oblivion canvas texture: a black field with a subtle, evenly spaced cyan dot grid behind widgets.
@@ -64,6 +65,8 @@
 
 ## Product status integrity
 - ALWAYS read the current Feature → UserStory → AcceptanceCriterion graph through Foundation MCP before changing a status.
+- ALWAYS persist and read back the correct UserStory and affected AcceptanceCriterion status immediately after each lifecycle action; never defer status transitions until the end of the work item.
+- ALWAYS keep an AcceptanceCriterion Pending until concrete evidence confirms its outcome; planning or implementation progress alone does not complete it.
 - ALWAYS enumerate the complete linked AcceptanceCriterion set before QA; when an MCP relation view is capped, use paginated or reverse relation queries and never treat a truncated list as complete.
 - ALWAYS keep status separate from implementation evidence; source code or a changelog alone NEVER proves an AcceptanceCriterion passed.
 - ALWAYS record concrete QA evidence for every AcceptanceCriterion moved to `foundation:Completed`.
@@ -141,10 +144,12 @@
 
 ## foundation-core crate (separate repo)
 - The ontology engine (EAVTO + OWL + base ontology + `foundation:*` vocabulary) lives in the SEPARATE public repo `foundation-core` (github.com/danielterra/foundation-core, AGPL-3.0) — NOT in this app repo. It is domain-agnostic-of-infrastructure and installable in other projects.
+- ALWAYS treat the sibling `foundation-core` repository as an integral part of FOUNDATION work: review and update it when needed, test against its latest intended revision, commit its changes separately, then update and verify the app's pinned git revision.
 - The app consumes it as a git-dependency in `src-tauri/Cargo.toml` (`foundation-core = { git = "https://github.com/danielterra/foundation-core" }`).
 - ALWAYS keep the COMMITTED `src-tauri/Cargo.toml` AND `Cargo.lock` clean (git-dep + rev pin, NO `[patch]`) — CI/fresh clones fetch the core from GitHub. NEVER add a `[patch]` block to the committed Cargo.toml for local dev — once the file is tracked the local edit cannot be gitignored and clutters the working tree forever (`.gitignore` only affects untracked files).
 - ALWAYS do local fluid dev via a Cargo **paths override** placed OUTSIDE any repo, in `C:\GIT\.cargo\config.toml`: `paths = ["C:/GIT/foundation-core"]`. Cargo reads it walking up the tree from `src-tauri`; it is applied at build time and NOT recorded in `Cargo.lock`, so the working tree stays clean (verify with `cargo metadata --locked` → exit 0 and foundation-core `source = null`).
 - ALWAYS clone the core as a SIBLING at `../foundation-core` (= `C:\GIT\foundation-core`, what the paths override points at) so the override and the ontology scripts resolve. Edit core code there; the app rebuilds against it via the override.
+- ALWAYS verify `foundation-core`'s effective `manifest_path` and revision with `cargo metadata --locked` before diagnosing build errors; if the local paths override selects an incompatible checkout, run validation from `/tmp` with a temporary CLI `--config 'paths=["<pinned-checkout>"]'` override and NEVER modify or replace a dirty sibling checkout to make the build pass.
 - `dump-ontology`/`verify-ontology` (in this app repo) read the live DB and write/verify `../foundation-core/assets/ontology.sql`. Regenerate → commit in the core repo → bump the git rev in the app's `Cargo.lock` to pick it up.
 - Storage identity is injected at app boot via `foundation_core::paths::configure("Foundation","FOUNDATION.db","org.w3id.foundation")` (defaults Foundation) — `src-tauri/src/lib.rs` `.setup()`.
 
@@ -210,7 +215,7 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 - ALWAYS verify newly created Foundation stories and artifacts are visibly present on that conversation's blackboard before reporting completion.
 - `add_widget_to_blackboard` takes `blackboard_iri` (a `foundation:Blackboard`), NOT a conversation IRI. Omit → DefaultBlackboard.
 - ALWAYS resolve conversation → board: a conversation's board IRI is `foundation:Blackboard_for_<conversationIri with ':' → '_'>` (e.g. `foundation:Blackboard_for_foundation_Conversation_<id>`).
-- ALWAYS show user-facing widgets on the ACTIVE conversation's board, never DefaultBlackboard — EXCEPT when chat is off (no active conversation), then omit → DefaultBlackboard (app setting).
+- ALWAYS restore DefaultBlackboard and its persisted open widgets when the user closes the chat; show the active conversation's board only while that conversation is open.
 - NEVER assume a fixed `MAIN conversation` IRI; resolve the conversation currently open in the Foundation UI and its board immediately before each board operation.
 - `InProgress` status does NOT uniquely mark the active conversation (many conversations share it).
 
@@ -218,6 +223,14 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 - Format: `YYYYMMDD-HHMMSS-description.md` (e.g. `20260228-192519-layer-violations-fix.md`).
 
 ## Gotchas & learnings
+- ALWAYS preserve the concurrent agent's Foundation/core code-review work; keep this financial application task limited to live ontology, data, and automations, without source-code changes.
+- ALWAYS treat personal financial reconciliation, account ownership, and budget configuration as application work through ontology and existing automations; NEVER create User Stories or invoke Foundation/core development workflows for this demand.
+- ALWAYS scope each MonthlyBudget to one person or organization; explicitly link bank accounts to their owner and filter budget transactions and cash balances through that owner's accounts. Personal accounts belong to ThisUser; business accounts belong to their organization.
+- ALWAYS use the existing Foundation Nubank/C6 bank statement import automation when importing statements; inspect its configuration and existing import requests before running it.
+- ALWAYS check Foundation email and attachments for bank statements already sent before asking the user to resend them.
+- ALWAYS use foundation:MonthlyBudget to verify financial reconciliation totals and opening/closing balances.
+- ALWAYS treat Nubank PF and Daniel's Nubank Personal Account as the same bank account; keep a single canonical personal Nubank account.
+- ALWAYS reconcile financial history month by month against bank statement balances; preserve historical records and re-import missing transactions instead of clearing prior months for the November 2026 reconciliation.
 - `run_automation(dry_run:true)` mocks ONLY script-level writes (the Rhai `mcp()`/`owl_set_property` bridge). The engine STILL creates and PERSISTS control instances (and loop iteration instances + `iterationOf` links), and AgentTask STILL calls the AI. NOT side-effect-free — clean orphan control instances after a dry run; expect AI cost/latency.
 - Plain-JS `.svelte` (no `lang="ts"`) is NOT type-checked by svelte-check / `npm run check` — orphan refs to removed vars pass 0/0 but throw `ReferenceError` at runtime, visible ONLY in the webview F12 console (NOT `npm run logs`, which is backend only). ALWAYS validate plain-JS components by RUNNING; sweep manually for orphan refs.
 - Automation diagram nodes: characteristics / metadata / extra info render as a PILL (rounded chip, `border-radius:999px`), NEVER loose text — consistent with the progress badge. Static characteristic = neutral/subtle pill; dynamic state = colored pill.
@@ -229,6 +242,8 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 - MCP Foundation unavailable: FIRST check whether the dev server is alive (`pm2 describe foundation-dev` plus `pgrep -fl FOUNDATION` on macOS/Linux or `Get-Process FOUNDATION` on Windows). If it is down, Codex owns the lifecycle and starts it via `$server-start`. Only when the server is running treat the failure as transient: wait 60–180s and retry automatically. NEVER fall back to curl/SQLite and NEVER ask the user to reconnect. MCP availability is session-specific; if a subagent lacks a required Foundation tool, it returns the pending ontology operation to the primary agent or another MCP-capable role instead of inventing a fallback.
 
 ## Code style
+- ALWAYS distinguish an AI service provider from a model publisher in model-picker language; explain publisher sorting as alphabetical ordering by the organization in the model ID (e.g. Anthropic, Google, OpenAI).
+- ALWAYS provide model-picker sorting by capability, price, size, and publisher; prioritize comparison information in this order: capability/power, price, and model publisher. Identify the source/metric for capability ranking; NEVER infer it from size or context alone.
 - ALWAYS use `json-render.dev` with `@json-render/core` and `@json-render/svelte` for AI-generated custom widgets; maintain one canonical catalog of all eligible reusable UI components and allowed props/actions.
 - ALWAYS allow closures until the planned closures-to-named-functions refactor is complete; only reintroduce the named-functions-only rule after that refactor.
 - ALWAYS paginate EVERY method/command/MCP tool that returns a collection with STABLE pagination = `snapshot_tx` + `ORDER BY` domain-key + offset/keyset INSIDE the snapshot. (1) Pin `snapshot_tx = MAX(tx)` on the FIRST page and echo it on every later page. (2) Read every page AS-OF snapshot_tx: BOTH membership as-of (the membership triple's `MAX(tx) <= snapshot_tx` and not retracted) AND the ordering-key value as-of (key's value at `MAX(tx) <= snapshot_tx`) — freezing only one re-introduces mid-scroll reordering. (3) `ORDER BY` the list's natural DOMAIN key (`foundation:lastUpdatedAt` for activity, `foundation:createdAt`, `rdfs:label`, `foundation:receivedAt`…), NEVER `tx`. (4) With the dataset frozen, offset is stable again (offset only broke because a new row entered the top — the snapshot removes that). Return `{ items, next_cursor, has_more, snapshot_tx }`. The frontend pins snapshot_tx on page 1 and passes it back. NEVER load-all-then-slice, NEVER return an unbounded list. Rationale + revision recorded in the pagination ADR (`foundation:ArchitectureDecisionRecord_1781556688201`).

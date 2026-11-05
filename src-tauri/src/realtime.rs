@@ -60,9 +60,47 @@ struct Subscriptions {
     patterns: Vec<String>,
     creation_queries: Vec<CreationQuery>,
     ring: VecDeque<ReplayEvent>,
+    internal_creation_signals: HashSet<(String, i64)>,
+    internal_creation_order: VecDeque<(String, i64)>,
 }
 
 impl SubscriptionRegistry {
+    /// Records a non-gated creation signal so the corresponding write notification
+    /// does not also emit an update signal for the same entity revision.
+    pub fn mark_internal_creation(&self, entity_id: &str, tx: i64) -> bool {
+        let mut guard = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let key = (entity_id.to_owned(), tx);
+        if !guard.internal_creation_signals.insert(key.clone()) {
+            return false;
+        }
+        guard.internal_creation_order.push_back(key);
+        while guard.internal_creation_order.len() > RING_CAPACITY {
+            if let Some(expired) = guard.internal_creation_order.pop_front() {
+                guard.internal_creation_signals.remove(&expired);
+            }
+        }
+        true
+    }
+
+    /// Consumes a creation marker when its write notification is dispatched.
+    pub fn take_internal_creation(&self, entity_id: &str, tx: i64) -> bool {
+        let mut guard = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let key = (entity_id.to_owned(), tx);
+        let removed = guard.internal_creation_signals.remove(&key);
+        if removed {
+            guard
+                .internal_creation_order
+                .retain(|pending| pending != &key);
+        }
+        removed
+    }
+
     pub fn replace(
         &self,
         iris: Vec<String>,
@@ -240,20 +278,56 @@ pub fn emit_entity_changed_internal<R: Runtime>(
     app: &AppHandle<R>,
     entity_id: &str,
     written_predicates: &[String],
+    tx: i64,
+) {
+    emit_entity_changed_internal_for_event(
+        app,
+        "entity-updated",
+        entity_id,
+        written_predicates,
+        tx,
+    );
+}
+
+pub fn emit_entity_changed_internal_for_event<R: Runtime>(
+    app: &AppHandle<R>,
+    event_key: &str,
+    entity_id: &str,
+    written_predicates: &[String],
+    tx: i64,
 ) {
     app.emit(
         "entity-changed-internal",
         serde_json::json!({
             "entityId": entity_id,
             "writtenPredicates": written_predicates,
+            "tx": tx,
+            "eventKey": event_key,
         }),
     )
     .ok();
 }
 
+/// Emits the generic write notification unless an explicit creation event has
+/// already been emitted for this exact entity revision.
+pub fn emit_internal_write_update<R: Runtime>(
+    app: &AppHandle<R>,
+    entity_id: &str,
+    written_predicates: &[String],
+    tx: i64,
+) {
+    if app
+        .try_state::<SubscriptionRegistry>()
+        .is_some_and(|registry| registry.take_internal_creation(entity_id, tx))
+    {
+        return;
+    }
+    emit_entity_changed_internal(app, entity_id, written_predicates, tx);
+}
+
 /// Emit a pre-built event queued during a batch, honoring the registry for entity-*
 /// events while passing every other event through untouched.
-pub fn emit_queued(app: &AppHandle, name: &str, payload: serde_json::Value) {
+pub fn emit_queued<R: Runtime>(app: &AppHandle<R>, name: &str, payload: serde_json::Value) {
     let gated = matches!(
         name,
         "entity-updated" | "entity-referenced" | "entity-deleted"
@@ -262,6 +336,25 @@ pub fn emit_queued(app: &AppHandle, name: &str, payload: serde_json::Value) {
         if let Some(entity_id) = payload.get("entityId").and_then(|v| v.as_str()) {
             if !subscribed(app, entity_id) {
                 return;
+            }
+        }
+    }
+    if name == "entity-created" {
+        if let (Some(entity_id), Some(tx)) = (
+            payload.get("entityId").and_then(|value| value.as_str()),
+            payload.get("tx").and_then(|value| value.as_i64()),
+        ) {
+            let first_signal = app
+                .try_state::<SubscriptionRegistry>()
+                .is_none_or(|registry| registry.mark_internal_creation(entity_id, tx));
+            if first_signal {
+                emit_entity_changed_internal_for_event(
+                    app,
+                    name,
+                    entity_id,
+                    &["rdf:type".to_string()],
+                    tx,
+                );
             }
         }
     }
@@ -439,4 +532,98 @@ pub async fn events__replay_since(
             Ok(events)
         })
         .await
+}
+
+#[cfg(test)]
+mod internal_event_tests {
+    use super::{emit_internal_write_update, emit_queued, SubscriptionRegistry};
+    use serde_json::Value;
+    use std::sync::{Arc, Mutex};
+    use tauri::{Listener, Manager};
+
+    #[test]
+    fn creation_notification_is_not_repeated_as_an_update_without_ui_subscribers() {
+        let app = tauri::test::mock_app();
+        app.manage(SubscriptionRegistry::default());
+        let events = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let captured_events = events.clone();
+        app.listen("entity-changed-internal", move |event| {
+            let payload = serde_json::from_str(event.payload()).unwrap();
+            captured_events.lock().unwrap().push(payload);
+        });
+        let entity_iri = "foundation:CreatedInBatch_1";
+        let tx = 41;
+
+        emit_queued(
+            &app.handle(),
+            "entity-created",
+            serde_json::json!({"entityId": entity_iri, "tx": tx}),
+        );
+        emit_internal_write_update(&app.handle(), entity_iri, &["rdf:type".into()], tx);
+
+        assert!(!app
+            .state::<SubscriptionRegistry>()
+            .is_subscribed(entity_iri));
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["entityId"], entity_iri);
+        assert_eq!(events[0]["eventKey"], "entity-created");
+        assert_eq!(events[0]["tx"], tx);
+    }
+
+    #[test]
+    fn distinct_entities_created_in_one_write_keep_distinct_events() {
+        let app = tauri::test::mock_app();
+        app.manage(SubscriptionRegistry::default());
+        let events = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let captured_events = events.clone();
+        app.listen("entity-changed-internal", move |event| {
+            let payload = serde_json::from_str(event.payload()).unwrap();
+            captured_events.lock().unwrap().push(payload);
+        });
+
+        for entity_iri in ["foundation:CreatedInBatch_1", "foundation:CreatedInBatch_2"] {
+            emit_queued(
+                &app.handle(),
+                "entity-created",
+                serde_json::json!({"entityId": entity_iri, "tx": 42}),
+            );
+        }
+        for entity_iri in ["foundation:CreatedInBatch_1", "foundation:CreatedInBatch_2"] {
+            emit_internal_write_update(&app.handle(), entity_iri, &["rdf:type".into()], 42);
+        }
+
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["eventKey"], "entity-created");
+        assert_eq!(events[1]["eventKey"], "entity-created");
+        assert_ne!(events[0]["entityId"], events[1]["entityId"]);
+    }
+
+    #[test]
+    fn later_revision_is_emitted_as_an_update_after_creation_marker_is_consumed() {
+        let app = tauri::test::mock_app();
+        app.manage(SubscriptionRegistry::default());
+        let events = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let captured_events = events.clone();
+        app.listen("entity-changed-internal", move |event| {
+            let payload = serde_json::from_str(event.payload()).unwrap();
+            captured_events.lock().unwrap().push(payload);
+        });
+        let entity_iri = "foundation:CreatedThenUpdated_1";
+
+        emit_queued(
+            &app.handle(),
+            "entity-created",
+            serde_json::json!({"entityId": entity_iri, "tx": 50}),
+        );
+        emit_internal_write_update(&app.handle(), entity_iri, &["rdf:type".into()], 50);
+        emit_internal_write_update(&app.handle(), entity_iri, &["rdfs:label".into()], 51);
+
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["eventKey"], "entity-created");
+        assert_eq!(events[1]["eventKey"], "entity-updated");
+        assert_eq!(events[1]["tx"], 51);
+    }
 }

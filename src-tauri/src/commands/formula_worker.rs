@@ -1,104 +1,55 @@
-use crate::owl::formula_job_store::{
-    FormulaInstanceError, FormulaJobIntent, FormulaJobStatus, FormulaJobStore, FormulaResultCommit,
-    NewFormulaRecalcJob,
-};
 use crate::owl::materialization::{
     emit_progress, MaterializationCorrelation, MaterializationTerminal,
 };
-use crate::owl::{Object, Triple};
+use foundation_core::owl::materialization::ComputedPropertyKind;
 use rusqlite::Connection;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, Runtime};
 use tokio::sync::{mpsc, oneshot};
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct FormulaJobData {
-    id: String,
-    property_iri: String,
-    property_label: Option<String>,
-    class_iri: String,
-    class_label: Option<String>,
-    instance_iri: Option<String>,
-    created_at: i64,
+#[derive(Debug, Clone)]
+pub(crate) struct FormulaJobIntent {
+    pub(crate) id: String,
+    pub(crate) property_iri: String,
+    pub(crate) property_label: Option<String>,
+    pub(crate) class_iri: String,
+    pub(crate) class_label: Option<String>,
+    pub(crate) instance_iri: Option<String>,
 }
 
-impl From<NewFormulaRecalcJob> for FormulaJobData {
-    fn from(job: NewFormulaRecalcJob) -> Self {
-        Self {
-            id: job.id,
-            property_iri: job.property_iri,
-            property_label: job.property_label,
-            class_iri: job.class_iri,
-            class_label: job.class_label,
-            instance_iri: job.instance_iri,
-            created_at: job.created_at,
-        }
-    }
-}
-
-impl From<FormulaJobData> for NewFormulaRecalcJob {
-    fn from(job: FormulaJobData) -> Self {
-        Self {
-            id: job.id,
-            property_iri: job.property_iri,
-            property_label: job.property_label,
-            class_iri: job.class_iri,
-            class_label: job.class_label,
-            instance_iri: job.instance_iri,
-            created_at: job.created_at,
-        }
-    }
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct FormulaJobIntentData {
-    id: String,
-    property_iri: String,
-    property_label: Option<String>,
-    class_iri: String,
-    class_label: Option<String>,
-    instance_iri: Option<String>,
-}
-
-impl From<FormulaJobIntent> for FormulaJobIntentData {
-    fn from(job: FormulaJobIntent) -> Self {
-        Self {
-            id: job.id,
-            property_iri: job.property_iri,
-            property_label: job.property_label,
-            class_iri: job.class_iri,
-            class_label: job.class_label,
-            instance_iri: job.instance_iri,
-        }
-    }
-}
-
-impl From<FormulaJobIntentData> for FormulaJobIntent {
-    fn from(job: FormulaJobIntentData) -> Self {
-        Self {
-            id: job.id,
-            property_iri: job.property_iri,
-            property_label: job.property_label,
-            class_iri: job.class_iri,
-            class_label: job.class_label,
-            instance_iri: job.instance_iri,
-        }
-    }
+#[derive(Debug, Clone)]
+pub(crate) struct NewFormulaRecalcJob {
+    pub(crate) id: String,
+    pub(crate) property_iri: String,
+    pub(crate) property_label: Option<String>,
+    pub(crate) class_iri: String,
+    pub(crate) class_label: Option<String>,
+    pub(crate) instance_iri: Option<String>,
 }
 
 #[derive(Debug)]
 pub enum WorkerCommand {
     Enqueue {
-        job_id: String,
+        job: NewFormulaRecalcJob,
+        generation: u64,
     },
     EnqueueCorrelated {
-        job_id: String,
+        job: NewFormulaRecalcJob,
         correlations: Vec<MaterializationCorrelation>,
         barrier_ids: Vec<u64>,
+        generation: u64,
     },
+}
+
+type FormulaJobKey = (String, Option<String>, u64);
+
+#[derive(Default)]
+struct JobSubscribers {
+    correlations: Vec<MaterializationCorrelation>,
+    barrier_ids: HashSet<u64>,
 }
 
 pub struct FormulaWorker {
@@ -106,6 +57,10 @@ pub struct FormulaWorker {
     waiters: Mutex<HashMap<u64, oneshot::Sender<Result<(), MaterializationTerminal>>>>,
     remaining_jobs: Mutex<HashMap<u64, usize>>,
     next_barrier_id: AtomicU64,
+    active_jobs: Mutex<HashSet<FormulaJobKey>>,
+    property_generations: Mutex<HashMap<String, u64>>,
+    formula_errors: Mutex<HashMap<(String, String), String>>,
+    scheduled_jobs: Mutex<HashMap<FormulaJobKey, JobSubscribers>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -118,69 +73,209 @@ pub struct FormulaProgressEvent {
     pub class_label: String,
     pub percent: u32,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_entity_iri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_update_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_tx: Option<i64>,
+}
+
+fn emit_formula_progress<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    event: FormulaProgressEvent,
+    correlations: &[MaterializationCorrelation],
+) {
+    if correlations.is_empty() {
+        app.emit("formula-recalc-progress", event).ok();
+        return;
+    }
+
+    for correlation in correlations {
+        let mut correlated_event = event.clone();
+        correlated_event.source_entity_iri = correlation.source_entity_iri.clone();
+        correlated_event.source_update_id = correlation.source_update_id.clone();
+        correlated_event.source_tx = correlation.source_tx;
+        app.emit("formula-recalc-progress", correlated_event).ok();
+    }
 }
 
 impl FormulaWorker {
-    pub fn spawn(app: tauri::AppHandle, executor: crate::owl::DbExecutor) -> Self {
+    pub fn spawn<R: Runtime + 'static>(
+        app: tauri::AppHandle<R>,
+        executor: crate::owl::DbExecutor,
+    ) -> Self {
         let (tx, mut rx) = mpsc::channel::<WorkerCommand>(1024);
-        let enqueue_tx = tx.clone();
 
         let supervisor_app = app.clone();
-        let supervisor_executor = executor.clone();
         let worker_task = tauri::async_runtime::spawn(async move {
             while let Some(cmd) = rx.recv().await {
                 match cmd {
-                    WorkerCommand::Enqueue { job_id } => {
-                        if let Err(terminal) =
-                            process_job(&app, &executor, &job_id, &enqueue_tx, &[], &[]).await
-                        {
-                            if let MaterializationTerminal::Failed(error) = &terminal {
-                                persist_job_failure(&executor, &job_id, error).await;
+                    WorkerCommand::Enqueue { job, generation } => {
+                        let key = (job.property_iri.clone(), job.instance_iri.clone(), generation);
+                        let Some(worker) = app.try_state::<FormulaWorker>() else { continue };
+                        worker.register_job(key.clone());
+                        let result = process_job(&app, &executor, &job, generation, &[], &[]).await;
+                        let subscribers = worker.finish_job(&key, result.as_ref().err());
+                        match result {
+                            Ok(()) => complete_barrier_jobs(&app, &subscribers.barrier_ids.into_iter().collect::<Vec<_>>()),
+                            Err(error) => {
+                                app.emit("formula-recalc-error", serde_json::json!({"jobId": job.id, "propertyIri": job.property_iri, "error": error.to_string()})).ok();
+                                fail_barriers(&app, &subscribers.barrier_ids.into_iter().collect::<Vec<_>>(), error);
                             }
                         }
                     }
                     WorkerCommand::EnqueueCorrelated {
-                        job_id,
+                        job,
                         correlations,
                         barrier_ids,
+                        generation,
                     } => {
+                        let key = (job.property_iri.clone(), job.instance_iri.clone(), generation);
+                        let Some(worker) = app.try_state::<FormulaWorker>() else { continue };
+                        worker.register_job(key.clone());
                         if let Err(terminal) = process_job(
                             &app,
                             &executor,
-                            &job_id,
-                            &enqueue_tx,
+                            &job,
+                            generation,
                             &correlations,
                             &barrier_ids,
                         )
                         .await
                         {
-                            if let MaterializationTerminal::Failed(error) = &terminal {
-                                persist_job_failure(&executor, &job_id, error).await;
+                            let subscribers = worker.finish_job(&key, Some(&terminal));
+                            for correlation in &subscribers.correlations {
+                                emit_progress(
+                                    &app,
+                                    correlation,
+                                    "calculated-properties",
+                                    if matches!(terminal, MaterializationTerminal::Cancelled(_)) { "cancelled" } else { "failed" },
+                                    job.instance_iri.as_deref().unwrap_or(""),
+                                    Some(&job.property_iri),
+                                    None,
+                                    None,
+                                    Some(&terminal.to_string()),
+                                );
                             }
-                            fail_barriers(&app, &barrier_ids, terminal);
+                            app.emit("formula-recalc-error", serde_json::json!({"jobId": job.id, "propertyIri": job.property_iri, "error": terminal.to_string()})).ok();
+                            fail_barriers(&app, &subscribers.barrier_ids.into_iter().collect::<Vec<_>>(), terminal);
+                        } else {
+                            let subscribers = worker.finish_job(&key, None);
+                            complete_barrier_jobs(&app, &subscribers.barrier_ids.into_iter().collect::<Vec<_>>());
                         }
                     }
                 }
             }
         });
-        tauri::async_runtime::spawn(async move {
-            let failure = if let Err(error) = worker_task.await {
-                Some(format!("formula worker terminated unexpectedly: {}", error))
-            } else {
-                Some("formula worker command channel closed".to_string())
-            };
-            if let Some(error) = failure {
-                persist_running_jobs_failure(&supervisor_executor, &error).await;
-                fail_all_waiters(&supervisor_app, MaterializationTerminal::Failed(error));
-            }
-        });
+        tauri::async_runtime::spawn(supervise_worker(
+            supervisor_app,
+            worker_task,
+        ));
 
         FormulaWorker {
             sender: tx,
             waiters: Mutex::new(HashMap::new()),
             remaining_jobs: Mutex::new(HashMap::new()),
             next_barrier_id: AtomicU64::new(1),
+            active_jobs: Mutex::new(HashSet::new()),
+            property_generations: Mutex::new(HashMap::new()),
+            formula_errors: Mutex::new(HashMap::new()),
+            scheduled_jobs: Mutex::new(HashMap::new()),
         }
+    }
+
+    fn register_job(&self, key: FormulaJobKey) {
+        self.active_jobs.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(key);
+    }
+
+    fn finish_job(&self, key: &FormulaJobKey, error: Option<&MaterializationTerminal>) -> JobSubscribers {
+        self.active_jobs.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(key);
+        let subscribers = self.scheduled_jobs.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(key).unwrap_or_default();
+        if let Some(message) = error.map(ToString::to_string) {
+            if let Some(instance) = key.1.as_ref() {
+                self.formula_errors.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert((instance.clone(), key.0.clone()), message);
+            }
+        } else if let Some(instance) = key.1.as_ref() {
+            self.formula_errors.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&(instance.clone(), key.0.clone()));
+        }
+        subscribers
+    }
+
+    pub fn enqueue(&self, job: NewFormulaRecalcJob, correlations: Vec<MaterializationCorrelation>, barrier_ids: Vec<u64>) -> Result<(), String> {
+        let generation = *self.property_generations.lock().unwrap_or_else(std::sync::PoisonError::into_inner).entry(job.property_iri.clone()).or_insert(0);
+        let key = (job.property_iri.clone(), job.instance_iri.clone(), generation);
+        let mut scheduled = self.scheduled_jobs.lock().map_err(|error| error.to_string())?;
+        if let Some(subscribers) = scheduled.get_mut(&key) {
+            for correlation in &correlations {
+                if !subscribers.correlations.contains(correlation) { subscribers.correlations.push(correlation.clone()); }
+            }
+            let mut duplicate_barriers = Vec::new();
+            for barrier_id in barrier_ids {
+                if !subscribers.barrier_ids.insert(barrier_id) {
+                    duplicate_barriers.push(barrier_id);
+                }
+            }
+            drop(scheduled);
+            for barrier_id in duplicate_barriers {
+                self.complete_duplicate_barrier_job(barrier_id);
+            }
+            return Ok(());
+        }
+        let mut subscribers = JobSubscribers::default();
+        subscribers.correlations = correlations.clone();
+        subscribers.barrier_ids.extend(barrier_ids.iter().copied());
+        scheduled.insert(key.clone(), subscribers);
+        drop(scheduled);
+        let command = if barrier_ids.is_empty() && correlations.is_empty() {
+            WorkerCommand::Enqueue { job, generation }
+        } else {
+            WorkerCommand::EnqueueCorrelated { job, correlations, barrier_ids, generation }
+        };
+        if let Err(error) = self.sender.try_send(command) {
+            self.scheduled_jobs.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&key);
+            return Err(error.to_string());
+        }
+        Ok(())
+    }
+
+    pub fn cancel_property(&self, property_iri: &str) {
+        let mut generations = self.property_generations.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        *generations.entry(property_iri.to_string()).or_insert(0) += 1;
+    }
+
+    fn is_generation_current(&self, property_iri: &str, generation: u64) -> bool {
+        self.property_generations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(property_iri)
+            .copied()
+            .unwrap_or(0)
+            == generation
+    }
+
+    fn complete_duplicate_barrier_job(&self, barrier_id: u64) {
+        let done = {
+            let mut remaining = self.remaining_jobs.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            match remaining.get_mut(&barrier_id) {
+                Some(count) => {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 { remaining.remove(&barrier_id); true } else { false }
+                }
+                None => false,
+            }
+        };
+        if done {
+            if let Some(waiter) = self.waiters.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&barrier_id) {
+                let _ = waiter.send(Ok(()));
+            }
+        }
+    }
+
+    pub fn formula_error(&self, instance_iri: &str, property_iri: &str) -> Option<String> {
+        self.formula_errors.lock().ok()?.get(&(instance_iri.to_string(), property_iri.to_string())).cloned()
     }
 
     /// Queue every calculated property of `instance_iri`'s class and wait until
@@ -189,8 +284,8 @@ impl FormulaWorker {
     /// This is what lets a caller read a derived value and know it reflects the
     /// writes that just happened. Without it, a total computed from a value written
     /// a moment ago is read stale, and nothing about the read says so.
-    pub async fn await_drained(
-        app: &tauri::AppHandle,
+    pub async fn await_drained<R: Runtime>(
+        app: &tauri::AppHandle<R>,
         executor: &crate::owl::DbExecutor,
         instance_iri: &str,
         mut correlation: MaterializationCorrelation,
@@ -209,7 +304,7 @@ impl FormulaWorker {
         })?);
 
         let iri = instance_iri.to_string();
-        let job_ids: Vec<String> = create_class_calculated_recalc_jobs(executor, &iri)
+        let jobs = create_class_calculated_recalc_jobs(executor, &iri)
             .await
             .map_err(|error| {
                 MaterializationTerminal::Failed(format!(
@@ -219,7 +314,7 @@ impl FormulaWorker {
             })?;
 
         // Nothing derived on this class: already settled, by definition.
-        if job_ids.is_empty() {
+        if jobs.is_empty() {
             emit_progress(
                 app,
                 &correlation,
@@ -245,7 +340,7 @@ impl FormulaWorker {
             .remaining_jobs
             .lock()
             .map_err(|error| MaterializationTerminal::Failed(error.to_string()))?
-            .insert(barrier_id, job_ids.len());
+            .insert(barrier_id, jobs.len());
         emit_progress(
             app,
             &correlation,
@@ -254,24 +349,15 @@ impl FormulaWorker {
             instance_iri,
             None,
             Some(0),
-            Some(job_ids.len()),
+            Some(jobs.len()),
             None,
         );
 
-        for job_id in job_ids {
-            if worker
-                .sender
-                .send(WorkerCommand::EnqueueCorrelated {
-                    job_id,
-                    correlations: vec![correlation.clone()],
-                    barrier_ids: vec![barrier_id],
-                })
-                .await
-                .is_err()
-            {
+        for job in jobs {
+            if let Err(error) = worker.enqueue(job, vec![correlation.clone()], vec![barrier_id]) {
                 let terminal = MaterializationTerminal::Failed(format!(
-                    "formula_worker channel closed for {}",
-                    instance_iri
+                    "formula_worker enqueue failed for {}: {}",
+                    instance_iri, error
                 ));
                 fail_barriers(app, &[barrier_id], terminal.clone());
                 return Err(terminal);
@@ -289,7 +375,7 @@ impl FormulaWorker {
     }
 }
 
-fn complete_barrier_jobs(app: &tauri::AppHandle, barrier_ids: &[u64]) {
+fn complete_barrier_jobs<R: Runtime>(app: &tauri::AppHandle<R>, barrier_ids: &[u64]) {
     let Some(worker) = app.try_state::<FormulaWorker>() else {
         return;
     };
@@ -347,7 +433,11 @@ fn register_barrier_jobs<R: Runtime>(
     Ok(())
 }
 
-fn fail_barriers(app: &tauri::AppHandle, barrier_ids: &[u64], terminal: MaterializationTerminal) {
+fn fail_barriers<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    barrier_ids: &[u64],
+    terminal: MaterializationTerminal,
+) {
     let Some(worker) = app.try_state::<FormulaWorker>() else {
         return;
     };
@@ -391,370 +481,122 @@ fn fail_all_waiters<R: Runtime>(app: &tauri::AppHandle<R>, terminal: Materializa
     }
 }
 
-async fn process_job(
-    app: &tauri::AppHandle,
+async fn supervise_worker<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    worker_task: tauri::async_runtime::JoinHandle<()>,
+) {
+    let failure = match worker_task.await {
+        Err(error) => format!("formula worker terminated unexpectedly: {}", error),
+        Ok(()) => "formula worker command channel closed".to_string(),
+    };
+    fail_all_waiters(&app, MaterializationTerminal::Failed(failure.clone()));
+}
+
+async fn process_job<R: Runtime>(
+    app: &tauri::AppHandle<R>,
     executor: &crate::owl::DbExecutor,
-    job_id: &str,
-    sender: &mpsc::Sender<WorkerCommand>,
+    job: &NewFormulaRecalcJob,
+    generation: u64,
     correlations: &[MaterializationCorrelation],
     barrier_ids: &[u64],
 ) -> Result<(), MaterializationTerminal> {
-    let job_store = FormulaJobStore::new(executor.clone());
-    let required_tx = correlations
-        .iter()
-        .filter_map(|correlation| correlation.source_tx)
-        .max()
-        .unwrap_or(0);
-    let observed_tx = executor.current_snapshot_tx().await.map_err(|error| {
-        MaterializationTerminal::Failed(format!(
-            "failed to inspect formula source revision: {}",
-            error
-        ))
-    })?;
-    if observed_tx < required_tx {
-        return Err(MaterializationTerminal::Failed(format!(
-            "formula worker observed tx {} before required tx {}",
-            observed_tx, required_tx
-        )));
-    }
-    let job = match job_store.get(job_id.to_string()).await {
-        Ok(Some(job)) => job,
-        Err(error) => {
-            return Err(MaterializationTerminal::Failed(format!(
-                "failed to load formula job {}: {}",
-                job_id, error
-            )))
-        }
-        Ok(None) => {
-            return Err(MaterializationTerminal::Failed(format!(
-                "formula job {} is missing or not pending",
-                job_id
-            )));
-        }
-    };
-
-    match job.status {
-        FormulaJobStatus::Pending => {}
-        FormulaJobStatus::Cancelled => {
-            return Err(MaterializationTerminal::Cancelled(format!(
-                "formula job {} was cancelled before processing",
-                job_id
-            )))
-        }
-        _ => {
-            return Err(MaterializationTerminal::Failed(format!(
-                "formula job {} is not pending",
-                job_id
-            )))
-        }
-    }
-
-    if !job_store
-        .mark_running(job_id.to_string(), now_millis())
-        .await
-        .unwrap_or(false)
-    {
-        return Err(MaterializationTerminal::Failed(format!(
-            "failed to mark formula job {} running",
-            job_id
-        )));
-    }
-
-    let prop_iri = job.property_iri.clone();
     let class_iri = if job.class_iri.is_empty() {
-        let prop = prop_iri.clone();
-        let prop_for_read = prop.clone();
-        executor
-            .read(move |conn| Ok(fetch_domain(conn, &prop_for_read)))
-            .await
-            .map_err(|error| format!("failed to load formula domain for {}: {}", prop, error))?
+        let property = job.property_iri.clone();
+        executor.read(move |conn| Ok(fetch_domain(conn, &property))).await
+            .map_err(|e| MaterializationTerminal::Failed(e.to_string()))?
+    } else { job.class_iri.clone() };
+    let instances = if let Some(instance) = job.instance_iri.as_ref() {
+        vec![instance.clone()]
     } else {
-        job.class_iri.clone()
+        let class = class_iri.clone();
+        executor.read(move |conn| query_class_instances(conn, &class, 0)).await
+            .map_err(|e| MaterializationTerminal::Failed(e.to_string()))?
     };
-
-    let instance_iris: Vec<String> = if let Some(ref inst) = job.instance_iri {
-        vec![inst.clone()]
-    } else {
-        let ci = class_iri.clone();
-        let class_for_read = ci.clone();
-        let offset = job.last_offset;
-        executor
-            .read(move |conn| Ok(query_class_instances(conn, &class_for_read, offset)))
-            .await
-            .map_err(|error| format!("failed to load formula instances for {}: {}", ci, error))?
-    };
-
-    let total: i64 = if job.instance_iri.is_some() {
-        1
-    } else {
-        let ci = class_iri.clone();
-        let class_for_read = ci.clone();
-        executor
-            .read(move |conn| Ok(query_class_instances(conn, &class_for_read, 0).len() as i64))
-            .await
-            .map_err(|error| format!("failed to count formula instances for {}: {}", ci, error))?
-    };
-
-    job_store
-        .set_total(job_id.to_string(), total, now_millis())
-        .await
-        .map_err(|error| format!("failed to persist formula job total {}: {}", job_id, error))?;
-
-    let mut processed = job.processed;
-    let mut last_offset = job.last_offset;
-    let mut last_pct: u32 = (processed * 100 / total.max(1)) as u32;
-    let mut cancelled = false;
+    let total = instances.len();
+    let mut last_pct = 0;
     for correlation in correlations {
-        emit_progress(
-            app,
-            correlation,
-            "calculated-properties",
-            "running",
-            job.instance_iri.as_deref().unwrap_or(""),
-            Some(&job.property_iri),
-            Some(processed.max(0) as usize),
-            Some(total.max(0) as usize),
-            None,
-        );
+        emit_progress(app, correlation, "calculated-properties", "running", job.instance_iri.as_deref().unwrap_or(""), Some(&job.property_iri), Some(0), Some(total), None);
     }
-
-    for instance_iri in &instance_iris {
+    for (index, instance_iri) in instances.iter().enumerate() {
+        let Some(worker) = app.try_state::<FormulaWorker>() else {
+            return Err(MaterializationTerminal::Failed("formula worker state disappeared".into()));
+        };
+        if !worker.is_generation_current(&job.property_iri, generation) {
+            return Err(MaterializationTerminal::Cancelled(format!("formula job for {} cancelled by a newer write", job.property_iri)));
+        }
         let instance = instance_iri.clone();
-        let prop = job.property_iri.clone();
-        let current_job = job_store.get(job_id.to_string()).await.map_err(|error| {
-            MaterializationTerminal::Failed(format!(
-                "failed to inspect formula job {}: {}",
-                job_id, error
-            ))
-        })?;
-        if current_job
-            .as_ref()
-            .is_some_and(|current| current.status == FormulaJobStatus::Cancelled)
-        {
-            cancelled = true;
-            break;
-        }
-        let eval_result = executor
-            .read(move |conn| Ok(evaluate_formula_for_instance(conn, &instance, &prop)))
-            .await
-            .map_err(|error| {
-                MaterializationTerminal::Failed(format!(
-                    "failed to evaluate formula job {}: {}",
-                    job_id, error
-                ))
-            })?;
-
-        match eval_result {
-            Ok(value) => {
-                let inst = instance_iri.clone();
-                let prop = job.property_iri.clone();
-                let value_for_read = value.clone();
-                let result_data = executor
-                    .read(move |conn| {
-                        let datatype = resolve_calculated_datatype(conn, &prop);
-                        let jobs = collect_instance_recalc_job_intents(conn, &inst, &prop);
-                        let jobs = jobs
-                            .into_iter()
-                            .map(FormulaJobIntentData::from)
-                            .collect::<Vec<_>>();
-                        serde_json::to_string(&(value_for_read, datatype, jobs))
-                            .map_err(|error| error.to_string())
-                    })
-                    .await
-                    .map_err(|error| {
-                        MaterializationTerminal::Failed(format!(
-                            "failed to prepare formula result: {}",
-                            error
-                        ))
-                    })?;
-                let (fact_value, datatype, dependent_jobs): (
-                    String,
-                    String,
-                    Vec<FormulaJobIntentData>,
-                ) = serde_json::from_str(&result_data).map_err(|error| {
-                    MaterializationTerminal::Failed(format!(
-                        "failed to decode formula intents: {}",
-                        error
-                    ))
-                })?;
-                let fact = Triple::new(
-                    instance_iri,
-                    &job.property_iri,
-                    Object::Literal {
-                        value: fact_value,
-                        datatype: Some(datatype),
-                        language: None,
-                    },
-                );
-                let dependent_jobs = dependent_jobs
-                    .into_iter()
-                    .map(FormulaJobIntent::from)
-                    .collect::<Vec<_>>();
-                let commit_id = format!("{}:{}", job_id, instance_iri);
-                let dependent_job_ids = dependent_jobs
-                    .iter()
-                    .map(|intent| intent.id.clone())
-                    .collect::<Vec<_>>();
-                let committed = job_store
-                    .commit_result(FormulaResultCommit {
-                        commit_id,
-                        fact,
-                        job_intents: dependent_jobs,
-                        committed_at: now_millis(),
-                    })
-                    .await
-                    .map_err(|error| {
-                        format!(
-                            "failed to persist calculated value for {} / {}: {}",
-                            instance_iri, job.property_iri, error
-                        )
-                    })?;
-                let calculated_tx = committed.fact_tx;
-                register_barrier_jobs(app, barrier_ids, dependent_job_ids.len())?;
-                let mut dependent_correlations = correlations.to_vec();
-                for correlation in &mut dependent_correlations {
-                    correlation.source_tx =
-                        Some(correlation.source_tx.unwrap_or(0).max(calculated_tx));
+        let property = job.property_iri.clone();
+        let evaluated = executor.read(move |conn| Ok(evaluate_formula_for_instance(conn, &instance, &property))).await
+            .map_err(|e| MaterializationTerminal::Failed(e.to_string()))?;
+        let value = match evaluated {
+            Ok(value) => value,
+            Err(message) => {
+                if let Some(worker) = app.try_state::<FormulaWorker>() {
+                    worker.formula_errors.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert((instance_iri.clone(), job.property_iri.clone()), message.clone());
                 }
-                for jid in dependent_job_ids {
-                    sender
-                        .try_send(WorkerCommand::EnqueueCorrelated {
-                            job_id: jid,
-                            correlations: dependent_correlations.clone(),
-                            barrier_ids: barrier_ids.to_vec(),
-                        })
-                        .map_err(|error| {
-                            format!("failed to enqueue dependent formula job: {}", error)
-                        })?;
-                }
-                if job.instance_iri.is_some() {
-                    crate::realtime::emit_entity_updated(&app, &instance_iri);
-                }
+                return Err(MaterializationTerminal::Failed(message));
             }
-            Err(msg) => {
-                job_store
-                    .upsert_error(FormulaInstanceError {
-                        instance_iri: instance_iri.clone(),
-                        property_iri: job.property_iri.clone(),
-                        error_message: msg.clone(),
-                        created_at: now_millis(),
-                    })
-                    .await
-                    .map_err(|error| format!("failed to persist formula error: {}", error))?;
-                return Err(MaterializationTerminal::Failed(msg));
-            }
+        };
+        let instance = instance_iri.clone();
+        let property = job.property_iri.clone();
+        let computed = executor.read(move |conn| {
+            let datatype = resolve_calculated_datatype(conn, &property);
+            let kind = resolve_calculated_kind(conn, &property);
+            let dependent = collect_instance_recalc_job_intents(conn, &instance, &property);
+            Ok((datatype, kind, dependent))
+        }).await.map_err(|e| MaterializationTerminal::Failed(e.to_string()))?;
+        crate::core_ontology::materialization::append_calculated_value(
+            executor,
+            instance_iri.clone(),
+            job.property_iri.clone(),
+            value,
+            computed.0,
+            computed.1,
+        )
+        .await
+        .map_err(MaterializationTerminal::Failed)?;
+        if let Some(worker) = app.try_state::<FormulaWorker>() {
+            worker.formula_errors.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&(instance_iri.clone(), job.property_iri.clone()));
         }
-
-        processed += 1;
-        last_offset += 1;
-
-        job_store
-            .record_progress(job_id.to_string(), processed, last_offset, now_millis())
-            .await
-            .map_err(|error| {
-                format!(
-                    "failed to persist formula job progress {}: {}",
-                    job_id, error
-                )
-            })?;
-
-        let pct = (processed * 100 / total.max(1)) as u32;
+        let mut dependents = computed.2;
+        register_barrier_jobs(app, barrier_ids, dependents.len())?;
+        let mut dependent_correlations = correlations.to_vec();
+        for correlation in &mut dependent_correlations {
+            correlation.source_tx = executor.current_snapshot_tx().await.ok();
+        }
+        for dependent in dependents.drain(..) {
+            let job = NewFormulaRecalcJob {
+                id: dependent.id, property_iri: dependent.property_iri,
+                property_label: dependent.property_label, class_iri: dependent.class_iri,
+                class_label: dependent.class_label, instance_iri: dependent.instance_iri,
+            };
+            let worker = app.try_state::<FormulaWorker>().ok_or_else(|| MaterializationTerminal::Failed("formula worker state disappeared while queuing dependent work".to_string()))?;
+            worker.enqueue(job, dependent_correlations.clone(), barrier_ids.to_vec()).map_err(MaterializationTerminal::Failed)?;
+        }
+        let pct = ((index + 1) * 100 / total.max(1)) as u32;
         if pct != last_pct {
             last_pct = pct;
-            let event = FormulaProgressEvent {
-                job_id: job_id.to_string(),
-                property_iri: job.property_iri.clone(),
-                property_label: job.property_label.clone().unwrap_or_default(),
-                class_iri: class_iri.clone(),
-                class_label: job.class_label.clone().unwrap_or_default(),
-                percent: pct,
-                status: "running".to_string(),
-            };
-            app.emit("formula-recalc-progress", event).ok();
+            emit_formula_progress(app, FormulaProgressEvent {
+                job_id: job.id.clone(), property_iri: job.property_iri.clone(),
+                property_label: job.property_label.clone().unwrap_or_default(), class_iri: class_iri.clone(),
+                class_label: job.class_label.clone().unwrap_or_default(), percent: pct, status: "running".into(),
+                source_entity_iri: None, source_update_id: None, source_tx: None,
+            }, correlations);
         }
         for correlation in correlations {
-            emit_progress(
-                app,
-                correlation,
-                "calculated-properties",
-                "running",
-                instance_iri,
-                Some(&job.property_iri),
-                Some(processed.max(0) as usize),
-                Some(total.max(0) as usize),
-                None,
-            );
+            emit_progress(app, correlation, "calculated-properties", "running", instance_iri,
+                Some(&job.property_iri), Some(index + 1), Some(total), None);
         }
     }
-
-    let final_status = if cancelled { "cancelled" } else { "completed" };
-    let transition = if cancelled {
-        job_store
-            .cancel(
-                job_id.to_string(),
-                Some("Cancelled by newer write".into()),
-                now_millis(),
-            )
-            .await
-    } else {
-        job_store.complete(job_id.to_string(), now_millis()).await
-    };
-    transition.map_err(|error| {
-        format!(
-            "failed to persist formula job terminal state {}: {}",
-            job_id, error
-        )
-    })?;
-
-    if !cancelled {
-        complete_barrier_jobs(app, barrier_ids);
-    }
-
-    let event = FormulaProgressEvent {
-        job_id: job_id.to_string(),
-        property_iri: job.property_iri.clone(),
-        property_label: job.property_label.clone().unwrap_or_default(),
-        class_iri: class_iri.clone(),
-        class_label: job.class_label.clone().unwrap_or_default(),
-        percent: last_pct,
-        status: final_status.to_string(),
-    };
-    app.emit("formula-recalc-progress", event).ok();
-    for correlation in correlations {
-        let terminal = if cancelled { "cancelled" } else { "completed" };
-        let reason = cancelled.then_some("Formula recalculation was cancelled by a newer write");
-        emit_progress(
-            app,
-            correlation,
-            "calculated-properties",
-            terminal,
-            job.instance_iri.as_deref().unwrap_or(""),
-            Some(&job.property_iri),
-            Some(processed.max(0) as usize),
-            Some(total.max(0) as usize),
-            reason,
-        );
-    }
-    if cancelled {
-        Err(MaterializationTerminal::Cancelled(format!(
-            "formula job {} was cancelled by a newer write",
-            job_id
-        )))
-    } else {
-        Ok(())
-    }
-}
-
-async fn persist_job_failure(executor: &crate::owl::DbExecutor, job_id: &str, error: &str) {
-    let _ = FormulaJobStore::new(executor.clone())
-        .fail(job_id.to_string(), error.to_string(), now_millis())
-        .await;
-}
-
-async fn persist_running_jobs_failure(executor: &crate::owl::DbExecutor, error: &str) {
-    let _ = FormulaJobStore::new(executor.clone())
-        .recover_interrupted(error.to_string(), now_millis())
-        .await;
+    emit_formula_progress(app, FormulaProgressEvent {
+        job_id: job.id.clone(), property_iri: job.property_iri.clone(),
+        property_label: job.property_label.clone().unwrap_or_default(), class_iri,
+        class_label: job.class_label.clone().unwrap_or_default(), percent: 100, status: "completed".into(),
+        source_entity_iri: None, source_update_id: None, source_tx: None,
+    }, correlations);
+    Ok(())
 }
 
 fn now_millis() -> i64 {
@@ -836,6 +678,29 @@ fn resolve_calculated_datatype(conn: &Connection, property_iri: &str) -> String 
     }
 }
 
+fn resolve_calculated_kind(conn: &Connection, property_iri: &str) -> ComputedPropertyKind {
+    crate::owl::query_by_entity(conn, property_iri)
+        .ok()
+        .and_then(|result| {
+            result
+                .triples
+                .into_iter()
+                .filter(|triple| {
+                    triple.predicate == "foundation:formula"
+                        || triple.predicate == "foundation:aggregation"
+                })
+                .max_by_key(|triple| triple.tx)
+        })
+        .map(|triple| {
+            if triple.predicate == "foundation:aggregation" {
+                ComputedPropertyKind::Aggregation
+            } else {
+                ComputedPropertyKind::Formula
+            }
+        })
+        .unwrap_or(ComputedPropertyKind::Formula)
+}
+
 fn fetch_label(conn: &Connection, iri: &str) -> String {
     crate::owl::query_by_entity_predicate(conn, iri, "rdfs:label")
         .ok()
@@ -852,7 +717,7 @@ fn fetch_domain(conn: &Connection, iri: &str) -> String {
         .unwrap_or_default()
 }
 
-fn query_class_instances(conn: &Connection, class_iri: &str, offset: i64) -> Vec<String> {
+fn query_class_instances(conn: &Connection, class_iri: &str, offset: i64) -> Result<Vec<String>, String> {
     crate::owl::query_by_predicate_object(conn, "rdf:type", class_iri)
         .map(|result| {
             let mut instances = result
@@ -864,7 +729,7 @@ fn query_class_instances(conn: &Connection, class_iri: &str, offset: i64) -> Vec
             instances.dedup();
             instances.into_iter().skip(offset.max(0) as usize).collect()
         })
-        .unwrap_or_default()
+        .map_err(|error| error.to_string())
 }
 
 fn query_formula_properties_by_reference(
@@ -893,11 +758,7 @@ fn query_formula_properties_by_reference(
 pub async fn cancel_and_create_property_job(
     executor: &crate::owl::DbExecutor,
     property_iri: &str,
-) -> Result<String, String> {
-    let store = FormulaJobStore::new(executor.clone());
-    store
-        .cancel_active_for_property(property_iri.to_string(), None, now_millis())
-        .await?;
+) -> Result<NewFormulaRecalcJob, String> {
     let property = property_iri.to_string();
     let job: NewFormulaRecalcJob = executor
         .read(move |conn| {
@@ -911,13 +772,10 @@ pub async fn cancel_and_create_property_job(
                 class_iri,
                 class_label,
                 instance_iri: None,
-                created_at: now,
             })
         })
         .await?;
-    let id = job.id.clone();
-    store.enqueue(job).await?;
-    Ok(id)
+    Ok(job)
 }
 
 /// Find all (aggregation_property_iri, source_prop_iri) pairs where the aggregation formula
@@ -1046,7 +904,6 @@ fn collect_reverse_aggregation_recalc_jobs(
                 class_iri: class_iri.clone(),
                 class_label: Some(class_label.clone()),
                 instance_iri: Some(parent_iri.clone()),
-                created_at: now,
             });
         }
     }
@@ -1095,7 +952,6 @@ fn collect_clock_dependent_recalc_jobs(conn: &Connection) -> Vec<NewFormulaRecal
             class_iri: class_iri.clone(),
             class_label: Some(fetch_label(conn, &class_iri)),
             instance_iri: None,
-            created_at: now,
         });
     }
 
@@ -1106,14 +962,16 @@ fn collect_clock_dependent_recalc_jobs(conn: &Connection) -> Vec<NewFormulaRecal
 pub fn spawn_daily_clock_refresh(app: tauri::AppHandle, executor: crate::owl::DbExecutor) {
     tauri::async_runtime::spawn(async move {
         loop {
-            let job_ids = create_clock_dependent_recalc_jobs(&executor)
+            let jobs = create_clock_dependent_recalc_jobs(&executor)
                 .await
                 .unwrap_or_default();
 
-            if !job_ids.is_empty() {
+            if !jobs.is_empty() {
                 if let Some(worker) = app.try_state::<FormulaWorker>() {
-                    for job_id in job_ids {
-                        let _ = worker.sender.send(WorkerCommand::Enqueue { job_id }).await;
+                    for job in jobs {
+                        if let Err(error) = worker.enqueue(job, vec![], vec![]) {
+                            crate::commands::log_backend("error", &format!("daily formula recalculation enqueue failed: {error}"));
+                        }
                     }
                 }
             }
@@ -1187,7 +1045,6 @@ fn collect_class_calculated_recalc_jobs(
                 class_iri: class_iri.clone(),
                 class_label: Some(class_label),
                 instance_iri: Some(instance_iri.to_string()),
-                created_at: now,
             });
         }
     }
@@ -1300,29 +1157,15 @@ pub(crate) fn collect_instance_recalc_job_intents(
     intents
 }
 
-async fn enqueue_jobs(
-    executor: &crate::owl::DbExecutor,
-    jobs: Vec<NewFormulaRecalcJob>,
-) -> Result<Vec<String>, String> {
-    let store = FormulaJobStore::new(executor.clone());
-    let mut ids = Vec::with_capacity(jobs.len());
-    for job in jobs {
-        ids.push(job.id.clone());
-        store.enqueue(job).await?;
-    }
-    Ok(ids)
-}
-
 pub async fn create_instance_recalc_jobs(
     executor: &crate::owl::DbExecutor,
     instance_iri: &str,
     changed_property_iri: &str,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<NewFormulaRecalcJob>, String> {
     let instance = instance_iri.to_string();
     let changed = changed_property_iri.to_string();
-    let jobs = executor
+    executor
         .read(move |conn| {
-            let now = now_millis();
             let intents = collect_instance_recalc_job_intents(conn, &instance, &changed);
             let jobs = intents
                 .into_iter()
@@ -1333,70 +1176,111 @@ pub async fn create_instance_recalc_jobs(
                     class_iri: intent.class_iri,
                     class_label: intent.class_label,
                     instance_iri: intent.instance_iri,
-                    created_at: now,
                 })
                 .collect::<Vec<_>>();
-            serde_json::to_string(
-                &jobs
-                    .into_iter()
-                    .map(FormulaJobData::from)
-                    .collect::<Vec<_>>(),
-            )
-            .map_err(|error| error.to_string())
+            Ok(jobs)
         })
-        .await?;
-    let jobs = serde_json::from_str::<Vec<FormulaJobData>>(&jobs)
-        .map_err(|error| error.to_string())?
-        .into_iter()
-        .map(NewFormulaRecalcJob::from)
-        .collect();
-    enqueue_jobs(executor, jobs).await
+        .await
 }
 
 async fn create_class_calculated_recalc_jobs(
     executor: &crate::owl::DbExecutor,
     instance_iri: &str,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<NewFormulaRecalcJob>, String> {
     let instance = instance_iri.to_string();
-    let jobs = executor
+    executor
         .read(move |conn| {
-            serde_json::to_string(
-                &collect_class_calculated_recalc_jobs(conn, &instance)
-                    .into_iter()
-                    .map(FormulaJobData::from)
-                    .collect::<Vec<_>>(),
-            )
-            .map_err(|error| error.to_string())
+            Ok(collect_class_calculated_recalc_jobs(conn, &instance))
         })
-        .await?;
-    let jobs = serde_json::from_str::<Vec<FormulaJobData>>(&jobs)
-        .map_err(|error| error.to_string())?
-        .into_iter()
-        .map(NewFormulaRecalcJob::from)
-        .collect();
-    enqueue_jobs(executor, jobs).await
+        .await
 }
 
 async fn create_clock_dependent_recalc_jobs(
     executor: &crate::owl::DbExecutor,
-) -> Result<Vec<String>, String> {
-    let jobs = executor
+) -> Result<Vec<NewFormulaRecalcJob>, String> {
+    executor
         .read(|conn| {
-            serde_json::to_string(
-                &collect_clock_dependent_recalc_jobs(conn)
-                    .into_iter()
-                    .map(FormulaJobData::from)
-                    .collect::<Vec<_>>(),
-            )
-            .map_err(|error| error.to_string())
+            Ok(collect_clock_dependent_recalc_jobs(conn))
         })
-        .await?;
-    let jobs = serde_json::from_str::<Vec<FormulaJobData>>(&jobs)
-        .map_err(|error| error.to_string())?
-        .into_iter()
-        .map(NewFormulaRecalcJob::from)
-        .collect();
-    enqueue_jobs(executor, jobs).await
+        .await
+}
+
+pub async fn create_startup_recalc_jobs(
+    executor: &crate::owl::DbExecutor,
+) -> Result<Vec<NewFormulaRecalcJob>, String> {
+    executor.read(move |conn| {
+        let instances = crate::owl::query_by_predicate(conn, "rdf:type")
+            .map_err(|error| error.to_string())?
+            .triples
+            .into_iter()
+            .map(|triple| triple.subject)
+            .collect::<HashSet<_>>();
+        let mut calculated = Vec::new();
+        for predicate in ["foundation:formula", "foundation:aggregation"] {
+            calculated.extend(
+                crate::owl::query_by_predicate(conn, predicate)
+                    .map_err(|error| error.to_string())?
+                    .triples,
+            );
+        }
+
+        let mut jobs = HashMap::new();
+        let now = now_millis();
+        for instance in instances {
+            let types = crate::owl::query_by_entity_predicate(conn, &instance, "rdf:type")
+                .map_err(|error| error.to_string())?
+                .triples
+                .into_iter()
+                .filter_map(|triple| triple.object.as_iri().map(str::to_string))
+                .collect::<HashSet<_>>();
+            for calculated_property in &calculated {
+                let domains = crate::owl::query_by_entity_predicate(
+                    conn,
+                    &calculated_property.subject,
+                    "rdfs:domain",
+                )
+                .map_err(|error| error.to_string())?
+                .triples
+                .into_iter()
+                .filter_map(|triple| triple.object.as_iri().map(str::to_string))
+                .collect::<Vec<_>>();
+                for class_iri in domains.into_iter().filter(|class| types.contains(class)) {
+                    let property_iri = calculated_property.subject.clone();
+                    let job = NewFormulaRecalcJob {
+                        id: format!("startup_{now}_{}_{}", property_iri.replace(':', "_"), instance.replace(':', "_")),
+                        property_label: Some(fetch_label(conn, &property_iri)),
+                        class_label: Some(fetch_label(conn, &class_iri)),
+                        property_iri: property_iri.clone(),
+                        class_iri,
+                        instance_iri: Some(instance.clone()),
+                    };
+                    jobs.entry((property_iri, instance.clone())).or_insert(job);
+                }
+            }
+        }
+        Ok(jobs.into_values().collect())
+    }).await
+}
+
+pub fn spawn_startup_recovery<R: Runtime + 'static>(app: tauri::AppHandle<R>, executor: crate::owl::DbExecutor) {
+    tauri::async_runtime::spawn(async move {
+        let jobs = match create_startup_recalc_jobs(&executor).await {
+            Ok(jobs) => jobs,
+            Err(error) => {
+                crate::diagnostics::log_backend("error", &format!("[FORMULA_WORKER] startup recovery scan failed: {}", error));
+                app.emit("formula-recalc-error", serde_json::json!({"error": error})).ok();
+                return;
+            }
+        };
+        if let Some(worker) = app.try_state::<FormulaWorker>() {
+            for job in jobs {
+                if let Err(error) = worker.enqueue(job, vec![], vec![]) {
+                    crate::diagnostics::log_backend("error", &format!("[FORMULA_WORKER] startup recovery enqueue failed: {}", error));
+                    break;
+                }
+            }
+        }
+    });
 }
 
 #[cfg(test)]
@@ -1405,29 +1289,12 @@ mod tests {
 
     fn setup_test_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
+        setup_test_db_schema(&conn);
+        conn
+    }
+
+    fn setup_test_db_schema(conn: &Connection) {
         conn.execute_batch("
-            CREATE TABLE formula_recalc_jobs (
-                id              TEXT    PRIMARY KEY,
-                property_iri    TEXT    NOT NULL,
-                property_label  TEXT,
-                class_iri       TEXT    NOT NULL,
-                class_label     TEXT,
-                status          TEXT    NOT NULL DEFAULT 'pending',
-                total           INTEGER NOT NULL DEFAULT 0,
-                processed       INTEGER NOT NULL DEFAULT 0,
-                last_offset     INTEGER NOT NULL DEFAULT 0,
-                error_message   TEXT,
-                created_at      INTEGER NOT NULL,
-                updated_at      INTEGER NOT NULL,
-                instance_iri    TEXT
-            );
-            CREATE TABLE formula_instance_errors (
-                instance_iri    TEXT NOT NULL,
-                property_iri    TEXT NOT NULL,
-                error_message   TEXT NOT NULL,
-                created_at      INTEGER NOT NULL,
-                PRIMARY KEY (instance_iri, property_iri)
-            );
             CREATE TABLE transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 origin TEXT NOT NULL DEFAULT '',
@@ -1462,7 +1329,6 @@ mod tests {
             FROM triples
             WHERE is_current = 1 AND retracted = 0;
         ").unwrap();
-        conn
     }
 
     #[test]
@@ -1474,6 +1340,10 @@ mod tests {
             waiters: Mutex::new(HashMap::new()),
             remaining_jobs: Mutex::new(HashMap::from([(17, 2)])),
             next_barrier_id: AtomicU64::new(1),
+            active_jobs: Mutex::new(HashSet::new()),
+            property_generations: Mutex::new(HashMap::new()),
+            formula_errors: Mutex::new(HashMap::new()),
+            scheduled_jobs: Mutex::new(HashMap::new()),
         };
         app.manage(worker);
 
@@ -1490,34 +1360,196 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn worker_termination_failure_resolves_formula_barrier() {
+    async fn worker_panic_is_reported_by_supervisor_to_waiting_barrier() {
         let app = tauri::test::mock_app();
         let (sender, _receiver) = mpsc::channel(1);
         let (waiter, receiver) = oneshot::channel();
+        let (waiter_two, receiver_two) = oneshot::channel();
         let worker = FormulaWorker {
             sender,
-            waiters: Mutex::new(HashMap::from([(23, waiter)])),
-            remaining_jobs: Mutex::new(HashMap::from([(23, 1)])),
+            waiters: Mutex::new(HashMap::from([(23, waiter), (24, waiter_two)])),
+            remaining_jobs: Mutex::new(HashMap::from([(23, 1), (24, 1)])),
             next_barrier_id: AtomicU64::new(1),
+            active_jobs: Mutex::new(HashSet::new()),
+            property_generations: Mutex::new(HashMap::new()),
+            formula_errors: Mutex::new(HashMap::new()),
+            scheduled_jobs: Mutex::new(HashMap::new()),
         };
         app.manage(worker);
+        let worker_task = tauri::async_runtime::spawn(async {
+            panic!("simulated formula worker panic");
+        });
+        supervise_worker(app.handle().clone(), worker_task).await;
 
-        fail_all_waiters(
-            app.handle(),
-            MaterializationTerminal::Failed("formula worker terminated unexpectedly: panic".into()),
-        );
-        assert_eq!(
-            receiver.await.unwrap(),
-            Err(MaterializationTerminal::Failed(
-                "formula worker terminated unexpectedly: panic".into()
-            ))
-        );
+        for terminal in [receiver.await.unwrap().unwrap_err(), receiver_two.await.unwrap().unwrap_err()] {
+            match terminal {
+                MaterializationTerminal::Failed(reason) => {
+                    assert!(reason.starts_with("formula worker terminated unexpectedly:"));
+                    assert!(reason.contains("simulated formula worker panic"));
+                }
+                MaterializationTerminal::Cancelled(reason) => {
+                    panic!("worker panic was reported as cancellation: {reason}")
+                }
+            }
+        }
         assert!(app
             .state::<FormulaWorker>()
             .remaining_jobs
             .lock()
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn duplicate_formula_jobs_coalesce_and_preserve_barrier_subscribers() {
+        let (sender, mut receiver) = mpsc::channel(4);
+        let worker = FormulaWorker {
+            sender,
+            waiters: Mutex::new(HashMap::new()),
+            remaining_jobs: Mutex::new(HashMap::new()),
+            next_barrier_id: AtomicU64::new(1),
+            active_jobs: Mutex::new(HashSet::new()),
+            property_generations: Mutex::new(HashMap::new()),
+            formula_errors: Mutex::new(HashMap::new()),
+            scheduled_jobs: Mutex::new(HashMap::new()),
+        };
+        let make_job = || NewFormulaRecalcJob {
+            id: "formula-1".into(),
+            property_iri: "foundation:total".into(),
+            property_label: Some("Total".into()),
+            class_iri: "foundation:Account".into(),
+            class_label: Some("Account".into()),
+            instance_iri: Some("foundation:Account_1".into()),
+        };
+        worker.enqueue(make_job(), vec![], vec![1]).unwrap();
+        worker.enqueue(make_job(), vec![], vec![2]).unwrap();
+
+        assert!(receiver.try_recv().is_ok());
+        assert!(receiver.try_recv().is_err());
+        let key = ("foundation:total".to_string(), Some("foundation:Account_1".to_string()), 0);
+        let scheduled = worker.scheduled_jobs.lock().unwrap();
+        let subscribers = scheduled.get(&key).unwrap();
+        assert_eq!(subscribers.barrier_ids, HashSet::from([1, 2]));
+    }
+
+    #[test]
+    fn cancellation_advances_generation_for_subsequent_formula_jobs() {
+        let (sender, mut receiver) = mpsc::channel(2);
+        let worker = FormulaWorker {
+            sender,
+            waiters: Mutex::new(HashMap::new()),
+            remaining_jobs: Mutex::new(HashMap::new()),
+            next_barrier_id: AtomicU64::new(1),
+            active_jobs: Mutex::new(HashSet::new()),
+            property_generations: Mutex::new(HashMap::new()),
+            formula_errors: Mutex::new(HashMap::new()),
+            scheduled_jobs: Mutex::new(HashMap::new()),
+        };
+        let make_job = || NewFormulaRecalcJob {
+            id: "formula-1".into(),
+            property_iri: "foundation:total".into(),
+            property_label: None,
+            class_iri: "foundation:Account".into(),
+            class_label: None,
+            instance_iri: None,
+        };
+        worker.enqueue(make_job(), vec![], vec![]).unwrap();
+        assert!(worker.is_generation_current("foundation:total", 0));
+        worker.cancel_property("foundation:total");
+        assert!(!worker.is_generation_current("foundation:total", 0));
+        assert!(worker.is_generation_current("foundation:total", 1));
+        worker.enqueue(make_job(), vec![], vec![]).unwrap();
+
+        assert!(matches!(receiver.try_recv().unwrap(), WorkerCommand::Enqueue { generation: 0, .. }));
+        assert!(matches!(receiver.try_recv().unwrap(), WorkerCommand::Enqueue { generation: 1, .. }));
+    }
+
+    #[tokio::test]
+    async fn startup_rescan_reconstructs_calculated_work_from_ontology() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("formula-startup-rescan.db");
+        let conn = Connection::open(&db_path).unwrap();
+        setup_test_db_schema(&conn);
+        conn.execute("INSERT INTO origins (name) VALUES ('test')", []).unwrap();
+        triple(&conn, "foundation:Account_1", "rdf:type", Some("foundation:Account"), None);
+        triple(&conn, "foundation:balance", "rdfs:domain", Some("foundation:Account"), None);
+        triple(&conn, "foundation:balance", "foundation:formula", None, Some("{{foundation:amount}}"));
+        let executor = crate::owl::DbExecutor::new(conn, db_path);
+
+        let jobs = create_startup_recalc_jobs(&executor).await.unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].property_iri, "foundation:balance");
+        assert_eq!(jobs[0].instance_iri.as_deref(), Some("foundation:Account_1"));
+    }
+
+    #[test]
+    fn formula_progress_serializes_source_correlation_in_camel_case() {
+        let event = FormulaProgressEvent {
+            job_id: "job".to_string(),
+            property_iri: "foundation:total".to_string(),
+            property_label: "Total".to_string(),
+            class_iri: "foundation:Account".to_string(),
+            class_label: "Account".to_string(),
+            percent: 50,
+            status: "running".to_string(),
+            source_entity_iri: Some("foundation:Conversation_1".to_string()),
+            source_update_id: Some("foundation:Conversation_1@42".to_string()),
+            source_tx: Some(42),
+        };
+        let payload = serde_json::to_value(event).unwrap();
+
+        assert_eq!(payload["sourceEntityIri"], "foundation:Conversation_1");
+        assert_eq!(payload["sourceUpdateId"], "foundation:Conversation_1@42");
+        assert_eq!(payload["sourceTx"], 42);
+    }
+
+    #[tokio::test]
+    async fn formula_barrier_preserves_cancelled_terminal_and_blocks_dependent_step() {
+        let app = tauri::test::mock_app();
+        let (sender, _receiver) = mpsc::channel(1);
+        let (cancelled_tx, cancelled_rx) = oneshot::channel();
+        let (failed_tx, failed_rx) = oneshot::channel();
+        let worker = FormulaWorker {
+            sender,
+            waiters: Mutex::new(HashMap::from([(31, cancelled_tx), (32, failed_tx)])),
+            remaining_jobs: Mutex::new(HashMap::from([(31, 1), (32, 1)])),
+            next_barrier_id: AtomicU64::new(1),
+            active_jobs: Mutex::new(HashSet::new()),
+            property_generations: Mutex::new(HashMap::new()),
+            formula_errors: Mutex::new(HashMap::new()),
+            scheduled_jobs: Mutex::new(HashMap::new()),
+        };
+        app.manage(worker);
+
+        fail_barriers(
+            app.handle(),
+            &[31],
+            MaterializationTerminal::Cancelled("job cancelled".to_string()),
+        );
+        fail_barriers(
+            app.handle(),
+            &[32],
+            MaterializationTerminal::Failed("job failed".to_string()),
+        );
+
+        let cancelled = cancelled_rx.await.unwrap();
+        let failed = failed_rx.await.unwrap();
+        assert_eq!(
+            cancelled,
+            Err(MaterializationTerminal::Cancelled(
+                "job cancelled".to_string()
+            ))
+        );
+        assert_eq!(
+            failed,
+            Err(MaterializationTerminal::Failed("job failed".to_string()))
+        );
+
+        let mut dependent_started = false;
+        if cancelled.is_ok() {
+            dependent_started = true;
+        }
+        assert!(!dependent_started);
     }
 
     #[test]

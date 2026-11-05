@@ -260,13 +260,23 @@ pub async fn imap__test_connection(
     use_tls: bool,
     username: String,
     password: String,
-) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || -> Result<String, String> {
-        connect_and_login(&host, port, use_tls, &username, &password)?;
-        Ok(format!("Connection to {}:{} succeeded.", host, port))
+    state: State<'_, crate::commands::SetupEmailVerificationState>,
+) -> Result<crate::commands::SetupEmailTestResult, String> {
+    let account_fingerprint = crate::commands::setup_email_account_fingerprint(
+        &host, port, use_tls, &username, &password,
+    );
+    let connection_username = username.clone();
+    let endpoint = tokio::task::spawn_blocking(move || -> Result<String, String> {
+        connect_and_login(&host, port, use_tls, &connection_username, &password)?;
+        Ok(format!("{}:{}", host, port))
     })
     .await
-    .map_err(|e| format!("Task error: {}", e))?
+    .map_err(|e| format!("Task error: {}", e))??;
+    let verification_token = state.record_success(&username, &account_fingerprint)?;
+    Ok(crate::commands::SetupEmailTestResult {
+        message: format!("Connection to {} succeeded.", endpoint),
+        verification_token,
+    })
 }
 
 pub fn connect_and_login(

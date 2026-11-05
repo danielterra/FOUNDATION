@@ -578,14 +578,56 @@ Example — find all active Tasks whose due date is before this Project's deadli
         ToolTemplate {
             name: "describe_individual".to_string(),
             array_mode: false,
-            description: "Fetch full details for one or more individuals: all property values, backlinks, and allowed statuses. Each entry in the `properties` array includes a `propertyType` field: `value` (plain literal), `calculation` (formula/aggregation), `reference` (ObjectProperty or built-in IRI link), or `query` (ObjectProperty resolved via a stored query).".to_string(),
+            description: "Fetch individual details with explicitly paginated property groups. The initial response returns at most 5 typed values per property and includes loaded, has_more, snapshot_tx, and cursor; total is null when the storage API cannot provide an exact count. When has_more is true, call this tool again with individual_iri, property_iri, snapshot_tx, and cursor copied unchanged from that property's pagination object to retrieve the next page. The cursor is valid only for the same individual, property, and snapshot. Do not omit or alter these values. The initial response also includes backlinks, allowed statuses, and each property's propertyType (value, calculation, reference, or query).".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iris".to_string(),
                     param_type: "array".to_string(),
                     description: "Individual IRIs to fetch".to_string(),
-                    required: true,
+                    required: false,
                     schema: Some(serde_json::json!({ "type": "array", "items": { "type": "string" } })),
+                },
+                Parameter {
+                    name: "individual_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Individual IRI for a property-page continuation; use together with property_iri, snapshot_tx, and cursor copied from the previous response.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "property_iri".to_string(),
+                    param_type: "string".to_string(),
+                    description: "Property IRI for a property-page continuation.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "snapshot_tx".to_string(),
+                    param_type: "integer".to_string(),
+                    description: "Exact snapshot_tx from the previous response; required for continuation.".to_string(),
+                    required: false,
+                    schema: None,
+                },
+                Parameter {
+                    name: "cursor".to_string(),
+                    param_type: "object".to_string(),
+                    description: "Opaque cursor copied unchanged from the selected property's pagination.cursor.".to_string(),
+                    required: false,
+                    schema: Some(serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "individual_iri": { "type": "string" },
+                            "property_iri": { "type": "string" },
+                            "snapshot_tx": { "type": "integer" },
+                            "value_key": { "type": "string" },
+                            "value_tx": { "type": "integer" },
+                            "datatype": { "type": ["string", "null"] },
+                            "language": { "type": ["string", "null"] },
+                            "object_type": { "type": "string", "enum": ["iri", "blank", "literal"] }
+                        },
+                        "required": ["individual_iri", "property_iri", "snapshot_tx", "value_key", "value_tx", "datatype", "language", "object_type"],
+                        "additionalProperties": false
+                    })),
                 },
             ],
         },

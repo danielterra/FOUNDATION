@@ -3,6 +3,8 @@ pub mod chat;
 pub mod conversation;
 pub mod data_sync;
 pub mod property_configuration;
+pub mod qa_evidence;
 pub mod search;
 pub mod setup;
 pub mod status;
+pub mod materialization;

@@ -5,13 +5,25 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import * as Select from '$lib/components/ui/select';
+	import OpenRouterModelSelector from '$lib/components/OpenRouterModelSelector.svelte';
 	import posthog from 'posthog-js';
 
 	let { onClose } = $props();
+	const settingsTabs = [
+		{ id: 'ai', panelId: 'settings-panel-ai', label: 'IA e modelos', icon: 'psychology' },
+		{ id: 'email', panelId: 'settings-panel-email', label: 'E-mail', icon: 'mail' },
+		{ id: 'data', panelId: 'settings-panel-data', label: 'Dados', icon: 'database' },
+		{ id: 'integrations', panelId: 'settings-panel-integrations', label: 'Integrações', icon: 'extension' },
+		{ id: 'privacy', panelId: 'settings-panel-privacy', label: 'Privacidade', icon: 'shield' },
+		{ id: 'advanced', panelId: 'settings-panel-advanced', label: 'Avançado', icon: 'tune' },
+	];
+	let activeSettingsTab = $state('ai');
 
 	// --- AI Configuration (Provedor + Chave de API + Modelo) ---
 	let services = $state([]);
 	let models = $state([]);
+	let aiServicesLoading = $state(true);
+	let aiServicesLoadError = $state(false);
 	let selectedServiceIri = $state('');
 	let selectedModelIri = $state('');
 	let apiKey = $state('');
@@ -24,6 +36,11 @@
 	let baseUrl = $state('');
 	let loadedBaseUrl = $state('');
 	let openRouterModels = $state([]);
+	let openRouterModelsLoading = $state(false);
+	let openRouterModelsError = $state('');
+	let openRouterBenchmarks = $state(null);
+	let openRouterBenchmarksLoading = $state(false);
+	let openRouterBenchmarksError = $state('');
 	let selectedOpenRouterModelId = $state('');
 	let loadedOpenRouterModelId = $state('');
 	let fallbackModelIds = $state([]);
@@ -41,13 +58,27 @@
 	);
 	let currentModelLabel = $state('');
 
-	function formatOpenRouterContext(contextLength) {
-		return contextLength == null ? 'contexto não informado' : `${(contextLength / 1000).toFixed(0)}k ctx`;
-	}
-
 	function formatOpenRouterPrice(price) {
 		return price == null ? 'não informado' : `$${(price * 1_000_000).toFixed(2)} por 1M`;
 	}
+
+	function openRouterProvider(model) {
+		return model.publisher?.trim() || 'Publicador não informado';
+	}
+
+	function formatOpenRouterSize(model) {
+		if (model.parameterCountStatus !== 'reported' || model.parameterCountTotal == null) return 'Tamanho não informado pelo provedor';
+		const total = `${(model.parameterCountTotal / 1_000_000_000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}B parâmetros`;
+		return model.parameterCountActive == null
+			? total
+			: `${total} · ${(model.parameterCountActive / 1_000_000_000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}B ativos`;
+	}
+
+	function openRouterModelLabel(model) {
+		return `${model.name} · ${openRouterProvider(model)} · ${formatOpenRouterSize(model)} · entrada ${formatOpenRouterPrice(model.inputCostPerToken)} · saída ${formatOpenRouterPrice(model.outputCostPerToken)}`;
+	}
+
+	let selectedOpenRouterModel = $derived(openRouterModels.find((model) => model.id === selectedOpenRouterModelId) ?? null);
 
 	let aiDirty = $derived(
 		selectedServiceIri !== loadedServiceIri
@@ -139,6 +170,8 @@
 
 	// --- IMAP ---
 	let imapAccounts = $state([]);
+	let imapAccountsLoading = $state(true);
+	let imapAccountsLoadError = $state(false);
 	let imapEditing = $state(null); // null = hidden, 'new' = new form, iri = editing existing
 	let imapForm = $state({ label: '', host: '', port: 993, use_tls: true, username: '', password: '', sync_interval_minutes: 15 });
 	let imapTesting = $state(false);
@@ -357,6 +390,8 @@
 	}
 
 	async function loadModelData() {
+		aiServicesLoading = true;
+		aiServicesLoadError = false;
 		try {
 			const [svcs, current, currentSvc] = await Promise.all([
 				invoke('setup__list_ai_services'),
@@ -384,7 +419,9 @@
 				await loadModels(selectedServiceIri);
 			}
 		} catch {
-			// ignore
+			aiServicesLoadError = true;
+		} finally {
+			aiServicesLoading = false;
 		}
 	}
 
@@ -398,11 +435,30 @@
 	}
 
 	async function loadOpenRouterModels() {
-		if (!apiKey.trim() || !baseUrl) return;
+		if (!apiKey.trim() || !baseUrl.trim()) return;
+		openRouterModelsLoading = true;
+		openRouterModelsError = '';
 		try {
 			openRouterModels = await invoke('ai__list_openrouter_models', { apiKey, baseUrl });
-		} catch {
-			openRouterModels = [];
+			await loadOpenRouterBenchmarks();
+			if (!openRouterModels.length) openRouterModelsError = 'Nenhum modelo foi retornado pelo OpenRouter.';
+		} catch (error) {
+			openRouterModelsError = String(error);
+		} finally {
+			openRouterModelsLoading = false;
+		}
+	}
+
+	async function loadOpenRouterBenchmarks() {
+		openRouterBenchmarksLoading = true;
+		openRouterBenchmarksError = '';
+		try {
+			openRouterBenchmarks = await invoke('ai__list_openrouter_benchmarks', { apiKey, baseUrl });
+		} catch (error) {
+			openRouterBenchmarks = null;
+			openRouterBenchmarksError = String(error);
+		} finally {
+			openRouterBenchmarksLoading = false;
 		}
 	}
 
@@ -412,6 +468,7 @@
 		selectedOpenRouterModelId = '';
 		loadedOpenRouterModelId = '';
 		openRouterModels = [];
+		openRouterModelsError = '';
 		fallbackModelIds = [];
 		loadedFallbackModelIds = [];
 		aiMessage = '';
@@ -453,7 +510,7 @@
 						contextLength: orModel.contextLength,
 						inputCostPerToken: orModel.inputCostPerToken,
 						outputCostPerToken: orModel.outputCostPerToken,
-						supportsTools: true,
+						supportsTools: orModel.supportsTools ?? false,
 					});
 					loadedOpenRouterModelId = selectedOpenRouterModelId;
 				}
@@ -501,10 +558,14 @@
 	}
 
 	async function loadImapAccounts() {
+		imapAccountsLoading = true;
+		imapAccountsLoadError = false;
 		try {
 			imapAccounts = await invoke('imap__get_accounts');
 		} catch {
-			imapAccounts = [];
+			imapAccountsLoadError = true;
+		} finally {
+			imapAccountsLoading = false;
 		}
 	}
 
@@ -677,31 +738,81 @@
 		}
 	}
 
-	function handleBackdropClick(e) {
-		if (e.target === e.currentTarget) onClose?.();
+	function handleKeydown(e) {
+		if (e.key === 'Escape' && imapEditing === null) onClose?.();
 	}
 
-	function handleKeydown(e) {
-		if (e.key === 'Escape') onClose?.();
+	function handleSettingsSectionClick(event) {
+		activeSettingsTab = event.currentTarget.dataset.settingsSection;
+	}
+
+	function handleSettingsSectionKeydown(event) {
+		const currentSection = event.target.closest('[data-settings-section]');
+		if (!currentSection) return;
+
+		let currentIndex = -1;
+		for (let index = 0; index < settingsTabs.length; index += 1) {
+			if (settingsTabs[index].id === currentSection.dataset.settingsSection) {
+				currentIndex = index;
+				break;
+			}
+		}
+		if (currentIndex < 0) return;
+
+		let nextIndex = currentIndex;
+		if (event.key === 'ArrowDown') nextIndex = (currentIndex + 1) % settingsTabs.length;
+		else if (event.key === 'ArrowUp') nextIndex = (currentIndex - 1 + settingsTabs.length) % settingsTabs.length;
+		else if (event.key === 'Home') nextIndex = 0;
+		else if (event.key === 'End') nextIndex = settingsTabs.length - 1;
+		else return;
+
+		event.preventDefault();
+		activeSettingsTab = settingsTabs[nextIndex].id;
+		document.getElementById(`settings-nav-${settingsTabs[nextIndex].id}`)?.focus();
 	}
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="backdrop" role="presentation" onclick={handleBackdropClick}>
-	<div class="panel" role="dialog" aria-modal="true" aria-label="Settings">
-		<div class="panel-header">
-			<span class="panel-title">Settings</span>
-			<Button variant="ghost" size="icon" title="Close" onclick={onClose}><span class="material-symbols-outlined">close</span></Button>
+<section class="settings-screen" aria-label="Configurações">
+	<header class="panel-header">
+		<div class="panel-heading">
+			<p class="panel-eyebrow">SISTEMA</p>
+			<h1 class="panel-title">Configurações</h1>
 		</div>
+		<Button variant="ghost" size="default" onclick={onClose} aria-label="Voltar à lousa"><span class="material-symbols-outlined" aria-hidden="true">arrow_back</span> Voltar à lousa</Button>
+	</header>
+	<div class="settings-layout">
+		<nav class="settings-navigation" aria-label="Seções de configuração">
+			{#each settingsTabs as tab}
+				<button
+					id="settings-nav-{tab.id}"
+					class="settings-nav-item"
+					class:active={activeSettingsTab === tab.id}
+					data-settings-section={tab.id}
+					aria-current={activeSettingsTab === tab.id ? 'page' : undefined}
+					aria-controls={tab.panelId}
+					onclick={handleSettingsSectionClick}
+					onkeydown={handleSettingsSectionKeydown}
+				>
+					<span class="material-symbols-outlined" aria-hidden="true">{tab.icon}</span>
+					<span>{tab.label}</span>
+				</button>
+			{/each}
+		</nav>
 
-		<div class="panel-body">
+		<main class="panel-body">
+			<div class="settings-tabpanel settings-panel-grid" id="settings-panel-ai" aria-labelledby="settings-nav-ai" hidden={activeSettingsTab !== 'ai'}>
 			<section class="settings-section">
 				<h3 class="section-title">
 					<span class="material-symbols-outlined">psychology</span>
-					AI Model
+					Provedor e modelo de IA
 				</h3>
-				{#if services.length > 0}
+				{#if aiServicesLoading}
+					<p class="hint" role="status" aria-live="polite">Carregando provedores e modelos…</p>
+				{:else if aiServicesLoadError}
+					<p class="feedback error" role="alert">Não foi possível carregar provedores e modelos.</p>
+				{:else if services.length > 0}
 					<label class="field-label" for="settings-provider-select">Provedor</label>
 					<div class="field-row">
 						<Select.Root
@@ -753,29 +864,19 @@
 						</div>
 					{/if}
 
-					{#if selectedServiceIsOpenRouter && openRouterModels.length > 0}
-						<label class="field-label" for="settings-or-model-select">Modelo (OpenRouter)</label>
-						<div class="field-row">
-							<Select.Root
-								type="single"
-								value={selectedOpenRouterModelId}
-								onValueChange={(v) => { if (v !== undefined) selectedOpenRouterModelId = v; }}
-							>
-								<Select.Trigger id="settings-or-model-select" class="flex-1">
-									<Select.Value placeholder="Selecione um modelo…" />
-								</Select.Trigger>
-								<Select.Content>
-									<Select.Item value="">Selecione um modelo…</Select.Item>
-									{#each openRouterModels as m}
-										<Select.Item value={m.id}>{m.name} — {formatOpenRouterContext(m.contextLength)} · entrada {formatOpenRouterPrice(m.inputCostPerToken)} · saída {formatOpenRouterPrice(m.outputCostPerToken)}</Select.Item>
-									{/each}
-								</Select.Content>
-							</Select.Root>
-						</div>
-					{:else if selectedServiceIsOpenRouter && apiKey.trim() && openRouterModels.length === 0}
-						<div class="field-row">
-							<Button variant="default" onclick={loadOpenRouterModels}>Carregar modelos</Button>
-						</div>
+					{#if selectedServiceIsOpenRouter}
+						<OpenRouterModelSelector
+							idPrefix="settings-openrouter"
+							models={openRouterModels}
+							benchmarks={openRouterBenchmarks}
+							bind:selectedModelId={selectedOpenRouterModelId}
+							loading={openRouterModelsLoading}
+							error={openRouterModelsError}
+							benchmarksLoading={openRouterBenchmarksLoading}
+							benchmarksError={openRouterBenchmarksError}
+							loadHint={!apiKey.trim() ? 'Informe a chave de API para carregar o catálogo.' : !baseUrl.trim() ? 'Informe a URL base do OpenRouter para carregar o catálogo.' : 'Carregue o catálogo para comparar os modelos disponíveis.'}
+							onRetry={loadOpenRouterModels}
+						/>
 					{/if}
 
 					{#if selectedServiceIsOpenRouter && openRouterModels.length > 0}
@@ -783,7 +884,7 @@
 						<div class="field-row" style="flex-direction:column;gap:4px;align-items:flex-start;">
 							{#each fallbackModelIds as fbId, i}
 								<div class="field-row" style="width:100%;">
-									<span class="text-input" style="flex:1;padding:4px 8px;font-size:0.85em;">{fbId}</span>
+					<span class="text-input" style="flex:1;padding:4px 8px;font-size:0.85em;">{openRouterModels.find((model) => model.id === fbId) ? openRouterModelLabel(openRouterModels.find((model) => model.id === fbId)) : fbId}</span>
 									<Button variant="ghost" size="icon" title="Remover" onclick={() => { fallbackModelIds = fallbackModelIds.filter((_, idx) => idx !== i); }}><span class="material-symbols-outlined">remove</span></Button>
 								</div>
 							{/each}
@@ -802,7 +903,7 @@
 									</Select.Trigger>
 									<Select.Content>
 										{#each openRouterModels.filter(m => !fallbackModelIds.includes(m.id)) as m}
-											<Select.Item value={m.id}>{m.name}</Select.Item>
+											<Select.Item value={m.id}>{openRouterModelLabel(m)}</Select.Item>
 										{/each}
 									</Select.Content>
 								</Select.Root>
@@ -843,7 +944,7 @@
 						<p class="feedback" class:error={aiError}>{aiMessage}</p>
 					{/if}
 				{:else}
-					<p class="hint">No AI services found.</p>
+					<p class="hint">Nenhum provedor de IA disponível.</p>
 				{/if}
 			</section>
 
@@ -878,12 +979,21 @@
 				{/if}
 			</section>
 			{/if}
+			</div>
 
+			<div class="settings-tabpanel settings-panel-grid" id="settings-panel-email" role="region" aria-labelledby="settings-nav-email" hidden={activeSettingsTab !== 'email'}>
 			<section class="settings-section">
 				<h3 class="section-title">
 					<span class="material-symbols-outlined">mail</span>
-					Contas de Email (IMAP)
+					Contas de e-mail (IMAP)
 				</h3>
+				{#if imapAccountsLoading}
+					<p class="hint" role="status" aria-live="polite">Carregando contas de e-mail…</p>
+				{:else if imapAccountsLoadError}
+					<p class="feedback error" role="alert">Não foi possível carregar as contas de e-mail.</p>
+				{:else if imapAccounts.length === 0}
+					<p class="hint">Nenhuma conta de e-mail configurada.</p>
+				{/if}
 
 				{#each imapAccounts as account}
 					<div class="imap-account-row">
@@ -934,6 +1044,7 @@
 					<Button variant="default" onclick={startAddImapAccount}><span class="material-symbols-outlined">add</span>Adicionar conta</Button>
 				</div>
 			</section>
+			</div>
 
 			<Dialog.Root open={imapEditing !== null} onOpenChange={(o) => { if (!o) cancelImapEdit(); }}>
 				<Dialog.Content class="sm:max-w-[480px]">
@@ -1025,6 +1136,7 @@
 				</Dialog.Content>
 			</Dialog.Root>
 
+			<div class="settings-tabpanel settings-panel-grid" id="settings-panel-data" role="region" aria-labelledby="settings-nav-data" hidden={activeSettingsTab !== 'data'}>
 			<section class="settings-section">
 				<h3 class="section-title">
 					<span class="material-symbols-outlined">folder_open</span>
@@ -1098,7 +1210,9 @@
 					{/if}
 				{/if}
 			</section>
+			</div>
 
+			<div class="settings-tabpanel settings-panel-grid" id="settings-panel-integrations" role="region" aria-labelledby="settings-nav-integrations" hidden={activeSettingsTab !== 'integrations'}>
 			<section class="settings-section">
 				<h3 class="section-title">
 					<span class="material-symbols-outlined">extension</span>
@@ -1125,7 +1239,9 @@
 					<p class="feedback" class:error={claudeError}>{claudeMessage}</p>
 				{/if}
 			</section>
+			</div>
 
+			<div class="settings-tabpanel settings-panel-grid" id="settings-panel-privacy" role="region" aria-labelledby="settings-nav-privacy" hidden={activeSettingsTab !== 'privacy'}>
 			<section class="settings-section">
 				<h3 class="section-title">
 					<span class="material-symbols-outlined">shield</span>
@@ -1142,7 +1258,9 @@
 					</span>
 				</label>
 			</section>
+			</div>
 
+			<div class="settings-tabpanel settings-panel-grid" id="settings-panel-advanced" role="region" aria-labelledby="settings-nav-advanced" hidden={activeSettingsTab !== 'advanced'}>
 			<section class="settings-section">
 				<h3 class="section-title">
 					<span class="material-symbols-outlined">developer_mode</span>
@@ -1173,66 +1291,165 @@
 					<p class="feedback" class:error={logError}>{logMessage}</p>
 				{/if}
 			</section>
-		</div>
+			</div>
+		</main>
 	</div>
-</div>
+</section>
 
 <style>
-	.backdrop {
-		position: fixed;
+	.settings-screen {
+		position: absolute;
 		inset: 0;
-		z-index: 200;
-		background: rgba(0, 0, 0, 0.45);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.panel {
-		background: var(--color-surface-1);
-		border-radius: var(--radius);
-		width: 920px;
-		max-width: 95vw;
-		max-height: 90vh;
+		z-index: calc(var(--z-widget-max) + 2);
 		display: flex;
 		flex-direction: column;
+		min-width: 0;
+		min-height: 0;
 		overflow: hidden;
+		background: var(--color-surface-0);
 	}
 
 	.panel-header {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: 16px 18px 12px;
+		gap: var(--space-4);
+		padding: var(--space-4) var(--space-6);
+		border-bottom: 1px solid var(--color-hud-line-subtle);
 		flex-shrink: 0;
 	}
 
+	.panel-heading {
+		min-width: 0;
+	}
+
+	.panel-eyebrow {
+		margin: 0 0 var(--space-1);
+		color: var(--text-accent);
+		font-family: var(--font-mono);
+		font-size: var(--type-label);
+		letter-spacing: var(--tracking-hud-label);
+	}
+
+	.settings-layout {
+		display: grid;
+		grid-template-columns: minmax(12rem, 17rem) minmax(0, 1fr);
+		flex: 1;
+		min-width: 0;
+		min-height: 0;
+	}
+
+	.settings-navigation {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+		padding: var(--space-4);
+		border-right: 1px solid var(--color-hud-line-subtle);
+		min-width: 0;
+		overflow-y: auto;
+	}
+
+	.settings-nav-item {
+		display: flex;
+		align-items: center;
+		gap: var(--space-3);
+		min-height: var(--size-touch-target);
+		padding: var(--space-2) var(--space-3);
+		border: 0;
+		border-left: 2px solid transparent;
+		border-radius: var(--radius);
+		background: transparent;
+		color: var(--color-neutral);
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.settings-nav-item:hover {
+		color: var(--color-neutral-active);
+		background: color-mix(in srgb, var(--color-interactive) 10%, transparent);
+	}
+
+	.settings-nav-item.active {
+		border-left-color: var(--color-selection);
+		color: var(--color-interactive);
+		background: color-mix(in srgb, var(--color-interactive) 9%, transparent);
+	}
+
+	.settings-nav-item:focus-visible {
+		outline: 2px solid var(--color-selection);
+		outline-offset: 2px;
+	}
+
+	.settings-nav-item .material-symbols-outlined {
+		flex: 0 0 auto;
+		font-size: var(--type-icon-medium);
+	}
+
 	.panel-title {
-		font-size: 15px;
-		font-weight: 600;
+		margin: 0;
+		font-size: var(--type-title);
+		font-weight: 400;
 		color: var(--color-neutral-active);
 	}
 
 	.panel-body {
-		overflow-x: hidden;
-		overflow-y: auto;
-		padding: 18px;
+		min-width: 0;
+		min-height: 0;
+		overflow: auto;
+		padding: var(--space-6);
+	}
+
+	.settings-tabpanel[hidden] {
+		display: none;
+	}
+
+	.settings-panel-grid {
 		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 24px 28px;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--size-settings-section-min-width)), 1fr));
+		gap: var(--spacing-section);
 		align-content: start;
 	}
 
 	@media (max-width: 760px) {
+		.settings-layout {
+			grid-template-columns: minmax(0, 1fr);
+			grid-template-rows: auto minmax(0, 1fr);
+		}
+
+		.settings-navigation {
+			flex-direction: column;
+			border-right: 0;
+			border-bottom: 1px solid var(--color-hud-line-subtle);
+			padding: var(--space-2) var(--space-3);
+			max-height: 32vh;
+		}
+
+		.settings-nav-item {
+			flex: 0 0 auto;
+			min-height: var(--size-touch-target);
+			border-left: 0;
+			border-bottom: 0;
+		}
+
+		.settings-nav-item.active {
+			border-left: 2px solid var(--color-selection);
+		}
+
+		.panel-header,
 		.panel-body {
-			grid-template-columns: 1fr;
+			padding: var(--space-3);
+		}
+
+		.settings-panel-grid {
+			grid-template-columns: minmax(0, 1fr);
 		}
 	}
 
 	.settings-section {
 		display: flex;
 		flex-direction: column;
-		gap: 10px;
+		gap: var(--spacing-field-block);
 		min-width: 0;
 	}
 
@@ -1523,4 +1740,5 @@
 		overflow-y: auto;
 		max-height: 60vh;
 	}
+
 </style>

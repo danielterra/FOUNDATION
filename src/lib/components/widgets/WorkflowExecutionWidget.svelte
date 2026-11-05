@@ -3,10 +3,10 @@
   import { invoke } from '@tauri-apps/api/core'
   import { listen } from '@tauri-apps/api/event'
   import { createEntitySubscription } from '$lib/realtime/subscriptions'
-  import ChatMessageBubble from '../ChatMessageBubble.svelte'
   import MarkdownValue from './inspector/MarkdownValue.svelte'
   import WidgetContainer from './WidgetContainer.svelte'
   import { Button } from '$lib/components/ui/button'
+  import { openEntity } from '$lib/blackboard'
 
   let { widgetId, entityId, conversationIri = null, windowState = 'normal', onWindowStateChange } = $props()
 
@@ -37,40 +37,6 @@
 
   function nodeIcon(nodeType) {
     return NODE_TYPE_ICONS[nodeType] ?? 'smart_toy'
-  }
-
-  function parseBlocks(contentJson) {
-    if (!contentJson) return []
-    try {
-      const parsed = JSON.parse(contentJson)
-      if (Array.isArray(parsed)) return parsed.filter(b => b != null)
-    } catch {}
-    return [{ type: 'text', text: contentJson }]
-  }
-
-  function messagesToUnits(messages) {
-    const units = []
-    for (const msg of messages) {
-      const blocks = parseBlocks(msg.content)
-      if (msg.role === 'user') {
-        const text = blocks.filter(b => b?.type === 'text').map(b => b.text).join('\n')
-        if (text.trim()) units.push({ type: 'user', text, sentAt: null })
-      } else if (msg.role === 'assistant') {
-        const textBlocks = blocks.filter(b => b?.type === 'text' && b.text?.trim())
-        const toolBlocks = blocks.filter(b => b?.type === 'tool_use')
-        if (textBlocks.length > 0) {
-          units.push({ type: 'text', text: textBlocks.map(b => b.text).join('\n'), sentAt: null })
-        }
-        if (toolBlocks.length > 0) {
-          units.push({
-            type: 'tool_use',
-            tool_calls: toolBlocks.map(b => ({ id: b.id, name: b.name, input: b.input })),
-            sentAt: null,
-          })
-        }
-      }
-    }
-    return units
   }
 
   function formatDuration(startedAt, finishedAt) {
@@ -115,6 +81,7 @@
     if (progress.status === 'failed') return progress.reason || 'Falha ao atualizar os dados necessários'
     if (progress.status === 'cancelled') return progress.reason || 'Atualização dos dados cancelada'
     if (progress.status === 'completed') return 'Dados atualizados'
+    if (progress.status === 'waiting') return 'Aguardando confirmação dos dados necessários'
     if (progress.phase === 'query-properties') return 'Atualizando propriedades relacionadas'
     return 'Atualizando propriedades calculadas'
   }
@@ -157,15 +124,8 @@
     }).catch(() => {})
   }
 
-  async function openEntityInspector(iri) {
-    await invoke('widget_blackboard__add_widget', {
-      widgetType: 'inspector',
-      entityId: iri,
-      content: null,
-      position: null,
-      size: null,
-      conversationId: conversationIri,
-    }).catch(() => {})
+  async function openRelatedEntity(iri) {
+    await openEntity(iri, conversationIri).catch(() => {})
   }
 
   async function closeWidget() {
@@ -177,17 +137,7 @@
 
     const unlistenProgress = await listen('automation-step-progress', handleMaterializationProgress)
     const unlistenFinished = await listen('automation-execution-finished', handleExecutionFinished)
-    const unlistenMessage = await listen('automation-step-message', (event) => {
-      if (event.payload.executionIri !== entityId || !detail) return
-      const { stepIri, role, content } = event.payload
-      const stepIndex = detail.steps.findIndex(s => s.iri === stepIri)
-      if (stepIndex === -1) return
-      const msg = { role, content }
-      detail.steps[stepIndex].messages = [...detail.steps[stepIndex].messages, msg]
-      detail = detail
-      expandedStep = stepIri
-    })
-    unlisteners.push(unlistenProgress, unlistenFinished, unlistenMessage)
+    unlisteners.push(unlistenProgress, unlistenFinished)
   })
 
   onDestroy(() => {
@@ -275,14 +225,14 @@
                     <span class="material-symbols-outlined" class:spinning={materialization.status === 'waiting' || materialization.status === 'running'}>
                       {materialization.status === 'failed' ? 'error' : materialization.status === 'cancelled' ? 'cancel' : 'sync'}
                     </span>
-                    <span role="status" aria-live="polite">{describeMaterialization(materialization)}</span>
+                    <span role="status" aria-live={materialization.status === 'failed' || materialization.status === 'cancelled' ? 'assertive' : 'polite'}>{describeMaterialization(materialization)}</span>
                     {#if hasDeterminateProgress(materialization)}
                       <span>{materialization.completedCount}/{materialization.totalCount}</span>
                     {/if}
                   </span>
                 {/if}
                 <span class="step-duration">{duration ?? ''}</span>
-                {#if step.executionOutput?.length > 0 || step.executionSummary || step.stepError || step.messages.length > 0}
+                {#if step.inputContext || step.executionOutput?.length > 0 || step.executionSummary || step.stepError}
                   <span class="material-symbols-outlined step-chevron" class:rotated={isExpanded}>
                     expand_more
                   </span>
@@ -309,23 +259,12 @@
                       <div class="detail-content detail-content-output">
                         {#if step.executionOutput?.length > 0}
                           {#each step.executionOutput as output, outputIndex (outputIndex)}
-                            <MarkdownValue value={output} {openEntityInspector} />
+                            <MarkdownValue value={output} openEntityInspector={openRelatedEntity} />
                           {/each}
                         {/if}
                         {#if step.executionSummary}
-                          <MarkdownValue value={step.executionSummary} {openEntityInspector} />
+                          <MarkdownValue value={step.executionSummary} openEntityInspector={openRelatedEntity} />
                         {/if}
-                      </div>
-                    </div>
-                  {/if}
-                  {#if step.messages.length > 0}
-                    {@const units = messagesToUnits(step.messages)}
-                    <div class="detail-section">
-                      <span class="detail-label">Conversa</span>
-                      <div class="messages">
-                        {#each units as unit, i (i)}
-                          <ChatMessageBubble {unit} />
-                        {/each}
                       </div>
                     </div>
                   {/if}
@@ -578,16 +517,6 @@
   .error-text {
     color: var(--color-danger-hover);
   }
-
-  .messages {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    max-height: 400px;
-    overflow-y: auto;
-    padding: 4px 0;
-  }
-
 
   .detail-meta {
     display: flex;

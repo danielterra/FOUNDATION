@@ -208,6 +208,7 @@
   --app-header-height: 44px;
   --size-widget-sidebar-width: min(18rem, calc(100vw - var(--space-4)));
   --size-widget-sidebar-list-max-height: 480px;
+  --size-settings-section-min-width: 32rem;
 
   /* Semantic typography scale shared by every component. */
   --type-overline: 10px;

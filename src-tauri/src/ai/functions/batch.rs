@@ -145,6 +145,38 @@ pub(super) fn run_atomic(
         results.push(result.result);
     }
 
+    let mut pending_events = take_events();
+    for (_, payload) in &mut pending_events {
+        if let Some(entity_id) = payload.get("entityId").and_then(serde_json::Value::as_str) {
+            let tx = match crate::owl::entity_last_tx(conn, entity_id) {
+                Ok(Some(tx)) if tx > 0 => tx,
+                Ok(_) => {
+                    conn.execute_batch("ROLLBACK").ok();
+                    take_events();
+                    return ToolResult {
+                        success: false,
+                        result: None,
+                        error: Some(format!("No transaction revision exists for {entity_id}")),
+                        concept: None,
+                    };
+                }
+                Err(error) => {
+                    conn.execute_batch("ROLLBACK").ok();
+                    take_events();
+                    return ToolResult {
+                        success: false,
+                        result: None,
+                        error: Some(format!(
+                            "Failed to identify revision for {entity_id}: {error}"
+                        )),
+                        concept: None,
+                    };
+                }
+            };
+            payload["tx"] = serde_json::Value::Number(tx.into());
+        }
+    }
+
     if let Err(e) = conn.execute_batch("COMMIT") {
         conn.execute_batch("ROLLBACK").ok();
         take_events();
@@ -157,7 +189,7 @@ pub(super) fn run_atomic(
     }
 
     if let Some(app_handle) = app {
-        for (name, payload) in take_events() {
+        for (name, payload) in pending_events {
             crate::realtime::emit_queued(app_handle, &name, payload);
         }
 
@@ -180,17 +212,14 @@ pub(super) fn run_atomic(
 }
 
 fn dispatch_formula_recalcs(_conn: &Connection, app: &tauri::AppHandle) {
-    use crate::commands::formula_worker::{FormulaWorker, WorkerCommand};
+    use crate::commands::formula_worker::FormulaWorker;
     use tauri::Manager;
 
-    let worker = match app.try_state::<FormulaWorker>() {
-        Some(w) => w,
-        None => {
-            take_property_recalcs();
-            take_instance_recalcs();
-            return;
-        }
-    };
+    if app.try_state::<FormulaWorker>().is_none() {
+        take_property_recalcs();
+        take_instance_recalcs();
+        return;
+    }
 
     let properties = take_property_recalcs();
     let instances = take_instance_recalcs();
@@ -198,7 +227,7 @@ fn dispatch_formula_recalcs(_conn: &Connection, app: &tauri::AppHandle) {
         Some(executor) => executor.inner().clone(),
         None => return,
     };
-    let sender = worker.sender.clone();
+    let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
         for property_iri in properties {
             match crate::commands::formula_worker::cancel_and_create_property_job(
@@ -207,8 +236,12 @@ fn dispatch_formula_recalcs(_conn: &Connection, app: &tauri::AppHandle) {
             )
             .await
             {
-                Ok(job_id) => {
-                    let _ = sender.try_send(WorkerCommand::Enqueue { job_id });
+                Ok(job) => {
+                    if let Some(worker) = app_handle.try_state::<FormulaWorker>() {
+                        if let Err(error) = worker.enqueue(job, vec![], vec![]) {
+                            crate::commands::log_backend("error", &format!("Failed to enqueue formula property recalculation {property_iri}: {error}"));
+                        }
+                    }
                 }
                 Err(error) => crate::commands::log_backend(
                     "error",
@@ -220,7 +253,13 @@ fn dispatch_formula_recalcs(_conn: &Connection, app: &tauri::AppHandle) {
         }
         for (instance_iri, changed_property_iri) in instances {
             match crate::commands::formula_worker::create_instance_recalc_jobs(&executor, &instance_iri, &changed_property_iri).await {
-                Ok(job_ids) => for job_id in job_ids { let _ = sender.try_send(WorkerCommand::Enqueue { job_id }); },
+                Ok(jobs) => for job in jobs {
+                    if let Some(worker) = app_handle.try_state::<FormulaWorker>() {
+                        if let Err(error) = worker.enqueue(job, vec![], vec![]) {
+                            crate::commands::log_backend("error", &format!("Failed to enqueue formula instance recalculation for {instance_iri}: {error}"));
+                        }
+                    }
+                },
                 Err(error) => crate::commands::log_backend("error", &format!("Failed to enqueue formula instance recalculation for {instance_iri}: {error}")),
             }
         }

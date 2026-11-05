@@ -86,6 +86,7 @@
   let activeStepPhase = $state<'query-properties' | 'calculated-properties' | null>(null)
   let activeMaterializationStatus = $state<'waiting' | 'running' | 'completed' | 'failed' | 'cancelled' | null>(null)
   let activeMaterializationProgress = $state<{ completedCount?: number; totalCount?: number } | null>(null)
+  let activeMaterializationReason = $state<string | null>(null)
   let executionOutcome = $state<'completed' | 'failed' | 'cancelled' | null>(null)
   let activeNodeIri: string | null = null
 
@@ -272,6 +273,10 @@
     }
   }
 
+  async function openExecutionOutputEntity(entityIri: string) {
+    await openEntity(entityIri, conversationIri).catch(error => console.error('Failed to open execution output entity:', error))
+  }
+
   async function runAutomation() {
     if (running) return
     running = true
@@ -292,6 +297,7 @@
     if (status === 'failed') return 'Falha ao atualizar os dados necessários'
     if (status === 'cancelled') return 'Atualização dos dados cancelada'
     if (status === 'completed') return 'Dados atualizados'
+    if (status === 'waiting') return 'Aguardando confirmação dos dados necessários'
     if (phase === 'query-properties') return 'Atualizando propriedades relacionadas'
     return 'Atualizando propriedades calculadas'
   }
@@ -352,6 +358,7 @@
     activeStepPhase = null
     activeMaterializationStatus = null
     activeMaterializationProgress = null
+    activeMaterializationReason = null
     executionOutcome = null
     activeNodeIri = null
     running = true
@@ -380,6 +387,9 @@
         completedCount: payload.completedCount,
         totalCount: payload.totalCount,
       }
+      activeMaterializationReason = payload.status === 'failed' || payload.status === 'cancelled'
+        ? payload.reason ?? payload.error ?? null
+        : null
       const map = new Map(execNodeStatus)
       if (payload.status === 'failed') {
         map.set(nodeIri, { statusLabel: 'Failed', statusColor: 'var(--color-danger)', statusIcon: 'error' })
@@ -435,12 +445,14 @@
       activeStepPhase = null
       activeMaterializationStatus = null
       activeMaterializationProgress = null
+      activeMaterializationReason = null
     } else if (status === 'failed') {
       map.set(nodeIri, { statusLabel: 'Failed', statusColor: 'var(--color-danger)', statusIcon: 'error' })
       activeStepLabel = nodeLabel ?? 'Etapa'
       activeStepPhase = null
       activeMaterializationStatus = null
       activeMaterializationProgress = null
+      activeMaterializationReason = payload.reason ?? payload.error ?? null
     }
     execNodeStatus = map
   }
@@ -452,6 +464,7 @@
     activeStepLabel = null
     activeStepPhase = null
     activeMaterializationStatus = payload.status === 'cancelled' ? 'cancelled' : null
+    activeMaterializationReason = payload.error ?? activeMaterializationReason
     executionOutcome = payload.status
     if (payload.status === 'cancelled' && activeNodeIri) {
       const map = new Map(execNodeStatus)
@@ -494,19 +507,22 @@
     {/if}
     {#if activeStepPhase}
       <span class="active-step-phase">
-        <span role="status" aria-live="polite">{materializationPhaseLabel(activeStepPhase, activeMaterializationStatus)}</span>
+        <span role="status" aria-live={activeMaterializationStatus === 'failed' || activeMaterializationStatus === 'cancelled' ? 'assertive' : 'polite'}>{materializationPhaseLabel(activeStepPhase, activeMaterializationStatus)}</span>
+        {#if activeMaterializationReason}
+          <span class="active-step-reason" role="status" aria-live={activeMaterializationStatus === 'failed' || activeMaterializationStatus === 'cancelled' ? 'assertive' : 'polite'} title={activeMaterializationReason}>{activeMaterializationReason}</span>
+        {/if}
         {#if activeMaterializationStatus === 'waiting' || activeMaterializationStatus === 'running'}
           {#if hasDeterminateProgress(activeMaterializationProgress)}
             <span>{activeMaterializationProgress.completedCount}/{activeMaterializationProgress.totalCount}</span>
           {:else}
-            <progress aria-label="Atualizando os dados necessários"></progress>
+            <progress aria-label={activeMaterializationStatus === 'waiting' ? 'Aguardando confirmação dos dados necessários' : 'Atualizando os dados necessários'}></progress>
           {/if}
         {/if}
       </span>
     {:else if executionOutcome === 'cancelled'}
-      <span class="execution-outcome cancelled" role="status">Automação cancelada</span>
+      <span class="execution-outcome cancelled" role="status" aria-live="assertive">Automação cancelada{activeMaterializationReason ? `: ${activeMaterializationReason}` : ''}</span>
     {:else if executionOutcome === 'failed'}
-      <span class="execution-outcome failed" role="status">Automação falhou</span>
+      <span class="execution-outcome failed" role="status" aria-live="assertive">Automação falhou{activeMaterializationReason ? `: ${activeMaterializationReason}` : ''}</span>
     {/if}
     {#if isExecutable}
       <Button variant="ghost" size="icon-sm" class="run-btn-automation" onclick={runAutomation} disabled={running} title="Run automation">
@@ -522,7 +538,7 @@
     </div>
     {#if activeTab === 'history'}
       <div class="history-panel" id="automation-history-panel" role="tabpanel" aria-labelledby="automation-history-tab">
-        <ExecutionHistory automationIri={entityId} />
+        <ExecutionHistory automationIri={entityId} onOpenEntity={openExecutionOutputEntity} />
       </div>
     {:else}
       <div class="flow-panel" id="automation-flow-panel" role="tabpanel" aria-labelledby="automation-flow-tab">
@@ -579,6 +595,12 @@
 
   .active-step-phase {
     color: var(--color-transition);
+  }
+
+  .active-step-reason {
+    max-width: var(--size-toast-max-width);
+    color: var(--color-error);
+    overflow-wrap: anywhere;
   }
 
   .active-step-phase progress {

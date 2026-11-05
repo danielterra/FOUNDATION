@@ -1,8 +1,8 @@
-import { marked } from 'marked';
+import { parseMarkdown } from '../components/widgets/inspector/markdownPrivacy.js';
 
 self.onmessage = ({ data: { id, text } }) => {
   try {
-    let html = marked.parse(text ?? '');
+    let html = parseMarkdown(text ?? '');
     html = html
       .replace(/<table>/g, '<div class="table-wrapper"><table>')
       .replace(/<\/table>/g, '</table></div>');

@@ -6,7 +6,6 @@
 	import { marked } from 'marked';
 	import ChatAttachmentPreview from './ChatAttachmentPreview.svelte';
 	import ChatInputArea from './ChatInputArea.svelte';
-	import ConversationBar from './ConversationBar.svelte';
 	import ChatHeader from './ChatHeader.svelte';
 	import ChatErrorBanner from './ChatErrorBanner.svelte';
 	import ChatMessageList from './ChatMessageList.svelte';
@@ -53,7 +52,6 @@
 	let errorMessage = $state(null);
 	let editingMessageIri = $state(null);
 	let editingMessageText = $state('');
-	let conversations = $state([]);
 	let conversationAgent = $state(null);
 	let agents = $state([]);
 	let streamingReasoning = $state('');
@@ -145,21 +143,6 @@
 	let snapshotTx = $state(0);
 
 	// tx cursor for the conversation list — max(tx) at the time of the last loadConversations.
-	let listSnapshotTx = $state(0);
-
-	// Watches ALL conversations for new messages so the list stays ordered by last-message
-	// timestamp without depending on the active-conversation subscription.
-	// One creation-query per convIri is registered; joined-set fires for any conversation.
-	const listSub = createEntitySubscription(async (event) => {
-		if (event.type !== 'joined-set') return;
-		if (event.classIri !== 'foundation:AIConversationMessage') return;
-		// Promote the conversation that received a new message to the top.
-		const convIri = event.objectValue;
-		if (!convIri) return;
-		// Idempotency: if tx ≤ cursor the event was already accounted for at snapshot time.
-		if (event.tx != null && event.tx <= listSnapshotTx) return;
-		await loadConversations();
-	});
 
 	// Reactive subscription: watches the active conversation for new messages (via creation-query)
 	// and for updates to messages already in the displayed set (via exact IRI subscription).
@@ -217,7 +200,6 @@
 				]);
 			}
 			scrollToBottom(false);
-			await loadConversations();
 			return;
 		}
 
@@ -255,15 +237,18 @@
 		conversationSub.setSinceTx(snapshotTx);
 	});
 
-	// Keep listSub watching all conversations for new messages so the list stays sorted.
+	let loadedConversationIri = undefined;
 	$effect(() => {
-		const queries = conversations.map(c => ({
-			classIri: 'foundation:AIConversationMessage',
-			predicate: 'foundation:partOfConversation',
-			objectValue: c.iri,
-		}));
-		listSub.setCreationQueries(queries);
-		listSub.setSinceTx(listSnapshotTx);
+		const conversationIri = activeConversationIri;
+		if (!isInitialized || conversationIri === loadedConversationIri) return;
+		loadedConversationIri = conversationIri;
+		clearStreaming();
+		inputText = conversationIri ? localStorage.getItem(`draft_${conversationIri}`) ?? '' : '';
+		messages = [];
+		messageLimit = MESSAGE_PAGE_SIZE;
+		hasMoreMessages = true;
+		isLoadingMessages = !!conversationIri;
+		loadMessages();
 	});
 
 	onMount(async () => {
@@ -279,27 +264,9 @@
 			console.debug('[INIT] initializeApp start');
 			await loadActiveModelInfo();
 			console.debug(`[INIT] loadActiveModelInfo=${Math.round(performance.now() - t0)}ms`);
-			const listedConversations = await loadConversations();
-			console.debug(`[INIT] loadConversations=${Math.round(performance.now() - t0)}ms`);
-			if (!listedConversations) return;
-			if (listedConversations.length === 0) {
-				activeConversationIri = null;
-				const created = await createConversation({ loadMessagesAfterCreation: false });
-				if (!created) return;
-			} else {
-				const saved = localStorage.getItem('activeConversationIri');
-				const currentExists = listedConversations.some(c => c.iri === activeConversationIri);
-				const savedExists = saved && listedConversations.some(c => c.iri === saved);
-				activeConversationIri = currentExists
-					? activeConversationIri
-					: savedExists ? saved : listedConversations[0].iri;
-				localStorage.setItem('activeConversationIri', activeConversationIri);
-				inputText = localStorage.getItem(`draft_${activeConversationIri}`) ?? '';
-			}
 			await initializeAI();
 			console.debug(`[INIT] initializeAI=${Math.round(performance.now() - t0)}ms`);
 			await loadMessages();
-			console.debug(`[INIT] loadMessages=${Math.round(performance.now() - t0)}ms — done`);
 			loadAgents();
 		};
 
@@ -351,7 +318,6 @@
 			unlistenAIStatus();
 			unlistenAIError();
 			document.removeEventListener('chat-inject', handleChatInject);
-			listSub.destroy();
 			conversationSub.destroy();
 			for (const state of Object.values(convLoading)) {
 				if (state.elapsedInterval) clearInterval(state.elapsedInterval);
@@ -464,71 +430,10 @@
 		}
 	}
 
-	async function loadConversations() {
-		try {
-			const result = await invoke('chat__list_conversations');
-			conversations = result.items;
-			// Pin the list cursor from the envelope's own snapshot_tx — the backend
-			// already computed MAX(tx) at list time, so this is always the tightest
-			// cursor without depending on the active-conversation snapshot.
-			if (result.snapshot_tx > listSnapshotTx) {
-				listSnapshotTx = result.snapshot_tx;
-				listSub.setSinceTx(listSnapshotTx);
-				listSub.replayMissed();
-			}
-			return result.items;
-		} catch (err) {
-			console.error('Failed to load conversations:', err);
-			showError(err?.toString() ?? 'Failed to load conversations');
-			return null;
-		}
-	}
-
-	async function createConversation({ loadMessagesAfterCreation = true } = {}) {
-		try {
-			const conv = await invoke('chat__create_conversation', { label: null });
-			clearStreaming();
-			loadMessagesVersion++;
-			activeConversationIri = conv.iri;
-			localStorage.setItem('activeConversationIri', conv.iri);
-			messages = [];
-			messageLimit = MESSAGE_PAGE_SIZE;
-			hasMoreMessages = true;
-			const listedConversations = await loadConversations();
-			if (!listedConversations) return null;
-			if (loadMessagesAfterCreation) await loadMessages();
-			return conv;
-		} catch (err) {
-			console.error('Failed to create conversation:', err);
-			showError(err?.toString() ?? 'Failed to create conversation');
-			return null;
-		}
-	}
-
-	async function switchConversation(iri) {
-		activeConversationIri = iri;
-		clearStreaming();
-		loadMessagesVersion++;
-		localStorage.setItem('activeConversationIri', iri);
-		inputText = localStorage.getItem(`draft_${iri}`) ?? '';
-		messages = [];
-		messageLimit = MESSAGE_PAGE_SIZE;
-		hasMoreMessages = true;
-		await loadMessages();
-	}
-
-	async function handleDeleteConversation(iri) {
-		if (activeConversationIri !== iri) return;
-		if (conversations.length > 0) {
-			await switchConversation(conversations[0].iri);
-		} else {
-			await createConversation();
-		}
-	}
-
 	async function loadMessages() {
 		if (!activeConversationIri) {
 			isLoadingMessages = false;
+			messages = [];
 			return;
 		}
 		const version = ++loadMessagesVersion;
@@ -669,12 +574,8 @@
 	}
 
 	async function sendMessage() {
-		let convIri = activeConversationIri;
-		if (!convIri) {
-			await createConversation();
-			convIri = activeConversationIri;
-			if (!convIri) return;
-		}
+		const convIri = activeConversationIri;
+		if (!convIri) return;
 		if ((!inputText.trim() && pendingAttachments.length === 0) || (convLoading[convIri]?.isLoading ?? false) || !isInitialized) return;
 
 		const content = inputText.trim();
@@ -1012,7 +913,6 @@
 		{agents}
 		onOpenAgentInspector={openAgentInspector}
 		onSwitchAgent={switchAgent}
-		onNewConversation={() => createConversation()}
 		onDownloadChat={downloadChat}
 		{cameraEnabled}
 		onToggleCamera={toggleCamera}
@@ -1020,7 +920,6 @@
 		onToggleThinking={toggleThinking}
 		{activeModelInfo}
 	/>
-	<ConversationBar bind:conversations bind:activeConversationIri onSwitch={switchConversation} onDelete={handleDeleteConversation} />
 	<div class="chat-content">
 		<ChatErrorBanner {errorMessage} onDismiss={dismissError} />
 
@@ -1036,12 +935,16 @@
 			onEntityClick={openEntityInspector}
 		/>
 
-		<ChatAttachmentPreview
-			pendingAttachments={pendingAttachments}
-			onRemove={removeAttachment}
-		/>
+		{#if activeConversationIri}
+			<ChatAttachmentPreview
+				pendingAttachments={pendingAttachments}
+				onRemove={removeAttachment}
+			/>
+		{/if}
 
-		{#if !hasPendingQuestion}
+		{#if !activeConversationIri}
+			<div class="chat-no-conversation" role="status">Selecione ou crie uma conversa pela barra superior para começar.</div>
+		{:else if !hasPendingQuestion}
 			<ChatInputArea
 				bind:inputText
 				{isLoading}
@@ -1086,6 +989,14 @@
 		flex-direction: column;
 		overflow: hidden;
 		padding: var(--spacing-chat-inset-block) var(--spacing-chat-inset-inline);
+	}
+
+	.chat-no-conversation {
+		padding: var(--space-3) var(--space-4);
+		border-top: 1px solid var(--color-hud-line-subtle);
+		color: var(--color-neutral);
+		font-size: var(--type-body-compact);
+		text-align: center;
 	}
 
 </style>

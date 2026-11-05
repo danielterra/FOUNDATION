@@ -5,6 +5,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import * as Select from '$lib/components/ui/select';
+	import OpenRouterModelSelector from '$lib/components/OpenRouterModelSelector.svelte';
 
 	type EmailProvider = {
 		id: string;
@@ -27,6 +28,11 @@
 		password: string;
 	};
 
+	type EmailTestResult = {
+		message: string;
+		verificationToken: string;
+	};
+
 	type AIService = {
 		iri: string;
 		label: string;
@@ -39,6 +45,15 @@
 		label: string;
 		modelIdentifier: string | null;
 		modelVersion: string | null;
+		description?: string | null;
+		isDefault?: boolean;
+	};
+
+	type AIModelPage = {
+		items: AIModel[];
+		next_cursor: number | null;
+		has_more: boolean;
+		snapshot_tx: number;
 	};
 
 	type OpenRouterModel = {
@@ -46,18 +61,21 @@
 		name: string;
 		publisher?: string | null;
 		description?: string;
+		recommendedUse?: string | null;
+		recommendedUseStatus?: 'provided' | 'not_provided';
 		contextLength: number | null;
 		inputCostPerToken: number | null;
 		outputCostPerToken: number | null;
 		parameterCountTotal?: number | null;
 		parameterCountActive?: number | null;
+		parameterCountStatus?: 'reported' | 'not_provided_or_ambiguous';
 		supportedParameters?: string[] | null;
 		supportsTools?: boolean | null;
 		inputModalities?: string[] | null;
 		outputModalities?: string[] | null;
 	};
-	type OpenRouterModelSort = 'price' | 'size' | 'provider';
-
+	type OpenRouterBenchmark = { score: number; dimension: string; source: string; asOf: string };
+	type OpenRouterBenchmarks = { available: boolean; availableDimensions: string[]; source: string; sourceUrl: string | null; citation: string | null; asOf: string | null; models: { modelId: string; benchmarks: Record<string, OpenRouterBenchmark> }[]; ambiguousModelIds: string[] };
 	let { onComplete } = $props<{ onComplete?: () => void }>();
 
 	let step = $state(1);
@@ -156,6 +174,7 @@
 	let emailTesting = $state(false);
 	let emailTestResult = $state<'ok' | 'error' | null>(null);
 	let emailTestMessage = $state('');
+	let emailVerificationToken = $state<string | null>(null);
 	let emailTestRequestId = 0;
 	let showInstructions = $state(false);
 	let savedEmailAccountIri = $state<string | null>(null);
@@ -171,7 +190,8 @@
 
 	function selectEmailProvider(provider: EmailProvider) {
 		if (provider.disabled) return;
-	selectedEmailProviderId = provider.id;
+		selectedEmailProviderId = provider.id;
+		invalidateEmailTest();
 		emailTestResult = null;
 		emailTestMessage = '';
 		showInstructions = false;
@@ -202,6 +222,7 @@
 		emailTesting = false;
 		emailTestResult = null;
 		emailTestMessage = '';
+		emailVerificationToken = null;
 	}
 
 	function handleEmailTlsChange() {
@@ -246,10 +267,11 @@
 		emailTestResult = null;
 		emailTestMessage = '';
 		try {
-			const msg = await invoke<string>('imap__test_connection', testedCredentials);
+			const result = await invoke<EmailTestResult>('imap__test_connection', testedCredentials);
 			if (requestId !== emailTestRequestId || !emailCredentialsMatch(testedCredentials)) return;
 			emailTestResult = 'ok';
-			emailTestMessage = msg;
+			emailTestMessage = result.message;
+			emailVerificationToken = result.verificationToken;
 		} catch (e) {
 			if (requestId !== emailTestRequestId || !emailCredentialsMatch(testedCredentials)) return;
 			emailTestResult = 'error';
@@ -264,7 +286,8 @@
 		emailUsername.trim() !== '' &&
 		emailPassword.trim() !== '' &&
 		emailHost.trim() !== '' &&
-		emailTestResult === 'ok'
+		emailTestResult === 'ok' &&
+		emailVerificationToken !== null
 	);
 
 	let aiChoice = $state<'chat' | 'mcp' | ''>('');
@@ -274,15 +297,21 @@
 	let aiServices = $state<AIService[]>([]);
 	let aiModels = $state<AIModel[]>([]);
 	let openRouterModels = $state<OpenRouterModel[]>([]);
+	let openRouterBenchmarks = $state<OpenRouterBenchmarks | null>(null);
+	let openRouterBenchmarksLoading = $state(false);
+	let openRouterBenchmarksError = $state('');
 	let selectedAIServiceIri = $state('');
 	let selectedAIModelIri = $state('');
 	let selectedOpenRouterModelId = $state('');
 	let aiServicesLoading = $state(false);
 	let aiModelsLoading = $state(false);
 	let openRouterModelsLoading = $state(false);
-	let openRouterModelSort = $state<OpenRouterModelSort>('price');
+	let openRouterModelsError = $state('');
 	let aiServicesLoaded = $state(false);
 	let aiConfigError = $state('');
+	let aiServicesRequestId = 0;
+	let aiModelsRequestId = 0;
+	let openRouterModelsRequestId = 0;
 
 	function getSelectedAIService(): AIService | null {
 		for (const service of aiServices) {
@@ -304,48 +333,6 @@
 		}
 		return null;
 	}
-
-	function openRouterProvider(model: OpenRouterModel): string {
-		return model.publisher || 'Provedor não informado';
-	}
-
-	function openRouterPrice(model: OpenRouterModel): number | null {
-		if (model.inputCostPerToken == null || model.outputCostPerToken == null) return null;
-		return model.inputCostPerToken + model.outputCostPerToken;
-	}
-
-	function sortOpenRouterModels(models: OpenRouterModel[], sort: OpenRouterModelSort): OpenRouterModel[] {
-		return [...models].sort((a, b) => {
-			if (sort === 'provider') {
-				return openRouterProvider(a).localeCompare(openRouterProvider(b)) || a.name.localeCompare(b.name);
-			}
-			if (sort === 'size') {
-				return (b.parameterCountTotal ?? -1) - (a.parameterCountTotal ?? -1) || a.name.localeCompare(b.name);
-			}
-			const aPrice = openRouterPrice(a);
-			const bPrice = openRouterPrice(b);
-			if (aPrice == null) return bPrice == null ? a.name.localeCompare(b.name) : 1;
-			if (bPrice == null) return -1;
-			return aPrice - bPrice || a.name.localeCompare(b.name);
-		});
-	}
-
-	function formatOpenRouterContext(model: OpenRouterModel): string {
-		return model.contextLength == null ? 'Contexto não informado' : `${(model.contextLength / 1000).toFixed(0)}k tokens`;
-	}
-
-	function formatOpenRouterModelSize(model: OpenRouterModel): string {
-		if (model.parameterCountTotal == null) return 'Não informado pelo provedor';
-		const total = `${(model.parameterCountTotal / 1_000_000_000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}B parâmetros`;
-		if (model.parameterCountActive == null) return `${total} (estimativa da descrição do provedor)`;
-		return `${total} · ${(model.parameterCountActive / 1_000_000_000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}B ativos`;
-	}
-
-	function formatOpenRouterPrice(value: number | null): string {
-		return value == null ? 'não informado' : `$${(value * 1_000_000).toFixed(2)} / 1M tokens`;
-	}
-
-	let sortedOpenRouterModels = $derived(sortOpenRouterModels(openRouterModels, openRouterModelSort));
 
 	let selectedAIService = $derived(getSelectedAIService());
 	let selectedAIModel = $derived(getSelectedAIModel());
@@ -370,15 +357,19 @@
 	);
 
 	async function loadAIServices() {
+		const requestId = ++aiServicesRequestId;
 		aiServicesLoading = true;
 		aiConfigError = '';
 		try {
-			aiServices = await invoke<AIService[]>('setup__list_ai_services');
+			const services = await invoke<AIService[]>('setup__list_ai_services');
+			if (requestId !== aiServicesRequestId) return;
+			aiServices = services;
 			aiServicesLoaded = true;
 		} catch (error) {
+			if (requestId !== aiServicesRequestId) return;
 			aiConfigError = String(error);
 		} finally {
-			aiServicesLoading = false;
+			if (requestId === aiServicesRequestId) aiServicesLoading = false;
 		}
 	}
 
@@ -401,6 +392,7 @@
 	}
 
 	async function selectAIService(serviceIri: string) {
+		const requestId = ++aiModelsRequestId;
 		selectedAIServiceIri = serviceIri;
 		selectedAIModelIri = '';
 		selectedOpenRouterModelId = '';
@@ -408,22 +400,61 @@
 		apiBaseUrl = '';
 		aiModels = [];
 		openRouterModels = [];
+		openRouterBenchmarks = null;
+		openRouterBenchmarksError = '';
+		openRouterModelsError = '';
+		openRouterModelsRequestId += 1;
+		openRouterModelsLoading = false;
 		aiConfigError = '';
 		aiModelsLoading = true;
 		try {
-			const [modelResponse, savedKey, savedBaseUrl] = await Promise.all([
-				invoke<{ items: AIModel[] }>('setup__list_ai_models', { serviceIri }),
+			const [models, savedKey, savedBaseUrl] = await Promise.all([
+				loadAllAIModels(serviceIri, requestId),
 				invoke<string>('ai__get_api_key', { serviceIri }),
 				invoke<string>('ai__get_service_base_url', { serviceIri }),
 			]);
-			aiModels = modelResponse.items;
+			if (requestId !== aiModelsRequestId) return;
+			aiModels = models;
 			apiKey = savedKey ?? '';
 			apiBaseUrl = savedBaseUrl ?? '';
 		} catch (error) {
+			if (requestId !== aiModelsRequestId) return;
 			aiConfigError = String(error);
 		} finally {
-			aiModelsLoading = false;
+			if (requestId === aiModelsRequestId) aiModelsLoading = false;
 		}
+	}
+
+	async function loadAllAIModels(serviceIri: string, requestId: number): Promise<AIModel[]> {
+		const pageSize = 100;
+		let offset = 0;
+		let snapshotTx: number | null = null;
+		const models: AIModel[] = [];
+		let hasMore = true;
+
+		while (hasMore) {
+			const page = await invoke<AIModelPage>('setup__list_ai_models', {
+				serviceIri,
+				offset,
+				limit: pageSize,
+				snapshotTx,
+			});
+			if (requestId !== aiModelsRequestId || serviceIri !== selectedAIServiceIri) return [];
+			if (snapshotTx === null) snapshotTx = page.snapshot_tx;
+			else if (page.snapshot_tx !== snapshotTx) {
+				throw new Error('O catálogo de modelos mudou durante a paginação. Tente novamente.');
+			}
+			models.push(...page.items);
+			hasMore = page.has_more;
+			if (hasMore) {
+				if (page.next_cursor === null || page.next_cursor <= offset) {
+					throw new Error('O catálogo de modelos retornou uma paginação inválida.');
+				}
+				offset = page.next_cursor;
+			}
+		}
+
+		return models;
 	}
 
 	function handleAIModelChange(modelIri: string | undefined) {
@@ -438,41 +469,78 @@
 		const target = event.currentTarget;
 		if (!(target instanceof HTMLInputElement)) return;
 		apiKey = target.value;
-		selectedOpenRouterModelId = '';
+		openRouterModelsRequestId += 1;
+		openRouterModelsLoading = false;
 		openRouterModels = [];
+		openRouterBenchmarks = null;
+		openRouterBenchmarksError = '';
+		openRouterModelsError = '';
 	}
 
 	function handleAPIBaseUrlInput(event: Event) {
 		const target = event.currentTarget;
 		if (!(target instanceof HTMLInputElement)) return;
 		apiBaseUrl = target.value;
-		selectedOpenRouterModelId = '';
+		openRouterModelsRequestId += 1;
+		openRouterModelsLoading = false;
 		openRouterModels = [];
+		openRouterBenchmarks = null;
+		openRouterBenchmarksError = '';
+		openRouterModelsError = '';
 	}
 
 	async function loadOpenRouterModels() {
 		if (!apiKey.trim() || !apiBaseUrl.trim()) return;
+		const requestId = ++openRouterModelsRequestId;
+		const requestedApiKey = apiKey.trim();
+		const requestedBaseUrl = apiBaseUrl.trim();
 		openRouterModelsLoading = true;
 		aiConfigError = '';
+		openRouterModelsError = '';
 		try {
-			await invoke('ai__validate_provider_key', { apiKey, baseUrl: apiBaseUrl });
-			openRouterModels = await invoke<OpenRouterModel[]>(
+			await invoke('ai__validate_provider_key', { apiKey: requestedApiKey, baseUrl: requestedBaseUrl });
+			const models = await invoke<OpenRouterModel[]>(
 				'ai__list_openrouter_models',
-				{ apiKey, baseUrl: apiBaseUrl }
+				{ apiKey: requestedApiKey, baseUrl: requestedBaseUrl }
 			);
+			if (requestId !== openRouterModelsRequestId || requestedApiKey !== apiKey.trim() || requestedBaseUrl !== apiBaseUrl.trim()) return;
+			openRouterModels = models;
+			await loadOpenRouterBenchmarks(requestedApiKey, requestedBaseUrl, requestId);
 			if (openRouterModels.length === 0) {
-				aiConfigError = 'Nenhum modelo foi retornado pelo OpenRouter.';
+				openRouterModelsError = 'Nenhum modelo foi retornado pelo OpenRouter.';
 			}
 		} catch (error) {
-			aiConfigError = String(error);
+			if (requestId !== openRouterModelsRequestId || requestedApiKey !== apiKey.trim() || requestedBaseUrl !== apiBaseUrl.trim()) return;
+			openRouterModelsError = String(error);
 		} finally {
-			openRouterModelsLoading = false;
+			if (requestId === openRouterModelsRequestId) openRouterModelsLoading = false;
+		}
+	}
+
+	async function loadOpenRouterBenchmarks(requestedApiKey: string, requestedBaseUrl: string, requestId: number) {
+		openRouterBenchmarksLoading = true;
+		openRouterBenchmarksError = '';
+		try {
+			const result = await invoke<OpenRouterBenchmarks>('ai__list_openrouter_benchmarks', { apiKey: requestedApiKey, baseUrl: requestedBaseUrl });
+			if (requestId !== openRouterModelsRequestId || requestedApiKey !== apiKey.trim() || requestedBaseUrl !== apiBaseUrl.trim()) return;
+			openRouterBenchmarks = result;
+		} catch (error) {
+			if (requestId === openRouterModelsRequestId) {
+				openRouterBenchmarks = null;
+				openRouterBenchmarksError = String(error);
+			}
+		} finally {
+			if (requestId === openRouterModelsRequestId) openRouterBenchmarksLoading = false;
 		}
 	}
 
 	function handleRetryLoadAIServices() {
 		aiServicesLoaded = false;
 		loadAIServices();
+	}
+
+	function handleRetryLoadSelectedAIService() {
+		if (selectedAIServiceIri) selectAIService(selectedAIServiceIri);
 	}
 
 	function handleRetryLoadOpenRouterModels() {
@@ -494,7 +562,7 @@
 	}
 
 	async function finish() {
-		if (!emailValid || !aiChoiceValid) return;
+		if (!emailValid || !emailVerificationToken || !aiChoiceValid) return;
 		isSubmitting = true;
 		submitError = '';
 		try {
@@ -551,6 +619,9 @@
 			await invoke('setup__init', {
 				userName: personName.trim(),
 				email: emailUsername.trim(),
+				emailAccountIri,
+				emailTestToken: emailVerificationToken,
+				aiIntegrationMode: aiChoice,
 				aiServiceIri,
 				aiModelIri,
 			});
@@ -581,6 +652,7 @@
 		<!-- cabeçalho -->
 		<div class="header">
 			<span class="logo">FOUNDATION</span>
+			<span class="step-counter">ETAPA {step} DE 4</span>
 			<div class="steps" role="progressbar" aria-label="Progresso da configuração" aria-valuemin="1" aria-valuemax="4" aria-valuenow={step}>
 				{#each [1,2,3,4] as s}
 					<div class="step-dot" class:active={step === s} class:done={step > s}></div>
@@ -624,6 +696,7 @@
 							class={`provider-card${selectedEmailProviderId === provider.id ? ' selected' : ''}${provider.disabled ? ' disabled' : ''}`}
 							data-email-provider-id={provider.id}
 							onclick={handleEmailProviderClick}
+											aria-pressed={selectedEmailProviderId === provider.id}
 							disabled={provider.disabled}
 						>
 							<span class="material-symbols-outlined">{provider.icon}</span>
@@ -701,16 +774,17 @@
 						</Button>
 
 						{#if emailTestResult === 'ok'}
-							<p class="test-ok">
+							<p class="test-ok" role="status" aria-live="polite">
 								<span class="material-symbols-outlined">check_circle</span>
 								{emailTestMessage}
 							</p>
 						{:else if emailTestResult === 'error'}
-							<p class="test-error">
+							<p class="test-error" role="alert" aria-live="assertive">
 								<span class="material-symbols-outlined">error</span>
 								{emailTestMessage}
 							</p>
 						{/if}
+						{#if emailTestResult !== 'ok'}<p class="state-message" role="status">A conexão precisa ser testada novamente antes de continuar.</p>{/if}
 					</div>
 				{/if}
 			</div>
@@ -776,7 +850,10 @@
 							<Button variant="secondary" onclick={handleRetryLoadAIServices}>Tentar novamente</Button>
 						</div>
 					{:else if aiServices.length === 0}
-						<p class="state-message">Nenhum serviço de IA está disponível.</p>
+						<div class="state-panel" role="status">
+							<p>Nenhum serviço de IA com suporte ativo está disponível.</p>
+							<Button variant="secondary" onclick={handleRetryLoadAIServices}>Verificar novamente</Button>
+						</div>
 					{:else}
 						<div class="field-group">
 							<label for="setup-ai-service">Serviço de IA</label>
@@ -794,6 +871,14 @@
 									{/each}
 								</Select.Content>
 							</Select.Root>
+							{#if selectedAIService}
+								<div class="service-description" aria-live="polite">
+									<span class="service-kind">{selectedAIService.isLocal ? 'Processamento local' : 'Provedor online'}</span>
+									{#if selectedAIService.description.trim()}
+										<p>{selectedAIService.description}</p>
+									{/if}
+								</div>
+							{/if}
 						</div>
 
 						{#if selectedAIService}
@@ -837,66 +922,35 @@
 
 							{#if isOpenRouterService}
 								<div class="field-group">
-									<div class="field-label-row">
-										<label for="setup-openrouter-model">Modelo</label>
-										<Button
-											variant="ghost"
-											size="sm"
-											onclick={handleRetryLoadOpenRouterModels}
-											disabled={openRouterModelsLoading || !apiKey.trim() || !apiBaseUrl.trim()}
-										>
-											{openRouterModelsLoading ? 'Carregando…' : 'Carregar modelos'}
-										</Button>
-									</div>
-					<div class="field-group model-sort-field">
-						<label for="setup-openrouter-sort">Ordenar modelos por</label>
-										<Select.Root type="single" value={openRouterModelSort} onValueChange={(value) => { if (value === 'price' || value === 'size' || value === 'provider') openRouterModelSort = value; }}>
-							<Select.Trigger id="setup-openrouter-sort"><Select.Value /></Select.Trigger>
-							<Select.Content>
-									<Select.Item value="price">Menor custo</Select.Item>
-									<Select.Item value="size">Menor tamanho</Select.Item>
-								<Select.Item value="provider">Provedor</Select.Item>
-							</Select.Content>
-						</Select.Root>
-									<p class="state-detail">O tamanho só aparece quando a descrição do provedor informa explicitamente os parâmetros; caso contrário, o modelo fica como não informado.</p>
-					</div>
-									<Select.Root
-										type="single"
-										value={selectedOpenRouterModelId}
-										onValueChange={handleOpenRouterModelChange}
-									>
-										<Select.Trigger id="setup-openrouter-model">
-											<Select.Value placeholder="Selecione um modelo" />
-										</Select.Trigger>
-										<Select.Content>
-										{#each sortedOpenRouterModels as model}
-										<Select.Item value={model.id}>{model.name} · {openRouterProvider(model)} · {formatOpenRouterModelSize(model)} · contexto {formatOpenRouterContext(model)} · entrada {formatOpenRouterPrice(model.inputCostPerToken)} · saída {formatOpenRouterPrice(model.outputCostPerToken)}</Select.Item>
-											{/each}
-										</Select.Content>
-									</Select.Root>
-									{#if selectedOpenRouterModel}
-										<div class="model-metadata" aria-label="Detalhes do modelo selecionado">
-											<p><span>Provedor</span><span>{openRouterProvider(selectedOpenRouterModel)}</span></p>
-											<p><span>Tamanho do modelo</span><span>{formatOpenRouterModelSize(selectedOpenRouterModel)}</span></p>
-											<p><span>Janela de contexto</span><span>{formatOpenRouterContext(selectedOpenRouterModel)}</span></p>
-											<p><span>Custo de entrada</span><span>{formatOpenRouterPrice(selectedOpenRouterModel.inputCostPerToken)}</span></p>
-											<p><span>Custo de saída</span><span>{formatOpenRouterPrice(selectedOpenRouterModel.outputCostPerToken)}</span></p>
-											{#if selectedOpenRouterModel.supportedParameters?.length}
-												<p><span>Capacidades declaradas</span><span>{selectedOpenRouterModel.supportedParameters.join(', ')}</span></p>
-											{:else}<p><span>Capacidades</span><span>Não informadas</span></p>{/if}
-											<p><span>Modalidades de entrada</span><span>{selectedOpenRouterModel.inputModalities?.join(', ') || 'Não informadas'}</span></p>
-											<p><span>Modalidades de saída</span><span>{selectedOpenRouterModel.outputModalities?.join(', ') || 'Não informadas'}</span></p>
-											<p><span>Uso recomendado</span><span>{selectedOpenRouterModel.supportsTools === true ? 'Agentes que usam ferramentas' : 'Não informado'}</span></p>
-										</div>
-									{/if}
+					<OpenRouterModelSelector
+						idPrefix="setup-openrouter"
+						models={openRouterModels}
+						benchmarks={openRouterBenchmarks}
+						bind:selectedModelId={selectedOpenRouterModelId}
+						loading={openRouterModelsLoading}
+						error={openRouterModelsError}
+						benchmarksLoading={openRouterBenchmarksLoading}
+						benchmarksError={openRouterBenchmarksError}
+						loadHint={!apiKey.trim() ? 'Informe a chave de API para carregar o catálogo.' : !apiBaseUrl.trim() ? 'Informe a URL base do OpenRouter para carregar o catálogo.' : 'Carregue o catálogo para comparar os modelos disponíveis.'}
+						onRetry={handleRetryLoadOpenRouterModels}
+					/>
 								</div>
 							{:else}
 								<div class="field-group">
 									<label for="setup-ai-model">Modelo</label>
 									{#if aiModelsLoading}
 										<p class="state-message" role="status" aria-live="polite">Carregando modelos…</p>
+									{:else if aiConfigError}
+										<div class="state-panel" role="alert">
+											<p>Não foi possível carregar os modelos deste serviço.</p>
+											<p class="state-detail">{aiConfigError}</p>
+											<Button variant="secondary" onclick={handleRetryLoadSelectedAIService}>Tentar novamente</Button>
+										</div>
 									{:else if aiModels.length === 0}
-										<p class="state-message">Nenhum modelo está disponível para este serviço.</p>
+										<div class="state-panel" role="status">
+											<p>Nenhum modelo está disponível para este serviço.</p>
+											<Button variant="secondary" onclick={handleRetryLoadSelectedAIService}>Verificar novamente</Button>
+										</div>
 									{:else}
 										<Select.Root
 											type="single"
@@ -916,16 +970,13 @@
 								</div>
 							{/if}
 						{/if}
-
-						{#if aiConfigError}
-							<p class="state-error" role="alert" aria-live="polite">{aiConfigError}</p>
-						{/if}
 					{/if}
 				{/if}
 
 				{#if aiChoice === 'mcp'}
 					<div class="mcp-info">
 						<p>
+							O provedor e o modelo são escolhidos no cliente externo de IA; o FOUNDATION não seleciona um padrão neste modo.
 							Quando o FOUNDATION estiver aberto, ele expõe um servidor MCP local em
 							<code>http://127.0.0.1:47178/mcp</code>.
 							Configure seu app de IA favorito para usar esse endereço.
@@ -1042,6 +1093,13 @@
 		font-size: var(--type-body-compact);
 		letter-spacing: var(--tracking-hud-label);
 		color: var(--text-primary);
+		text-transform: uppercase;
+	}
+
+	.step-counter {
+		font-size: var(--type-overline);
+		letter-spacing: var(--tracking-hud-label);
+		color: var(--text-secondary);
 		text-transform: uppercase;
 	}
 
@@ -1417,34 +1475,25 @@
 		border-top: var(--size-hud-frame-line) solid var(--color-hud-line-subtle);
 	}
 
-	.field-label-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--space-2);
-	}
-
-	.model-metadata {
+	.service-description {
 		display: grid;
-		gap: var(--space-2);
-		padding: var(--space-3);
+		gap: var(--space-1);
+		padding-inline-start: var(--space-3);
 		border-inline-start: var(--size-hud-frame-line) solid var(--color-hud-line-subtle);
-		background: var(--color-surface-2);
 	}
 
-	.model-metadata p {
-		display: flex;
-		justify-content: space-between;
-		gap: var(--space-3);
-		margin: 0;
-		font-size: var(--type-body-compact);
+	.service-kind {
+		font-size: var(--type-label);
+		letter-spacing: var(--tracking-hud-label);
+		text-transform: uppercase;
 		color: var(--text-secondary);
 	}
 
-	.model-metadata p span:last-child {
+	.service-description p {
+		margin: 0;
+		font-size: var(--type-body-compact);
 		color: var(--text-body);
-		text-align: end;
-		overflow-wrap: anywhere;
+		line-height: var(--line-height-body);
 	}
 
 	.state-message,
@@ -1468,12 +1517,6 @@
 
 	.state-panel p {
 		margin: 0;
-	}
-
-	.state-error {
-		margin: 0;
-		font-size: var(--type-body-compact);
-		color: var(--text-danger);
 	}
 
 </style>

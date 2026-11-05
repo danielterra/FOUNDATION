@@ -1893,7 +1893,7 @@ dependencies = [
 [[package]]
 name = "foundation-core"
 version = "0.1.0"
-source = "git+https://github.com/danielterra/foundation-core?rev=1c5987d6b3bb7b82d360e1da073043ca93c33954#1c5987d6b3bb7b82d360e1da073043ca93c33954"
+source = "git+https://github.com/danielterra/foundation-core?rev=862d6aadb8e0608a4ff107398afad34a2450c996#862d6aadb8e0608a4ff107398afad34a2450c996"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
