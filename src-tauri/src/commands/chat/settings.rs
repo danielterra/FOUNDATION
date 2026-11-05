@@ -17,7 +17,11 @@ pub struct AgentConfig {
     pub timeout_secs: u64,
 }
 
-pub fn load_agent_config(conn: &Connection, conversation_iri: &str) -> Result<AgentConfig, String> {
+pub fn load_agent_config(
+    conn: &Connection,
+    conversation_iri: &str,
+    app: &tauri::AppHandle,
+) -> Result<AgentConfig, String> {
     let agent_iri = crate::owl::get_iri_property(conn, conversation_iri, "foundation:handledBy")
         .map_err(|e| format!("Failed to get agent for conversation: {}", e))?
         .ok_or_else(|| format!("Conversation {} has no handledBy agent", conversation_iri))?;
@@ -63,13 +67,19 @@ pub fn load_agent_config(conn: &Connection, conversation_iri: &str) -> Result<Ag
 
     let model_iri = crate::owl::get_iri_property(conn, &agent_iri, "foundation:usesModel")
         .map_err(|e| format!("Failed to get model for agent: {}", e))?
-        .or_else(|| get_ai_model_iri(conn).ok().flatten())
+        .or(crate::commands::get_setup_ai_model_for_service(
+            conn,
+            &service_iri,
+        )?)
         .ok_or_else(|| {
             format!(
-                "Agent {} has no usesModel and no default model configured.",
-                agent_iri
+                "Agent {} has no usesModel and service {} has no configured model.",
+                agent_iri, service_iri
             )
         })?;
+
+    crate::commands::validate_setup_ai_model(conn, &model_iri, &service_iri)?;
+    crate::commands::validate_setup_ai_service_runtime(conn, &service_iri, app)?;
 
     let model_identifier =
         crate::owl::get_literal_property(conn, &model_iri, "foundation:modelIdentifier")

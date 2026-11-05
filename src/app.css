@@ -209,6 +209,9 @@
   --size-widget-sidebar-width: min(18rem, calc(100vw - var(--space-4)));
   --size-widget-sidebar-list-max-height: 480px;
   --size-settings-section-min-width: 32rem;
+  --size-settings-content-max-width: 72rem;
+  --size-settings-provider-option-min-width: 16rem;
+  --size-settings-field-min-width: 15rem;
 
   /* Semantic typography scale shared by every component. */
   --type-overline: 10px;
@@ -227,6 +230,7 @@
   --type-icon-large: 48px;
   --line-height-hud-compact: 1.15;
   --size-touch-target: 44px;
+  --size-settings-priority-indicator: var(--space-6);
 
   /* Shared spacing scale, based on 4 px. */
   --space-1: 4px;

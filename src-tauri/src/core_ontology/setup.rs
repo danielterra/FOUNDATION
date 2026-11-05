@@ -116,13 +116,11 @@ mod tests {
         let (_directory, mut conn) = initialized_profile_without_application();
 
         assert!(ensure_setup_complete(&mut conn).unwrap());
-        assert!(get_all_iri_properties(
-            &conn,
-            "foundation:ThisFoundationInstance",
-            "rdf:type"
-        )
-        .unwrap()
-        .contains(&"foundation:Application".to_string()));
+        assert!(
+            get_all_iri_properties(&conn, "foundation:ThisFoundationInstance", "rdf:type")
+                .unwrap()
+                .contains(&"foundation:Application".to_string())
+        );
     }
 
     #[test]
@@ -130,13 +128,11 @@ mod tests {
         let (_directory, mut conn) = setup_test_db_without_application_marker();
 
         assert!(!ensure_setup_complete(&mut conn).unwrap());
-        assert!(get_all_iri_properties(
-            &conn,
-            "foundation:ThisFoundationInstance",
-            "rdf:type"
-        )
-        .unwrap()
-        .is_empty());
+        assert!(
+            get_all_iri_properties(&conn, "foundation:ThisFoundationInstance", "rdf:type")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -152,12 +148,10 @@ mod tests {
         );
 
         assert!(!ensure_setup_complete(&mut conn).unwrap());
-        assert!(get_all_iri_properties(
-            &conn,
-            "foundation:ThisFoundationInstance",
-            "rdf:type"
-        )
-        .unwrap()
-        .is_empty());
+        assert!(
+            get_all_iri_properties(&conn, "foundation:ThisFoundationInstance", "rdf:type")
+                .unwrap()
+                .is_empty()
+        );
     }
 }

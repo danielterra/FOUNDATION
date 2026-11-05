@@ -12,7 +12,7 @@ pub struct AgentConfig {
 }
 
 /// Resolves a fully configured AiProvider for the given agent IRI,
-/// falling back to global service/model settings when the agent has none.
+/// falling back to the configured service/model when the agent has none.
 pub async fn resolve_agent_config(executor: &DbExecutor, agent_iri: &str) -> Result<AgentConfig> {
     let agent_iri = agent_iri.to_string();
     executor
@@ -41,15 +41,14 @@ pub async fn resolve_agent_config(executor: &DbExecutor, agent_iri: &str) -> Res
 
             let model_iri = get_iri_property(conn, &agent_iri, "foundation:usesModel")
                 .map_err(|e| e.to_string())?
-                .or_else(|| {
-                    crate::commands::chat::settings::get_ai_model_iri(conn)
-                        .ok()
-                        .flatten()
-                })
+                .or(crate::commands::get_setup_ai_model_for_service(
+                    conn,
+                    &service_iri,
+                )?)
                 .ok_or_else(|| {
                     format!(
-                        "No AI model configured for agent {} and no global default",
-                        agent_iri
+                        "No AI model configured for agent {} and service {}",
+                        agent_iri, service_iri
                     )
                 })?;
 

@@ -1950,7 +1950,12 @@ async fn run_sub_process(
                 .await?;
                 for job in jobs {
                     if let Err(error) = worker.enqueue(job, vec![], vec![]) {
-                        log_backend("error", &format!("formula job enqueue failed for iteration {child_iri}: {error}"));
+                        log_backend(
+                            "error",
+                            &format!(
+                                "formula job enqueue failed for iteration {child_iri}: {error}"
+                            ),
+                        );
                     }
                 }
             }

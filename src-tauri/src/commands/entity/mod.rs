@@ -5,8 +5,13 @@ use tauri::{Emitter, Manager, State};
 
 mod individual;
 
-fn enqueue_formula_jobs(app: &tauri::AppHandle, jobs: Vec<crate::commands::formula_worker::NewFormulaRecalcJob>) {
-    if jobs.is_empty() { return; }
+fn enqueue_formula_jobs(
+    app: &tauri::AppHandle,
+    jobs: Vec<crate::commands::formula_worker::NewFormulaRecalcJob>,
+) {
+    if jobs.is_empty() {
+        return;
+    }
     let worker = app.state::<crate::commands::formula_worker::FormulaWorker>();
     for job in jobs {
         if let Err(error) = worker.enqueue(job, vec![], vec![]) {
@@ -695,7 +700,8 @@ pub async fn inspector__get_entity(
             else {
                 continue;
             };
-            if let Some(worker) = app.try_state::<crate::commands::formula_worker::FormulaWorker>() {
+            if let Some(worker) = app.try_state::<crate::commands::formula_worker::FormulaWorker>()
+            {
                 if let Some(error) = worker.formula_error(&entity_id, property_iri) {
                     property["formulaError"] = serde_json::Value::String(error);
                 }
@@ -792,7 +798,10 @@ pub async fn widget_inspector__update_property(
     let jobs = if is_property_formula {
         let worker = app.state::<crate::commands::formula_worker::FormulaWorker>();
         worker.cancel_property(&entity_id);
-        vec![crate::commands::formula_worker::cancel_and_create_property_job(&executor, &entity_id).await?]
+        vec![
+            crate::commands::formula_worker::cancel_and_create_property_job(&executor, &entity_id)
+                .await?,
+        ]
     } else {
         crate::commands::formula_worker::create_instance_recalc_jobs(
             &executor,

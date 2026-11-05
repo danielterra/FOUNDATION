@@ -155,8 +155,9 @@ pub async fn run_conversation_from_current_state(
     }
 
     let conv_id_for_config = conversation_id.clone();
+    let app_for_config = app.clone();
     let agent_config = executor
-        .read(move |conn| load_agent_config(conn, &conv_id_for_config))
+        .read(move |conn| load_agent_config(conn, &conv_id_for_config, &app_for_config))
         .await?;
 
     // Re-inject stored subconscious context so retry/recovery behaves like a fresh send.

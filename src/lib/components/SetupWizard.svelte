@@ -6,6 +6,7 @@
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import * as Select from '$lib/components/ui/select';
 	import OpenRouterModelSelector from '$lib/components/OpenRouterModelSelector.svelte';
+	import { aiServiceDisplayName } from '$lib/utils/aiServiceDisplayName';
 
 	type EmailProvider = {
 		id: string;
@@ -38,6 +39,7 @@
 		label: string;
 		description: string;
 		isLocal: boolean;
+		seeAlsoUrl?: string | null;
 	};
 
 	type AIModel = {
@@ -338,7 +340,7 @@
 	let selectedAIModel = $derived(getSelectedAIModel());
 	let selectedOpenRouterModel = $derived(getSelectedOpenRouterModel());
 	let isOpenRouterService = $derived(
-		selectedAIService?.label.toLowerCase().includes('openrouter') ?? false
+		selectedAIService ? aiServiceDisplayName(selectedAIService).toLowerCase().includes('openrouter') : false
 	);
 	let requiresAIKey = $derived(
 		selectedAIService !== null && (!selectedAIService.isLocal || isOpenRouterService)
@@ -863,11 +865,11 @@
 								onValueChange={handleAIServiceChange}
 							>
 								<Select.Trigger id="setup-ai-service">
-									<Select.Value placeholder="Selecione um serviço" />
+					{selectedAIService ? aiServiceDisplayName(selectedAIService) : 'Selecione um serviço'}
 								</Select.Trigger>
 								<Select.Content>
 									{#each aiServices as service}
-										<Select.Item value={service.iri}>{service.label}</Select.Item>
+						<Select.Item value={service.iri}>{aiServiceDisplayName(service)}</Select.Item>
 									{/each}
 								</Select.Content>
 							</Select.Root>
@@ -924,6 +926,7 @@
 								<div class="field-group">
 					<OpenRouterModelSelector
 						idPrefix="setup-openrouter"
+						providerName={selectedAIService ? aiServiceDisplayName(selectedAIService) : 'OpenRouter'}
 						models={openRouterModels}
 						benchmarks={openRouterBenchmarks}
 						bind:selectedModelId={selectedOpenRouterModelId}
@@ -1015,7 +1018,7 @@
 						<span class="material-symbols-outlined">{aiChoice === 'chat' ? 'chat' : 'hub'}</span>
 						<span>
 							{#if aiChoice === 'chat'}
-								{selectedAIService?.label} · {#if isOpenRouterService}{selectedOpenRouterModel?.name}{:else}{selectedAIModel?.label}{/if}
+								{selectedAIService ? aiServiceDisplayName(selectedAIService) : ''} · {#if isOpenRouterService}{selectedOpenRouterModel?.name}{:else}{selectedAIModel?.label}{/if}
 							{:else}
 								Via MCP
 							{/if}

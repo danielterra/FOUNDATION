@@ -78,8 +78,33 @@ A spec precisa ser **suficientemente precisa para ser implementada sem dúvida**
 - Espaço em branco antes de borda/sombra.
 - Tamanho de fonte e peso refletem importância — não decoração.
 
+### Objetivo e carga por tela
+- Cada tela ou estado de tela deve ter um objetivo principal explícito e uma ação primária correspondente. Não misture configuração atual, busca extensa e comparação detalhada no mesmo espaço quando forem tarefas distintas.
+- Mantenha na tela principal apenas o necessário para entender o estado atual e iniciar a tarefa seguinte; revele busca, filtros e comparação detalhada sob demanda, em uma etapa dedicada (modal, painel ou tela) escolhida conforme o escopo e a reversibilidade da tarefa.
+- Toda etapa secundária precisa indicar claramente seu objetivo, preservar contexto e oferecer uma saída simples sem perder a configuração anterior.
+- Antes de entregar a spec, descreva em uma frase o objetivo de cada tela/etapa e verifique que os controles presentes servem a esse objetivo. Se uma tela acumulou dois objetivos, proponha separar o fluxo.
+- Não confunda alta densidade visual com excesso de tarefas simultâneas: detalhes comparativos podem ser densos dentro de uma etapa focada, mantendo a tela principal simples.
+
+### Design System semântico
+- Derive cada decisão visual nesta ordem: objetivo do usuário e contexto da interface → papel semântico e estado → token do Design System → variante de componente reutilizável.
+- Considere contexto a tarefa, a posição na interface, a prioridade e relação da informação, o estado de interação, a profundidade da superfície, a densidade e as necessidades de acessibilidade/responsividade.
+- Expresse intenção para cor, tipografia, tamanho, espaçamento, superfície, profundidade, movimento e interação por tokens semânticos; a implementação escolhe papéis como ação primária, metadado de apoio, ação destrutiva, seleção ou densidade compacta.
+- Quando um conceito tiver marca ou ícone reconhecível, use-o como identificador visual em destaque para acelerar a leitura; preserve nome/descrição como apoio e garanta rótulo acessível ou tooltip quando necessário.
+- Para provedores e produtos nomeados, prefira o logotipo oficial quando houver asset oficial disponível; use ícone semântico genérico somente para conceitos sem marca.
+- Separe provedor/ambiente de inferência (onde a IA roda, por exemplo OpenRouter, Anthropic ou execução local) de modelo (por exemplo Gemma); represente modelos locais dentro da opção de execução local, nunca como provedores.
+- Não especifique valores visuais arbitrários nem variantes chamadas apenas por cor ou tamanho. Se uma necessidade recorrente não estiver coberta, peça a extensão do token ou da receita compartilhada.
+- Antes de finalizar uma spec, explique como objetivo e contexto determinam a hierarquia visual e os componentes utilizados; confira a consistência com tokens e decisões já registradas.
+
+### Consistência, formulários e largura
+- Antes de propor uma interação, compare-a com os princípios e decisões registrados em `AGENTS.md` e neste arquivo. Aponte conflitos materiais ao Arquiteto/PO e aguarde decisão do usuário antes de especificar comportamento incompatível.
+- Extraia de cada correção do usuário um princípio reutilizável e solicite sua inclusão na base de UX, para que o mesmo problema não volte em outra tela.
+- Em telas de configuração, agrupe visualmente campos que dependem de uma escolha principal e identifique claramente a escolha que dá contexto ao grupo.
+- Para configurações que salvam por campo, mostre estado local de salvamento/sucesso/erro junto ao campo; não use um botão global cujo escopo seja ambíguo. Preserve o valor digitado e ofereça nova tentativa em caso de erro.
+- Limite a largura máxima de painéis de configuração. Use grades responsivas, com até quatro colunas apenas para valores curtos e comparáveis; mantenha campos longos em uma largura confortável.
+- Quando houver poucas opções de igual importância, prefira uma escolha visível (por exemplo, grupo de rádio em cards) a um menu fechado; inclua nomes e explicações acessíveis e links oficiais apenas quando relevantes.
+
 ### Contexto Foundation — padrões observados no projeto
-- **Sistema de cores semânticas** ([src/lib/colors.css](src/lib/colors.css)): o projeto **NÃO usa Tailwind**. Toda cor é CSS var com nome **semântico** (não visual). Minhas specs referenciam o significado, nunca a cor literal:
+- **Design System semântico** ([src/app.css](src/app.css)): o projeto **NÃO usa Tailwind**. Cores, tipografia, espaçamento e demais valores visuais vêm de tokens compartilhados com nomes semânticos. Minhas specs referenciam o significado, nunca o valor literal:
   - `--color-interactive` (laranja) → ação clicável / controle ativo.
   - `--color-transition` (roxo) → em carregamento / mudança / streaming.
   - `--color-danger` → ação destrutiva, erro grave.

@@ -68,6 +68,8 @@ Decisão de arquitetura preliminar (alto nível, sem código): nenhuma ainda —
 
 Tarefa: produza a seção `## UX/UI` no formato definido na sua persona — componentes a reutilizar (paths reais), wireframe textual inequívoco, fluxo de interação, estados loading/vazio/erro/sucesso, acessibilidade, heurísticas Nielsen aplicadas, mapeamento AC↔UX, e a lista "Validação pelo usuário" com 3-6 itens binários observáveis.
 
+Princípio obrigatório de composição: defina o objetivo principal de cada tela/etapa e sua ação primária. Não acumule tarefas distintas (por exemplo, mostrar a configuração atual e pesquisar/comparar um catálogo extenso) na mesma tela quando uma etapa focada puder separar o fluxo. Use revelação progressiva para detalhes, preserve o contexto ao entrar em modal/painel secundário e forneça uma saída clara. Na spec, inclua uma frase de objetivo por tela e justifique qualquer tela que combine mais de uma tarefa.
+
 Devolva APENAS a seção `## UX/UI` em Markdown pronta para embutir no `implementationPlan`. NÃO persista nada na ontologia. Reporte de volta a esta skill o resultado dessa única seção.
 ```
 

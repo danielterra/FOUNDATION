@@ -28,6 +28,27 @@
 - ALWAYS present Settings as a dedicated full screen, not a modal; use a left vertical navigation menu instead of top tabs, with AI model selection first and remaining settings grouped by task, and use the available horizontal space well.
 
 ## Visual language
+- ALWAYS derive every visual decision from this chain: user goal and UI context → semantic role and state → design-system token → reusable component variant.
+- ALWAYS make the Design System encode intent for color, typography, size, spacing, surface, depth, motion, and interaction; components select semantic roles instead of inventing local presentation values.
+- ALWAYS define component variants by purpose and context (for example, primary action, supporting metadata, destructive action, selected state, or compact density), not by arbitrary color or size names.
+- ALWAYS define AI-facing and reusable UI components by user intent and decision semantics (for example, decision cardinality, complexity, candidate volume, consequence, reversibility, and comparison factors); NEVER require the caller to prescribe cards, selects, dialogs, or other presentation patterns.
+- ALWAYS let semantic components resolve their presentation from intent and context; keep low-level visual primitives such as Card, Select, RadioGroup, Dialog, and Button inside the rendering implementation rather than exposing them as the primary product vocabulary in generated UI specs.
+- ALWAYS model a complex single decision with its domain, available candidates, comparison factors, and selected value; the semantic component chooses an appropriate presentation, such as a compact control, comparative choices, or a searchable detailed chooser, based on context and scale.
+- ALWAYS use a recognizable brand logo or semantic icon as a visible, accessible visual identifier whenever the concept has one; keep supporting text available, and use a tooltip or accessible label for clarification rather than making users scan text alone.
+- ALWAYS use the official brand logo for a named provider or product when an official asset is available; reserve generic semantic icons for concepts without a brand mark.
+- ALWAYS distinguish an inference provider/runtime (where a model runs, such as OpenRouter, Anthropic, or local execution) from a model (such as Gemma); provider selection describes the execution route, while model selection belongs within that route.
+- NEVER choose visual values independently of the information priority, relationship, task, location, and interaction state they communicate.
+- ALWAYS extend the shared semantic tokens and component recipes when a new interface need appears; do not solve recurring needs with one-off styles.
+- ALWAYS give each screen one clear user goal and avoid overloading it with secondary tasks; use progressive disclosure for detailed search, comparison, and configuration flows.
+- ALWAYS extract a reusable UX principle from each user correction and add it to this UX knowledge base to prevent recurring issues.
+- ALWAYS compare each new UX request with the recorded UX principles and decisions before planning; surface material conflicts and resolve them with the user before implementing inconsistent behavior.
+- ALWAYS separate diagnosis and solution proposal from implementation when the user asks to understand a problem and decide on a solution first; make no product-code changes until the user chooses a solution.
+- ALWAYS group AI configuration fields under the selected provider; present a small provider set as accessible radio cards with provider branding, a concise explanation, and official site/setup-help links.
+- ALWAYS save each edited settings field when it loses focus and show a subtle, field-level saved/saving/error indicator; do not imply that one global Save button persists unrelated settings.
+- ALWAYS constrain settings content to a readable maximum width and use a responsive grid of up to four columns where the content supports it; do not stretch inputs across ultra-wide screens.
+- ALWAYS make AI model names the primary card heading, place the publisher name and description before model metrics, use available horizontal space for readable information density, and make the active model unmistakable and visibly update when selection changes.
+- NEVER show raw provider IRIs in user-facing model selection; resolve and display the provider's friendly name.
+- ALWAYS keep the configured AI model visible on the Settings page and open model search/comparison in a dedicated modal; confirming a model in that modal must persist the choice immediately and close the modal, without a second global Save action.
 - ALWAYS preserve the reviewed Oblivion canvas texture: a black field with a subtle, evenly spaced cyan dot grid behind widgets.
 - ALWAYS keep the floating widgets menu collapsed to its smallest useful affordance while the pointer is outside; expand it on hover and collapse it when the pointer leaves.
 - ALWAYS animate floating widgets menu expansion and collapse smoothly; align the compact icon and count; constrain the panel to a maximum width and wrap long widget names within it.
@@ -229,6 +250,9 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 - ALWAYS use the existing Foundation Nubank/C6 bank statement import automation when importing statements; inspect its configuration and existing import requests before running it.
 - ALWAYS check Foundation email and attachments for bank statements already sent before asking the user to resend them.
 - ALWAYS use foundation:MonthlyBudget to verify financial reconciliation totals and opening/closing balances.
+- ALWAYS treat C6 Bank PF and C6 Bank - Conta Corrente as the same bank account; use a single canonical account for imports and budgets.
+- ALWAYS automate recurring credit-card statement imports and matching with deterministic rules to avoid manual work and repeated AI token use.
+- ALWAYS use the bank statement's transaction identifier and description as the source of truth for transaction classification; count card bill payments once as bank transfers.
 - ALWAYS treat Nubank PF and Daniel's Nubank Personal Account as the same bank account; keep a single canonical personal Nubank account.
 - ALWAYS reconcile financial history month by month against bank statement balances; preserve historical records and re-import missing transactions instead of clearing prior months for the November 2026 reconciliation.
 - `run_automation(dry_run:true)` mocks ONLY script-level writes (the Rhai `mcp()`/`owl_set_property` bridge). The engine STILL creates and PERSISTS control instances (and loop iteration instances + `iterationOf` links), and AgentTask STILL calls the AI. NOT side-effect-free — clean orphan control instances after a dry run; expect AI cost/latency.

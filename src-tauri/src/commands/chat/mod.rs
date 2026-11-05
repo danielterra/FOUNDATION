@@ -130,8 +130,9 @@ pub async fn chat__send_and_reply(
     cancellation: State<'_, CancellationState>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let conv_id = conversation_id.clone();
+    let app_for_config = app.clone();
     let agent_config = executor
-        .read(move |conn| load_agent_config(conn, &conv_id))
+        .read(move |conn| load_agent_config(conn, &conv_id, &app_for_config))
         .await?;
 
     if latitude.is_some() || longitude.is_some() {

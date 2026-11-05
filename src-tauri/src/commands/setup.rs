@@ -253,6 +253,13 @@ pub async fn initialize_app(app: AppHandle) -> Result<(), String> {
         Vec<crate::eavto::WrittenTriple>,
     )>();
     let executor = DbExecutor::new_with_notify(conn, db_path.clone(), Some(notify_tx));
+    executor
+        .write(|conn| {
+            crate::commands::migrate_legacy_active_ai_model(conn)?;
+            Ok(String::new())
+        })
+        .await
+        .map_err(|error| format!("Failed to migrate active AI model configuration: {}", error))?;
     let executor_for_worker = executor.clone();
     app.manage(executor);
     app.manage(retention_gate.clone());
@@ -403,7 +410,8 @@ pub async fn initialize_app(app: AppHandle) -> Result<(), String> {
         }
     });
 
-    let worker = crate::commands::formula_worker::FormulaWorker::spawn(app.clone(), executor_for_worker);
+    let worker =
+        crate::commands::formula_worker::FormulaWorker::spawn(app.clone(), executor_for_worker);
     super::log_backend(
         "debug",
         &format!("[STARTUP] formula_worker={}ms", t0.elapsed().as_millis()),
@@ -814,6 +822,7 @@ pub async fn setup__init(
     ai_integration_mode: String,
     ai_service_iri: Option<String>,
     ai_model_iri: Option<String>,
+    app: tauri::AppHandle,
     verification_state: State<'_, SetupEmailVerificationState>,
     executor: State<'_, DbExecutor>,
 ) -> Result<SetupResult, String> {
@@ -828,6 +837,7 @@ pub async fn setup__init(
     let verification_state = verification_state.inner().clone();
     let verification_state_for_write = verification_state.clone();
     let token_to_consume = email_test_token.clone();
+    let app_for_ai_validation = app.clone();
 
     // Setup involves writes, so we use the write executor
     let result_json = executor
@@ -839,6 +849,7 @@ pub async fn setup__init(
                 ai_mode,
                 ai_service_iri.as_deref(),
                 ai_model_iri.as_deref(),
+                &app_for_ai_validation,
             )?;
             let email_account = Individual::get(conn, &email_account_iri)
                 .map_err(|error| format!("Failed to load tested email account: {}", error))?
@@ -1148,6 +1159,7 @@ pub async fn setup__init(
                     )
                     .map_err(|e| format!("Failed to link AI to model: {}", e))?;
                 crate::commands::persist_setup_ai_service(conn, service_iri)?;
+                crate::commands::set_setup_ai_model_for_service(conn, service_iri, model_iri)?;
                 let model_setting = Individual::get(conn, "foundation:DefaultAIModelSetting")
                     .map_err(|e| format!("Failed to get DefaultAIModelSetting: {}", e))?
                     .ok_or_else(|| "DefaultAIModelSetting not found".to_string())?;

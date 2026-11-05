@@ -262,6 +262,8 @@
                   {onRemoveProperty}
                   {onSaveCardinality}
                   {onSaveQueryConfig}
+                  {onLoadMoreBacklinks}
+                  {onLoadMoreProperty}
                 />
               {/each}
             </div>

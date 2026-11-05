@@ -542,9 +542,11 @@ mod tests {
         )
         .unwrap()
         .is_empty());
-        assert!(crate::owl::get_iri_property_as_of(&conn, TEST_CRITERION, HAS_STATUS, before)
-            .unwrap()
-            .is_none());
+        assert!(
+            crate::owl::get_iri_property_as_of(&conn, TEST_CRITERION, HAS_STATUS, before)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

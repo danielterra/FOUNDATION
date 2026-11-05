@@ -40,22 +40,28 @@
 		models = [],
 		benchmarks = null,
 		selectedModelId = $bindable(''),
+		selectedModelIds = $bindable([]),
+		selectionMode = 'single',
 		loading = false,
 		error = '',
 		benchmarksLoading = false,
 		benchmarksError = '',
 		loadHint = '',
+		providerName = 'OpenRouter',
 		onRetry,
 		idPrefix = 'openrouter-model',
 	}: {
 		models?: Model[];
 		benchmarks?: Benchmarks | null;
 		selectedModelId?: string;
+		selectedModelIds?: string[];
+		selectionMode?: 'single' | 'multiple';
 		loading?: boolean;
 		error?: string;
 		benchmarksLoading?: boolean;
 		benchmarksError?: string;
 		loadHint?: string;
+		providerName?: string;
 		onRetry?: () => void;
 		idPrefix?: string;
 	} = $props();
@@ -158,7 +164,14 @@
 
 	function handleSelectModel(event: MouseEvent) {
 		const modelId = (event.currentTarget as HTMLButtonElement).dataset.modelId;
-		if (modelId) selectedModelId = modelId;
+		if (!modelId) return;
+		if (selectionMode === 'multiple') {
+			selectedModelIds = selectedModelIds.includes(modelId)
+				? selectedModelIds.filter((selectedId) => selectedId !== modelId)
+				: [...selectedModelIds, modelId];
+			return;
+		}
+		selectedModelId = modelId;
 	}
 
 	function handlePreviousPage() {
@@ -233,7 +246,7 @@
 	<header class="selector-heading">
 		<div>
 			<h3 id={`${idPrefix}-heading`}>Catálogo de modelos</h3>
-			<p>Compare desempenho avaliado, custo e informações publicadas pelo provedor.</p>
+			<p><span class="catalog-provider">{providerName}</span> · compare capacidade, tamanho e custo dos modelos disponíveis.</p>
 		</div>
 		{#if onRetry}
 			<Button variant="ghost" size="sm" onclick={onRetry} disabled={loading}>Carregar modelos</Button>
@@ -308,7 +321,25 @@
 				<Button variant="ghost" size="sm" onclick={handleClearSearch}>Limpar busca</Button>
 			</div>
 		{:else}
-			{#if selectedModel && !pageModels.some((model) => model.id === selectedModelId)}
+			{#if selectionMode === 'multiple' && selectedModelIds.length > 0}
+				<div class="selected-summary" role="status" aria-live="polite">
+					<span class="material-symbols-outlined" aria-hidden="true">check_circle</span>
+					<span class="selected-summary-model">
+						<span class="selected-summary-label">Modelos selecionados</span>
+						<span class="selected-summary-name">{selectedModelIds.length} na lista de prioridade</span>
+					</span>
+				</div>
+			{:else if selectedModel}
+				<div class="selected-summary" role="status" aria-live="polite">
+					<span class="material-symbols-outlined" aria-hidden="true">check_circle</span>
+					<span class="selected-summary-model">
+						<span class="selected-summary-label">Modelo selecionado</span>
+						<span class="selected-summary-name">{selectedModel.name}</span>
+					</span>
+					<span class="selected-summary-publisher">{provider(selectedModel)}</span>
+				</div>
+			{/if}
+			{#if selectionMode === 'single' && selectedModel && !pageModels.some((model) => model.id === selectedModelId)}
 				<div class="selected-note" role="status">Modelo selecionado: <span>{selectedModel.name}</span> · está fora da página ou da busca atual.</div>
 			{/if}
 			<div class="model-list" aria-label="Modelos disponíveis">
@@ -316,16 +347,17 @@
 					<button
 						type="button"
 						class="model-option"
-						class:selected={model.id === selectedModelId}
+						class:selected={selectionMode === 'multiple' ? selectedModelIds.includes(model.id) : model.id === selectedModelId}
 						data-model-id={model.id}
-						aria-pressed={model.id === selectedModelId}
+						aria-pressed={selectionMode === 'multiple' ? selectedModelIds.includes(model.id) : model.id === selectedModelId}
 						onclick={handleSelectModel}
 					>
 						<span class="model-title-row">
 							<span class="model-name">{model.name}</span>
-							{#if model.id === selectedModelId}<span class="selection-state"><span class="material-symbols-outlined" aria-hidden="true">check_circle</span>Selecionado</span>{/if}
+							{#if (selectionMode === 'multiple' && selectedModelIds.includes(model.id)) || (selectionMode === 'single' && model.id === selectedModelId)}<span class="selection-state"><span class="material-symbols-outlined" aria-hidden="true">check_circle</span>{selectionMode === 'multiple' ? `Prioridade ${selectedModelIds.indexOf(model.id) + 1}` : 'Selecionado'}</span>{/if}
 						</span>
-						<span class="model-publisher">{provider(model)} · {model.id}</span>
+						<span class="model-publisher-row"><span class="model-publisher">{provider(model)}</span><span class="model-id">{model.id}</span></span>
+						{#if model.description}<span class="model-description"><span class="metric-label">Descrição do publicador</span>{model.description}</span>{/if}
 						<span class="benchmark-grid" aria-label="Avaliações de capacidade">
 							{#each benchmarkDimensions as dimension}
 								{@const benchmark = benchmarkFor(model, dimension)}
@@ -350,7 +382,6 @@
 							<span><span class="metric-label">Ferramentas</span>{model.supportsTools == null ? 'Não informado pelo publicador' : model.supportsTools ? 'Suportadas' : 'Não suportadas'}</span>
 						</span>
 						<span class="model-guidance"><span class="metric-label">Orientação de uso</span>{recommendation(model)}</span>
-						{#if model.description}<span class="model-description"><span class="metric-label">Descrição do publicador</span>{model.description}</span>{/if}
 					</button>
 				{/each}
 			</div>
@@ -365,16 +396,23 @@
 </section>
 
 <style>
-	.model-selector { display: grid; gap: var(--space-3); min-width: 0; }
+	.model-selector { display: grid; gap: var(--spacing-section); min-width: 0; }
 	.selector-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
-	.selector-heading h3 { margin: 0; color: var(--text-body); font-size: var(--type-body); }
+	.selector-heading h3 { margin: 0; color: var(--text-body); font-size: var(--type-heading); font-weight: 400; }
 	.selector-heading p, .state-message, .catalog-range, .benchmark-source, .model-pagination p { margin: 0; color: var(--text-secondary); font-size: var(--type-body-compact); line-height: var(--line-height-body); }
+	.catalog-provider { color: var(--text-body); }
 	.selector-controls { display: grid; grid-template-columns: minmax(12rem, 2fr) repeat(2, minmax(8rem, 1fr)); align-items: end; gap: var(--space-2); }
 	.control-field { display: grid; gap: var(--space-1); min-width: 0; }
 	.control-field label, .metric-label { color: var(--text-secondary); font-size: var(--type-label); letter-spacing: var(--tracking-hud-label); text-transform: uppercase; }
 	.catalog-range { color: var(--text-body); }
 	.state-error, .state-empty { display: grid; justify-items: start; gap: var(--space-2); padding: var(--space-3); border-inline-start: var(--size-hud-frame-line) solid var(--color-danger); background: var(--color-surface-2); color: var(--text-body); }
 	.state-error p, .state-empty p { margin: 0; }
+	.selected-summary { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: var(--size-hud-frame-line) solid var(--color-interactive); border-radius: var(--radius); background: var(--color-surface-2); }
+	.selected-summary > .material-symbols-outlined { color: var(--color-interactive); font-size: var(--type-icon-medium); }
+	.selected-summary-model { display: grid; min-width: 0; }
+	.selected-summary-label { color: var(--text-secondary); font-size: var(--type-label); text-transform: uppercase; letter-spacing: var(--tracking-hud-label); }
+	.selected-summary-name { color: var(--text-body); font-size: var(--type-body-prominent); overflow-wrap: anywhere; }
+	.selected-summary-publisher { color: var(--text-secondary); font-size: var(--type-body-compact); text-align: end; overflow-wrap: anywhere; }
 	.selected-note { padding: var(--space-2) var(--space-3); border-inline-start: var(--size-hud-frame-line) solid var(--color-interactive); background: var(--color-surface-2); color: var(--text-secondary); font-size: var(--type-body-compact); }
 	.selected-note span { color: var(--text-body); }
 	.model-list { display: grid; gap: var(--space-2); max-height: 34rem; overflow-y: auto; padding-inline-end: var(--space-1); }
@@ -382,16 +420,18 @@
 	.model-option:hover { border-color: var(--color-hud-line); background: var(--color-surface-2); }
 	.model-option:focus-visible { outline: var(--size-hud-frame-line) solid var(--color-interactive); outline-offset: 2px; }
 	.model-option.selected { border-color: var(--color-interactive); background: var(--color-surface-2); }
-	.model-title-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
-	.model-name { color: var(--text-body); font-size: var(--type-body); overflow-wrap: anywhere; }
-	.model-publisher { color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--type-label); overflow-wrap: anywhere; }
+	.model-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+	.model-name { color: var(--text-body); font-size: var(--type-title); line-height: var(--line-height-body); overflow-wrap: anywhere; }
+	.model-publisher-row { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: var(--space-1) var(--space-3); }
+	.model-publisher { color: var(--text-body); font-family: var(--font-mono); font-size: var(--type-body-compact); overflow-wrap: anywhere; }
+	.model-id { color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--type-label); overflow-wrap: anywhere; }
 	.selection-state { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--color-interactive); font-size: var(--type-label); }
 	.selection-state .material-symbols-outlined { font-size: var(--type-body); }
 	.benchmark-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
 	.benchmark-item { display: grid; align-content: start; gap: var(--space-1); min-width: 0; padding: var(--space-2); border-inline-start: var(--size-hud-frame-line) solid var(--color-hud-line-subtle); background: var(--color-surface-2); }
 	.metric-value { color: var(--text-body); font-size: var(--type-body-compact); overflow-wrap: anywhere; }
 	.metric-source { color: var(--text-secondary); font-size: var(--type-label); overflow-wrap: anywhere; }
-	.model-facts, .model-capabilities { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: var(--space-2); }
+	.model-facts, .model-capabilities { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: var(--space-2); }
 	.model-facts > span, .model-capabilities > span, .model-guidance, .model-description { display: grid; gap: var(--space-1); min-width: 0; color: var(--text-body); font-size: var(--type-body-compact); overflow-wrap: anywhere; }
 	.model-guidance, .model-description { padding-inline-start: var(--space-2); border-inline-start: var(--size-hud-frame-line) solid var(--color-hud-line-subtle); }
 	.model-pagination { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
@@ -400,5 +440,7 @@
 		.selector-controls { grid-template-columns: minmax(0, 1fr); }
 		.benchmark-grid { grid-template-columns: minmax(0, 1fr); }
 		.model-pagination { flex-wrap: wrap; }
+		.selected-summary { grid-template-columns: auto minmax(0, 1fr); }
+		.selected-summary-publisher { grid-column: 2; text-align: start; }
 	}
 </style>

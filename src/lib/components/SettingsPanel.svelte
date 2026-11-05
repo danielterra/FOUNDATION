@@ -6,6 +6,9 @@
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import * as Select from '$lib/components/ui/select';
 	import OpenRouterModelSelector from '$lib/components/OpenRouterModelSelector.svelte';
+	import { aiServiceDisplayName } from '$lib/utils/aiServiceDisplayName';
+	import openRouterLogo from '$lib/assets/providers/openrouter.svg';
+	import anthropicLogo from '$lib/assets/providers/anthropic.svg';
 	import posthog from 'posthog-js';
 
 	let { onClose } = $props();
@@ -43,18 +46,52 @@
 	let openRouterBenchmarksError = $state('');
 	let selectedOpenRouterModelId = $state('');
 	let loadedOpenRouterModelId = $state('');
+	let modelPickerOpen = $state(false);
+	let modelPickerDraftId = $state('');
+	let modelPickerTrigger = $state(null);
+	let fallbackPickerOpen = $state(false);
+	let fallbackPickerDraftIds = $state([]);
+	let fallbackPickerTrigger = $state(null);
+	let fallbackPickerSaving = $state(false);
+	let fallbackPickerError = $state('');
 	let fallbackModelIds = $state([]);
 	let loadedFallbackModelIds = $state([]);
+	let serviceChangeGeneration = 0;
+	let serviceConfigLoadGeneration = 0;
+	let readinessRefreshGeneration = 0;
 
 	let aiSaving = $state(false);
+	let aiSavingStage = $state('');
 	let aiMessage = $state('');
 	let aiError = $state(false);
+	let aiFieldStatus = $state({ provider: 'idle', apiKey: 'idle', baseUrl: 'idle', model: 'idle', fallback: 'idle' });
+	let aiFieldError = $state({ provider: '', apiKey: '', baseUrl: '', model: '', fallback: '' });
 
 	let selectedServiceIsLocal = $derived(
 		services.find(s => s.iri === selectedServiceIri)?.isLocal ?? false
 	);
-	let selectedServiceIsOpenRouter = $derived(
-		baseUrl.includes('openrouter.ai')
+	let selectedService = $derived(services.find((service) => service.iri === selectedServiceIri) ?? null);
+	let selectedServiceLabel = $derived(
+		selectedService ? aiServiceDisplayName(selectedService) : ''
+	);
+	let selectedServiceIsOpenRouter = $derived(selectedServiceLabel.toLowerCase().includes('openrouter'));
+	let loadedServiceLabel = $derived(
+		loadedServiceIri
+			? aiServiceDisplayName(services.find((service) => service.iri === loadedServiceIri) ?? {})
+			: 'Nenhum provedor configurado'
+	);
+	let loadedOpenRouterModel = $derived(
+		openRouterModels.find((model) => model.id === loadedOpenRouterModelId) ?? null
+	);
+	let configuredModelLabel = $derived(
+		currentModelLabel || loadedOpenRouterModel?.name || (loadedOpenRouterModelId ? loadedOpenRouterModelId : 'Nenhum modelo selecionado')
+	);
+	let modelPickerCanConfirm = $derived(
+		!!modelPickerDraftId
+			&& (
+				(modelPickerDraftId === loadedOpenRouterModelId && !aiDirty)
+				|| (!!selectedServiceIri && (selectedServiceIsLocal || apiKey.trim().length > 0) && (modelPickerDraftId !== loadedOpenRouterModelId || aiDirty))
+			)
 	);
 	let currentModelLabel = $state('');
 
@@ -78,22 +115,46 @@
 		return `${model.name} · ${openRouterProvider(model)} · ${formatOpenRouterSize(model)} · entrada ${formatOpenRouterPrice(model.inputCostPerToken)} · saída ${formatOpenRouterPrice(model.outputCostPerToken)}`;
 	}
 
-	let selectedOpenRouterModel = $derived(openRouterModels.find((model) => model.id === selectedOpenRouterModelId) ?? null);
-
 	let aiDirty = $derived(
 		selectedServiceIri !== loadedServiceIri
 		|| selectedModelIri !== loadedModelIri
-		|| (!selectedServiceIsLocal && apiKey !== loadedApiKey)
-		|| (selectedServiceIsOpenRouter && baseUrl !== loadedBaseUrl)
 		|| (selectedServiceIsOpenRouter && selectedOpenRouterModelId !== loadedOpenRouterModelId)
-		|| (selectedServiceIsOpenRouter && JSON.stringify(fallbackModelIds) !== JSON.stringify(loadedFallbackModelIds))
 	);
-	let aiCanSave = $derived(
-		!!selectedServiceIri
-		&& (selectedServiceIsOpenRouter ? !!selectedOpenRouterModelId : !!selectedModelIri)
-		&& (selectedServiceIsLocal || apiKey.trim().length > 0)
-		&& aiDirty
-	);
+
+	function aiProviderLogo(service) {
+		const name = aiServiceDisplayName(service).toLowerCase();
+		if (name.includes('openrouter')) return openRouterLogo;
+		if (name.includes('claude') || name.includes('anthropic')) return anthropicLogo;
+		return null;
+	}
+
+	function aiProviderIcon(service) {
+		return service.isLocal ? 'memory' : 'psychology';
+	}
+
+	function runtimeReadinessLabel(service) {
+		const readiness = service.runtimeReadiness;
+		if (!readiness || readiness.isReady) return 'Pronto';
+		const reasons = {
+			needs_credentials: 'Adicione uma chave de API nas configurações abaixo.',
+			needs_endpoint: 'Configure o endereço do serviço nas configurações abaixo.',
+			needs_local_model: 'Instale um modelo local para usar este serviço.',
+			unsupported_route: 'Esta rota de execução não é suportada atualmente.',
+		};
+		return `Configuração incompleta · ${reasons[readiness.status] ?? 'Revise as configurações deste serviço.'}`;
+	}
+
+	function setAiFieldStatus(field, status, error = '') {
+		aiFieldStatus = { ...aiFieldStatus, [field]: status };
+		aiFieldError = { ...aiFieldError, [field]: error };
+	}
+
+	function aiFieldStatusLabel(field) {
+		if (aiFieldStatus[field] === 'saving') return 'Salvando…';
+		if (aiFieldStatus[field] === 'saved') return 'Salvo';
+		if (aiFieldStatus[field] === 'error') return aiFieldError[field] || 'Não foi possível salvar';
+		return '';
+	}
 
 	// --- Local Model ---
 	let localModelExists = $state(false);
@@ -273,6 +334,16 @@
 		}
 	}
 
+	async function refreshAIServiceReadiness() {
+		const generation = ++readinessRefreshGeneration;
+		try {
+			const refreshedServices = await invoke('setup__list_ai_services');
+			if (generation === readinessRefreshGeneration) services = refreshedServices;
+		} catch {
+			// Keep the last known service state if the refresh fails.
+		}
+	}
+
 	async function startModelDownload() {
 		localModelError = false;
 		localModelMessage = '';
@@ -296,6 +367,7 @@
 			unlistenComplete();
 			unlistenError();
 			loadLocalModelStatus();
+			refreshAIServiceReadiness();
 		});
 
 		const unlistenError = await listen('local-model-download-error', (event) => {
@@ -339,11 +411,16 @@
 	}
 
 	async function loadApiKeyForService(serviceIri) {
+		if (serviceIri !== selectedServiceIri) return;
+		const generation = ++serviceConfigLoadGeneration;
+		apiKey = '';
+		loadedApiKey = '';
+		baseUrl = '';
+		loadedBaseUrl = '';
+		fallbackModelIds = [];
+		loadedFallbackModelIds = [];
 		if (!serviceIri) {
-			apiKey = '';
-			loadedApiKey = '';
-			baseUrl = '';
-			loadedBaseUrl = '';
+			apiKeyLoading = false;
 			return;
 		}
 		apiKeyLoading = true;
@@ -353,6 +430,7 @@
 				invoke('ai__get_service_base_url', { serviceIri }),
 				invoke('ai__get_fallback_models', { serviceIri }),
 			]);
+			if (generation !== serviceConfigLoadGeneration || serviceIri !== selectedServiceIri) return;
 			apiKey = key ?? '';
 			loadedApiKey = apiKey;
 			baseUrl = url ?? '';
@@ -360,6 +438,7 @@
 			fallbackModelIds = fbModels ?? [];
 			loadedFallbackModelIds = [...fallbackModelIds];
 		} catch {
+			if (generation !== serviceConfigLoadGeneration || serviceIri !== selectedServiceIri) return;
 			apiKey = '';
 			loadedApiKey = '';
 			baseUrl = '';
@@ -367,23 +446,29 @@
 			fallbackModelIds = [];
 			loadedFallbackModelIds = [];
 		} finally {
-			apiKeyLoading = false;
+			if (generation === serviceConfigLoadGeneration && serviceIri === selectedServiceIri) {
+				apiKeyLoading = false;
+			}
 		}
 	}
 
 	async function deleteApiKey() {
 		if (!selectedServiceIri || selectedServiceIsLocal) return;
+		const serviceIri = selectedServiceIri;
 		apiKeyDeleting = true;
-		aiMessage = '';
-		aiError = false;
+		setAiFieldStatus('apiKey', 'saving');
 		try {
-			await invoke('ai__delete_api_key', { serviceIri: selectedServiceIri });
+			await invoke('ai__delete_api_key', { serviceIri });
+			if (serviceIri !== selectedServiceIri) {
+				await refreshAIServiceReadiness();
+				return;
+			}
 			apiKey = '';
 			loadedApiKey = '';
-			aiMessage = 'Chave de API removida.';
+			setAiFieldStatus('apiKey', 'saved');
+			await refreshAIServiceReadiness();
 		} catch (e) {
-			aiMessage = String(e);
-			aiError = true;
+			if (serviceIri === selectedServiceIri) setAiFieldStatus('apiKey', 'error', String(e));
 		} finally {
 			apiKeyDeleting = false;
 		}
@@ -393,21 +478,11 @@
 		aiServicesLoading = true;
 		aiServicesLoadError = false;
 		try {
-			const [svcs, current, currentSvc] = await Promise.all([
+			const [svcs, currentSvc] = await Promise.all([
 				invoke('setup__list_ai_services'),
-				invoke('setup__get_current_ai_model'),
 				invoke('setup__get_current_ai_service'),
 			]);
 			services = svcs;
-			if (current) {
-				currentModelLabel = current.label;
-				selectedModelIri = current.iri;
-				loadedModelIri = current.iri;
-				if (current.modelIdentifier) {
-					selectedOpenRouterModelId = current.modelIdentifier;
-					loadedOpenRouterModelId = current.modelIdentifier;
-				}
-			}
 			if (currentSvc) {
 				selectedServiceIri = currentSvc.iri;
 				loadedServiceIri = currentSvc.iri;
@@ -416,7 +491,12 @@
 				loadedServiceIri = '';
 			}
 			if (selectedServiceIri) {
-				await loadModels(selectedServiceIri);
+				const [current, ,] = await Promise.all([
+					invoke('setup__get_current_ai_model'),
+					loadModels(selectedServiceIri),
+					loadApiKeyForService(selectedServiceIri),
+				]);
+				applyConfiguredModel(current, selectedServiceIri);
 			}
 		} catch {
 			aiServicesLoadError = true;
@@ -462,75 +542,250 @@
 		}
 	}
 
-	async function onServiceChange(e) {
-		selectedServiceIri = typeof e === 'string' ? e : e.target.value;
-		selectedModelIri = '';
-		selectedOpenRouterModelId = '';
-		loadedOpenRouterModelId = '';
-		openRouterModels = [];
-		openRouterModelsError = '';
-		fallbackModelIds = [];
-		loadedFallbackModelIds = [];
-		aiMessage = '';
-		aiError = false;
-		await Promise.all([loadModels(selectedServiceIri), loadApiKeyForService(selectedServiceIri)]);
-		if (selectedServiceIsOpenRouter && apiKey.trim()) {
+	async function onServiceChange(serviceIri) {
+		if (!serviceIri || serviceIri === selectedServiceIri || aiSaving) return;
+		const previousServiceIri = selectedServiceIri;
+		const generation = ++serviceChangeGeneration;
+		for (const field of ['apiKey', 'baseUrl', 'model', 'fallback']) setAiFieldStatus(field, 'idle');
+		selectedServiceIri = serviceIri;
+		setAiFieldStatus('provider', 'saving');
+		try {
+			await invoke('setup__save_ai_service', { serviceIri });
+			if (generation !== serviceChangeGeneration) return;
+			const currentModel = await invoke('setup__get_current_ai_model');
+			if (generation !== serviceChangeGeneration) return;
+			loadedServiceIri = serviceIri;
+			applyConfiguredModel(currentModel, serviceIri);
+			openRouterModels = [];
+			openRouterModelsError = '';
+			setAiFieldStatus('provider', 'saved');
+			await Promise.all([loadModels(serviceIri), loadApiKeyForService(serviceIri)]);
+			if (generation !== serviceChangeGeneration) return;
+			if (aiServiceDisplayName(services.find((service) => service.iri === serviceIri) ?? {}).toLowerCase().includes('openrouter') && apiKey.trim() && baseUrl.trim()) {
+				await loadOpenRouterModels();
+			}
+		} catch (error) {
+			if (generation === serviceChangeGeneration) {
+				selectedServiceIri = previousServiceIri;
+				setAiFieldStatus('provider', 'error', String(error));
+			}
+		}
+	}
+
+	function applyConfiguredModel(model, serviceIri) {
+		const service = services.find((item) => item.iri === serviceIri);
+		const isOpenRouter = aiServiceDisplayName(service ?? {}).toLowerCase().includes('openrouter');
+		selectedModelIri = model?.iri ?? '';
+		loadedModelIri = model?.iri ?? '';
+		currentModelLabel = model?.label ?? '';
+		selectedOpenRouterModelId = isOpenRouter ? (model?.modelIdentifier ?? '') : '';
+		loadedOpenRouterModelId = selectedOpenRouterModelId;
+	}
+
+	async function saveApiKey() {
+		if (!selectedServiceIri || selectedServiceIsLocal || apiKey === loadedApiKey) return;
+		if (!apiKey.trim()) {
+			setAiFieldStatus('apiKey', 'idle');
+			return;
+		}
+		const serviceIri = selectedServiceIri;
+		const apiKeyToSave = apiKey;
+		const baseUrlToUse = baseUrl;
+		const isOpenRouter = aiServiceDisplayName(
+			services.find((service) => service.iri === serviceIri) ?? {},
+		).toLowerCase().includes('openrouter');
+		setAiFieldStatus('apiKey', 'saving');
+		try {
+			if (isOpenRouter) {
+				if (!baseUrlToUse.trim()) throw new Error('Informe a URL base antes de salvar a chave.');
+				await invoke('ai__validate_provider_key', { apiKey: apiKeyToSave, baseUrl: baseUrlToUse });
+			}
+			await invoke('ai__save_api_key', { apiKey: apiKeyToSave, serviceIri });
+			if (serviceIri !== selectedServiceIri) {
+				await refreshAIServiceReadiness();
+				return;
+			}
+			loadedApiKey = apiKeyToSave;
+			setAiFieldStatus('apiKey', 'saved');
+			await refreshAIServiceReadiness();
+			if (isOpenRouter && baseUrlToUse.trim()) await loadOpenRouterModels();
+		} catch (error) {
+			if (serviceIri === selectedServiceIri) setAiFieldStatus('apiKey', 'error', String(error));
+		}
+	}
+
+	async function saveBaseUrl() {
+		if (!selectedServiceIri || !selectedServiceIsOpenRouter || baseUrl === loadedBaseUrl) return;
+		const serviceIri = selectedServiceIri;
+		const baseUrlToSave = baseUrl;
+		setAiFieldStatus('baseUrl', 'saving');
+		try {
+			await invoke('ai__save_service_base_url', { serviceIri, baseUrl: baseUrlToSave });
+			if (serviceIri !== selectedServiceIri) {
+				await refreshAIServiceReadiness();
+				return;
+			}
+			loadedBaseUrl = baseUrlToSave;
+			setAiFieldStatus('baseUrl', 'saved');
+			await refreshAIServiceReadiness();
+			if (apiKey.trim() && baseUrlToSave.trim()) await loadOpenRouterModels();
+		} catch (error) {
+			if (serviceIri === selectedServiceIri) setAiFieldStatus('baseUrl', 'error', String(error));
+		}
+	}
+
+	async function saveSelectedModel(modelIri) {
+		if (!selectedServiceIri || !modelIri || modelIri === loadedModelIri || aiSaving) return false;
+		const serviceIri = selectedServiceIri;
+		const previousModelIri = loadedModelIri;
+		setAiFieldStatus('model', 'saving');
+		aiSaving = true;
+		try {
+			if (!selectedServiceIsLocal && !apiKey.trim()) throw new Error('Informe a chave de API antes de ativar o modelo.');
+			if (serviceIri !== loadedServiceIri) {
+				await invoke('setup__save_ai_service', { serviceIri });
+			}
+			await invoke('setup__save_ai_model', { modelIri });
+			loadedServiceIri = serviceIri;
+			selectedModelIri = modelIri;
+			loadedModelIri = modelIri;
+			currentModelLabel = models.find((model) => model.iri === modelIri)?.label ?? '';
+			setAiFieldStatus('model', 'saved');
+			return true;
+		} catch (error) {
+			selectedModelIri = previousModelIri;
+			setAiFieldStatus('model', 'error', String(error));
+			return false;
+		} finally {
+			aiSaving = false;
+		}
+	}
+
+	async function saveFallbackModels(nextFallbackModelIds) {
+		if (!selectedServiceIri || !selectedServiceIsOpenRouter || fallbackPickerSaving) return false;
+		fallbackPickerSaving = true;
+		setAiFieldStatus('fallback', 'saving');
+		try {
+			await invoke('ai__save_fallback_models', { serviceIri: selectedServiceIri, modelIds: nextFallbackModelIds });
+			fallbackModelIds = [...nextFallbackModelIds];
+			loadedFallbackModelIds = [...nextFallbackModelIds];
+			setAiFieldStatus('fallback', 'saved');
+			return true;
+		} catch (error) {
+			setAiFieldStatus('fallback', 'error', String(error));
+			return false;
+		} finally {
+			fallbackPickerSaving = false;
+		}
+	}
+
+	async function openFallbackPicker() {
+		fallbackPickerDraftIds = [...fallbackModelIds];
+		fallbackPickerError = '';
+		fallbackPickerOpen = true;
+		if (openRouterModels.length === 0 && !openRouterModelsLoading && apiKey.trim() && baseUrl.trim()) {
 			await loadOpenRouterModels();
 		}
 	}
 
-	async function saveAiConfig() {
-		if (!aiCanSave) return;
+	function closeFallbackPicker() {
+		if (fallbackPickerSaving) return;
+		fallbackPickerOpen = false;
+		fallbackPickerDraftIds = [...fallbackModelIds];
+		fallbackPickerError = '';
+		requestAnimationFrame(() => fallbackPickerTrigger?.focus());
+	}
+
+	function moveFallbackDraft(index, offset) {
+		const nextIndex = index + offset;
+		if (nextIndex < 0 || nextIndex >= fallbackPickerDraftIds.length) return;
+		const next = [...fallbackPickerDraftIds];
+		[next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+		fallbackPickerDraftIds = next;
+	}
+
+	async function saveFallbackSelection() {
+		fallbackPickerError = '';
+		const saved = await saveFallbackModels([...fallbackPickerDraftIds]);
+		if (saved) closeFallbackPicker();
+		else fallbackPickerError = aiFieldError.fallback || 'Não foi possível salvar a lista de fallbacks.';
+	}
+
+	function fallbackModelLabel(modelId) {
+		const model = openRouterModels.find((item) => item.id === modelId);
+		return model ? openRouterModelLabel(model) : modelId;
+	}
+
+	async function saveAiConfig(openRouterModelIdOverride = null) {
+		const modelIdToSave = openRouterModelIdOverride ?? selectedOpenRouterModelId;
+		const orModel = openRouterModels.find((model) => model.id === modelIdToSave);
+		if (!orModel || !selectedServiceIri || !selectedServiceIsOpenRouter || aiSaving) return false;
 		aiSaving = true;
+		aiSavingStage = 'Validando o modelo escolhido…';
+		setAiFieldStatus('model', 'saving');
 		aiMessage = '';
 		aiError = false;
 		try {
-			if (!selectedServiceIsLocal && apiKey !== loadedApiKey) {
-				if (selectedServiceIsOpenRouter) {
-					await invoke('ai__validate_provider_key', { apiKey, baseUrl });
-				}
-				await invoke('ai__save_api_key', { apiKey, serviceIri: selectedServiceIri });
-				loadedApiKey = apiKey;
-			}
-			if (selectedServiceIsOpenRouter && baseUrl !== loadedBaseUrl) {
-				await invoke('ai__save_service_base_url', { serviceIri: selectedServiceIri, baseUrl });
-				loadedBaseUrl = baseUrl;
-			}
-			if (selectedServiceIsOpenRouter && JSON.stringify(fallbackModelIds) !== JSON.stringify(loadedFallbackModelIds)) {
-				await invoke('ai__save_fallback_models', { serviceIri: selectedServiceIri, modelIds: fallbackModelIds });
-				loadedFallbackModelIds = [...fallbackModelIds];
-			}
-			if (selectedServiceIsOpenRouter && selectedOpenRouterModelId) {
-				const orModel = openRouterModels.find(m => m.id === selectedOpenRouterModelId);
-				if (orModel) {
-					selectedModelIri = await invoke('ai__ensure_openrouter_model', {
-						serviceIri: selectedServiceIri,
-						modelId: orModel.id,
-						modelName: orModel.name,
-						contextLength: orModel.contextLength,
-						inputCostPerToken: orModel.inputCostPerToken,
-						outputCostPerToken: orModel.outputCostPerToken,
-						supportsTools: orModel.supportsTools ?? false,
-					});
-					loadedOpenRouterModelId = selectedOpenRouterModelId;
-				}
-			}
-			if (selectedServiceIri !== loadedServiceIri) {
-				await invoke('setup__save_ai_service', { serviceIri: selectedServiceIri });
-				loadedServiceIri = selectedServiceIri;
-			}
-			if (selectedModelIri !== loadedModelIri) {
-				await invoke('setup__save_ai_model', { modelIri: selectedModelIri });
-				loadedModelIri = selectedModelIri;
-			}
-			const selected = models.find(m => m.iri === selectedModelIri);
-			currentModelLabel = selected?.label ?? '';
-			aiMessage = 'Configuração salva.';
-		} catch (e) {
-			aiMessage = String(e);
+			if (!apiKey.trim() || !baseUrl.trim()) throw new Error('Informe e salve a chave e a URL base do provedor antes de escolher um modelo.');
+			await invoke('ai__validate_provider_key', { apiKey, baseUrl });
+			aiSavingStage = 'Registrando o modelo escolhido…';
+			const modelIri = await invoke('ai__ensure_openrouter_model', {
+				serviceIri: selectedServiceIri,
+				modelId: orModel.id,
+				modelName: orModel.name,
+				contextLength: orModel.contextLength,
+				inputCostPerToken: orModel.inputCostPerToken,
+				outputCostPerToken: orModel.outputCostPerToken,
+				supportsTools: orModel.supportsTools ?? false,
+			});
+			aiSavingStage = 'Ativando o modelo…';
+			await invoke('setup__save_ai_model', { modelIri });
+			selectedModelIri = modelIri;
+			loadedModelIri = modelIri;
+			selectedOpenRouterModelId = modelIdToSave;
+			loadedOpenRouterModelId = modelIdToSave;
+			currentModelLabel = orModel.name;
+			setAiFieldStatus('model', 'saved');
+			return true;
+		} catch (error) {
+			aiMessage = String(error);
 			aiError = true;
+			setAiFieldStatus('model', 'error', String(error));
+			return false;
 		} finally {
 			aiSaving = false;
+			aiSavingStage = '';
+		}
+	}
+
+	async function openModelPicker() {
+		modelPickerDraftId = selectedOpenRouterModelId || loadedOpenRouterModelId;
+		modelPickerOpen = true;
+		if (apiKey.trim() && baseUrl.trim() && openRouterModels.length === 0 && !openRouterModelsLoading) {
+			await loadOpenRouterModels();
+		}
+	}
+
+	function closeModelPicker() {
+		if (aiSaving) return;
+		modelPickerOpen = false;
+		modelPickerDraftId = loadedOpenRouterModelId;
+		requestAnimationFrame(() => modelPickerTrigger?.focus());
+	}
+
+	async function saveAndUseModel() {
+		if (!modelPickerDraftId || aiSaving) return;
+		if (modelPickerDraftId === loadedOpenRouterModelId && !aiDirty) {
+			closeModelPicker();
+			return;
+		}
+		const saved = await saveAiConfig(modelPickerDraftId);
+		if (saved) {
+			modelPickerOpen = false;
+			modelPickerDraftId = loadedOpenRouterModelId;
+			aiMessage = '';
+			requestAnimationFrame(() => modelPickerTrigger?.focus());
+			return;
 		}
 	}
 
@@ -739,7 +994,7 @@
 	}
 
 	function handleKeydown(e) {
-		if (e.key === 'Escape' && imapEditing === null) onClose?.();
+		if (e.key === 'Escape' && !e.defaultPrevented && imapEditing === null && !modelPickerOpen) onClose?.();
 	}
 
 	function handleSettingsSectionClick(event) {
@@ -806,35 +1061,96 @@
 			<section class="settings-section">
 				<h3 class="section-title">
 					<span class="material-symbols-outlined">psychology</span>
-					Provedor e modelo de IA
+					Modelo de IA
 				</h3>
 				{#if aiServicesLoading}
 					<p class="hint" role="status" aria-live="polite">Carregando provedores e modelos…</p>
 				{:else if aiServicesLoadError}
 					<p class="feedback error" role="alert">Não foi possível carregar provedores e modelos.</p>
 				{:else if services.length > 0}
-					<label class="field-label" for="settings-provider-select">Provedor</label>
-					<div class="field-row">
-						<Select.Root
-							type="single"
-							value={selectedServiceIri}
-							onValueChange={async (v) => { if (v) await onServiceChange(v); }}
-						>
-							<Select.Trigger id="settings-provider-select" class="flex-1">
-								<Select.Value placeholder="Selecionar provedor" />
-							</Select.Trigger>
-							<Select.Content>
-								{#each services as svc}
-									<Select.Item value={svc.iri}>{svc.label}</Select.Item>
-								{/each}
-							</Select.Content>
-						</Select.Root>
-					</div>
+					<fieldset class="provider-selector">
+						<legend>Escolha o provedor</legend>
+						<div class="provider-card-grid">
+							{#each services as svc}
+								{@const providerName = aiServiceDisplayName(svc)}
+								<div class="provider-option" class:selected={selectedServiceIri === svc.iri}>
+									<label class="provider-choice">
+										<input
+											type="radio"
+											name="settings-ai-provider"
+											value={svc.iri}
+											checked={selectedServiceIri === svc.iri}
+											disabled={aiSaving}
+											onchange={() => onServiceChange(svc.iri)}
+										/>
+										<span class="provider-brand-icon" title="Identidade visual de {providerName}">
+											{#if aiProviderLogo(svc)}
+												<img src={aiProviderLogo(svc)} alt="Logo oficial de {providerName}" />
+											{:else}
+												<span class="material-symbols-outlined">{aiProviderIcon(svc)}</span>
+											{/if}
+										</span>
+										<span class="provider-choice-copy">
+											<span class="provider-name">{providerName}</span>
+											<span class="provider-description">{svc.description || `Serviço de IA ${providerName}.`}</span>
+											<span class="provider-readiness" class:ready={svc.runtimeReadiness?.isReady} class:incomplete={!svc.runtimeReadiness?.isReady}>
+												{runtimeReadinessLabel(svc)}
+											</span>
+										</span>
+									</label>
+									<div class="provider-links" aria-label="Links oficiais de {providerName}">
+										{#if svc.seeAlsoUrl}
+											<a href={svc.seeAlsoUrl} target="_blank" rel="noopener noreferrer">Site oficial</a>
+										{/if}
+										{#if svc.apiDocumentation}
+											<a href={svc.apiDocumentation} target="_blank" rel="noopener noreferrer">Ajuda de configuração</a>
+										{/if}
+									</div>
+								</div>
+							{/each}
+						</div>
+						<p class="field-save-status" class:saving={aiFieldStatus.provider === 'saving'} class:error={aiFieldStatus.provider === 'error'} role="status" aria-live="polite">
+							{aiFieldStatusLabel('provider')}
+						</p>
+					</fieldset>
 
-					{#if !selectedServiceIsLocal}
+					{#if selectedService}
+					<section class="provider-settings" aria-labelledby="settings-provider-heading">
+						<header class="provider-settings-heading">
+							<div class="provider-settings-title">
+								<span class="provider-brand-icon" title="Identidade visual de {selectedServiceLabel}">
+									{#if aiProviderLogo(selectedService)}
+										<img src={aiProviderLogo(selectedService)} alt="Logo oficial de {selectedServiceLabel}" />
+									{:else}
+										<span class="material-symbols-outlined">{aiProviderIcon(selectedService)}</span>
+									{/if}
+								</span>
+								<div>
+									<h4 id="settings-provider-heading">Configuração · {selectedServiceLabel}</h4>
+									<p>As opções abaixo pertencem a este provedor.</p>
+								</div>
+							</div>
+							{#if selectedServiceIsOpenRouter}
+						<div class="configured-model" aria-label="Modelo de IA configurado">
+							<div class="configured-model-copy">
+								<span class="configured-model-label">MODELO ATUAL</span>
+								<strong>{configuredModelLabel}</strong>
+								<span class="configured-model-provider">{loadedServiceLabel}</span>
+							</div>
+							<Button bind:ref={modelPickerTrigger} variant="outline" onclick={openModelPicker} disabled={aiSaving}>
+								<span class="material-symbols-outlined" aria-hidden="true">search</span>
+								Alterar modelo
+							</Button>
+						</div>
+							{/if}
+						</header>
+
+						<div class="provider-field-grid">
+							{#if !selectedServiceIsLocal}
+								<div class="settings-field">
 						<label class="field-label" for="settings-api-key-input">Chave de API</label>
 						{#if apiKeyLoading}
-							<p class="hint">Loading…</p>
+							<p class="hint">Carregando…</p>
 						{:else}
 							<div class="field-row">
 								<Input
@@ -842,17 +1158,23 @@
 									type="password"
 									placeholder={selectedServiceIsOpenRouter ? 'sk-or-…' : 'sk-ant-…'}
 									bind:value={apiKey}
+									oninput={() => setAiFieldStatus('apiKey', 'idle')}
+									onblur={saveApiKey}
 								/>
 								<Button variant="destructive" size="icon"
 									title="Remover chave de API"
+									aria-label="Remover chave de API"
 									onclick={deleteApiKey}
 									disabled={apiKeyDeleting || !loadedApiKey}
 								><span class="material-symbols-outlined">delete</span></Button>
 							</div>
+							<p class="field-save-status" class:saving={aiFieldStatus.apiKey === 'saving'} class:error={aiFieldStatus.apiKey === 'error'} role="status" aria-live="polite">{aiFieldStatusLabel('apiKey')}</p>
 						{/if}
+							</div>
 					{/if}
 
-					{#if selectedServiceIsOpenRouter}
+							{#if selectedServiceIsOpenRouter}
+								<div class="settings-field">
 						<label class="field-label" for="settings-base-url-input">URL Base</label>
 						<div class="field-row">
 							<Input
@@ -860,66 +1182,147 @@
 								type="url"
 								placeholder="https://openrouter.ai/api/v1"
 								bind:value={baseUrl}
+								oninput={() => setAiFieldStatus('baseUrl', 'idle')}
+								onblur={saveBaseUrl}
 							/>
 						</div>
+						<p class="field-save-status" class:saving={aiFieldStatus.baseUrl === 'saving'} class:error={aiFieldStatus.baseUrl === 'error'} role="status" aria-live="polite">{aiFieldStatusLabel('baseUrl')}</p>
+								</div>
 					{/if}
 
-					{#if selectedServiceIsOpenRouter}
-						<OpenRouterModelSelector
-							idPrefix="settings-openrouter"
-							models={openRouterModels}
-							benchmarks={openRouterBenchmarks}
-							bind:selectedModelId={selectedOpenRouterModelId}
-							loading={openRouterModelsLoading}
-							error={openRouterModelsError}
-							benchmarksLoading={openRouterBenchmarksLoading}
-							benchmarksError={openRouterBenchmarksError}
-							loadHint={!apiKey.trim() ? 'Informe a chave de API para carregar o catálogo.' : !baseUrl.trim() ? 'Informe a URL base do OpenRouter para carregar o catálogo.' : 'Carregue o catálogo para comparar os modelos disponíveis.'}
-							onRetry={loadOpenRouterModels}
-						/>
+							{#if selectedServiceIsOpenRouter}
+						<Dialog.Root open={modelPickerOpen} onOpenChange={(open) => { if (!open) closeModelPicker(); }}>
+							<Dialog.Content class="model-picker-dialog" aria-describedby="settings-model-picker-description">
+								<Dialog.Header>
+									<Dialog.Title>Escolher modelo de IA</Dialog.Title>
+									<Dialog.Description id="settings-model-picker-description">
+										Busque e compare opções. Ao confirmar, o modelo será salvo imediatamente para este provedor.
+									</Dialog.Description>
+								</Dialog.Header>
+								<div class="model-picker-body">
+									<OpenRouterModelSelector
+										idPrefix="settings-openrouter"
+										providerName={selectedServiceLabel}
+										models={openRouterModels}
+										benchmarks={openRouterBenchmarks}
+										bind:selectedModelId={modelPickerDraftId}
+										loading={openRouterModelsLoading}
+										error={openRouterModelsError}
+										benchmarksLoading={openRouterBenchmarksLoading}
+										benchmarksError={openRouterBenchmarksError}
+										loadHint={!apiKey.trim() ? 'Informe a chave de API para carregar o catálogo.' : !baseUrl.trim() ? 'Informe a URL base do OpenRouter para carregar o catálogo.' : 'Carregue o catálogo para comparar os modelos disponíveis.'}
+										onRetry={loadOpenRouterModels}
+									/>
+								</div>
+									{#if aiSaving}
+										<p class="model-picker-saving" role="status" aria-live="polite">{aiSavingStage}</p>
+									{/if}
+								<Dialog.Footer class="model-picker-actions">
+									<Button variant="ghost" onclick={closeModelPicker} disabled={aiSaving}>Cancelar</Button>
+									<Button variant="default" onclick={saveAndUseModel} disabled={aiSaving || !modelPickerCanConfirm} aria-live="polite">
+										{aiSaving ? 'Salvando modelo…' : 'Salvar e usar modelo'}
+									</Button>
+								</Dialog.Footer>
+								{#if aiError && aiMessage}
+									<p class="model-picker-error" role="alert" aria-live="assertive">Não foi possível salvar o modelo: {aiMessage}</p>
+								{/if}
+							</Dialog.Content>
+						</Dialog.Root>
 					{/if}
 
-					{#if selectedServiceIsOpenRouter && openRouterModels.length > 0}
-						<label class="field-label" for="settings-fallback-add">Modelos de Fallback (em ordem de prioridade)</label>
-						<div class="field-row" style="flex-direction:column;gap:4px;align-items:flex-start;">
+							{#if selectedServiceIsOpenRouter}
+								<div class="settings-field fallback-field">
+						<label class="field-label" for="settings-fallback-manage">Modelos de fallback — ordem de prioridade</label>
+						<div class="fallback-list" aria-label="Modelos de fallback salvos por prioridade">
 							{#each fallbackModelIds as fbId, i}
-								<div class="field-row" style="width:100%;">
-					<span class="text-input" style="flex:1;padding:4px 8px;font-size:0.85em;">{openRouterModels.find((model) => model.id === fbId) ? openRouterModelLabel(openRouterModels.find((model) => model.id === fbId)) : fbId}</span>
-									<Button variant="ghost" size="icon" title="Remover" onclick={() => { fallbackModelIds = fallbackModelIds.filter((_, idx) => idx !== i); }}><span class="material-symbols-outlined">remove</span></Button>
+								<div class="fallback-item" aria-label={`Prioridade ${i + 1}: ${fallbackModelLabel(fbId)}`}>
+									<span class="fallback-priority" aria-hidden="true">{i + 1}</span>
+									<span class="fallback-model-name">{fallbackModelLabel(fbId)}</span>
 								</div>
 							{/each}
-							<div class="field-row" style="width:100%;">
-								<Select.Root
-									type="single"
-									value=""
-									onValueChange={(v) => {
-										if (v && !fallbackModelIds.includes(v)) {
-											fallbackModelIds = [...fallbackModelIds, v];
-										}
-									}}
-								>
-									<Select.Trigger id="settings-fallback-add" class="flex-1">
-										<Select.Value placeholder="Adicionar modelo de fallback…" />
-									</Select.Trigger>
-									<Select.Content>
-										{#each openRouterModels.filter(m => !fallbackModelIds.includes(m.id)) as m}
-											<Select.Item value={m.id}>{openRouterModelLabel(m)}</Select.Item>
-										{/each}
-									</Select.Content>
-								</Select.Root>
-							</div>
+							{#if fallbackModelIds.length === 0}
+								<p class="fallback-empty">Nenhum modelo de fallback configurado.</p>
+							{/if}
+							<Button id="settings-fallback-manage" variant="secondary" size="sm" bind:ref={fallbackPickerTrigger} onclick={openFallbackPicker}>
+								<span class="material-symbols-outlined" aria-hidden="true">tune</span>
+								Gerenciar modelos de fallback
+							</Button>
 						</div>
+						<p class="field-save-status" class:saving={aiFieldStatus.fallback === 'saving'} class:error={aiFieldStatus.fallback === 'error'} role="status" aria-live="polite">{aiFieldStatusLabel('fallback')}</p>
+						<Dialog.Root open={fallbackPickerOpen} onOpenChange={(open) => { if (!open) closeFallbackPicker(); }}>
+							<Dialog.Content class="model-picker-dialog fallback-picker-dialog" aria-describedby="settings-fallback-picker-description">
+								<Dialog.Header>
+									<Dialog.Title>Adicionar modelos de fallback</Dialog.Title>
+									<Dialog.Description id="settings-fallback-picker-description">
+										Busque e ordene o catálogo. A ordem na lista de prioridade define qual modelo será tentado primeiro.
+									</Dialog.Description>
+								</Dialog.Header>
+								<div class="fallback-picker-body">
+									<div class="fallback-catalog">
+										<OpenRouterModelSelector
+											idPrefix="settings-fallback"
+											providerName={selectedServiceLabel}
+											models={openRouterModels}
+											benchmarks={openRouterBenchmarks}
+											bind:selectedModelIds={fallbackPickerDraftIds}
+											selectionMode="multiple"
+											loading={openRouterModelsLoading}
+											error={openRouterModelsError}
+											benchmarksLoading={openRouterBenchmarksLoading}
+											benchmarksError={openRouterBenchmarksError}
+											loadHint={!apiKey.trim() ? 'Informe e salve a chave de API para carregar o catálogo.' : !baseUrl.trim() ? 'Informe a URL base do OpenRouter para carregar o catálogo.' : 'Carregue o catálogo para comparar os modelos disponíveis.'}
+											onRetry={loadOpenRouterModels}
+										/>
+									</div>
+									<aside class="fallback-priority-panel" aria-labelledby="settings-fallback-priority-heading">
+										<h3 id="settings-fallback-priority-heading">Ordem de prioridade</h3>
+										<p>Ordenar os resultados não altera esta sequência.</p>
+										{#if fallbackPickerDraftIds.length === 0}
+											<p class="fallback-empty" role="status">Selecione modelos no catálogo para montar a lista.</p>
+										{:else}
+											<ol class="fallback-priority-list">
+												{#each fallbackPickerDraftIds as fallbackId, i (fallbackId)}
+													<li class="fallback-priority-entry">
+														<span class="fallback-priority" aria-label={`Prioridade ${i + 1}`}>{i + 1}</span>
+														<span class="fallback-model-name">{fallbackModelLabel(fallbackId)}</span>
+														<div class="fallback-priority-actions">
+															<Button variant="ghost" size="icon" aria-label={`Subir ${fallbackModelLabel(fallbackId)}`} title="Subir prioridade" disabled={i === 0} onclick={() => moveFallbackDraft(i, -1)}><span class="material-symbols-outlined" aria-hidden="true">arrow_upward</span></Button>
+															<Button variant="ghost" size="icon" aria-label={`Descer ${fallbackModelLabel(fallbackId)}`} title="Descer prioridade" disabled={i === fallbackPickerDraftIds.length - 1} onclick={() => moveFallbackDraft(i, 1)}><span class="material-symbols-outlined" aria-hidden="true">arrow_downward</span></Button>
+															<Button variant="ghost" size="icon" aria-label={`Remover ${fallbackModelLabel(fallbackId)}`} title="Remover fallback" onclick={() => { fallbackPickerDraftIds = fallbackPickerDraftIds.filter((_, index) => index !== i); }}><span class="material-symbols-outlined" aria-hidden="true">remove</span></Button>
+														</div>
+													</li>
+												{/each}
+											</ol>
+										{/if}
+									</aside>
+								</div>
+								{#if fallbackPickerSaving}
+									<p class="model-picker-saving" role="status" aria-live="polite">Salvando ordem de prioridade…</p>
+								{/if}
+								{#if fallbackPickerError}
+									<p class="model-picker-error" role="alert" aria-live="assertive">{fallbackPickerError}</p>
+								{/if}
+								<Dialog.Footer class="model-picker-actions">
+									<Button variant="ghost" onclick={closeFallbackPicker} disabled={fallbackPickerSaving}>Cancelar</Button>
+									<Button variant="default" onclick={saveFallbackSelection} disabled={fallbackPickerSaving || (fallbackPickerDraftIds.length === loadedFallbackModelIds.length && fallbackPickerDraftIds.every((id, index) => id === loadedFallbackModelIds[index]))}>
+										{fallbackPickerSaving ? 'Salvando…' : 'Salvar seleção'}
+									</Button>
+								</Dialog.Footer>
+							</Dialog.Content>
+						</Dialog.Root>
+								</div>
 					{/if}
 
-					{#if !selectedServiceIsOpenRouter && models.length > 0}
+							{#if !selectedServiceIsOpenRouter && models.length > 0}
+								<div class="settings-field">
 						<label class="field-label" for="settings-model-select">Modelo padrão</label>
 						<div class="field-row">
 							<Select.Root
 								type="single"
 								value={selectedModelIri}
-								onValueChange={(v) => { if (v !== undefined) selectedModelIri = v; }}
+								onValueChange={(v) => { if (v !== undefined && !aiSaving) { selectedModelIri = v; saveSelectedModel(v); } }}
 							>
-								<Select.Trigger id="settings-model-select" class="flex-1">
+								<Select.Trigger id="settings-model-select" class="flex-1" disabled={aiSaving}>
 									<Select.Value placeholder="Selecione um modelo…" />
 								</Select.Trigger>
 								<Select.Content>
@@ -929,19 +1332,15 @@
 								</Select.Content>
 							</Select.Root>
 						</div>
+						<p class="field-save-status" class:saving={aiFieldStatus.model === 'saving'} class:error={aiFieldStatus.model === 'error'} role="status" aria-live="polite">{aiFieldStatusLabel('model')}</p>
 						{#if !selectedServiceIsLocal && !apiKey.trim()}
 							<p class="feedback error">Informe a chave de API antes de ativar este provedor.</p>
 						{/if}
+								</div>
 					{/if}
 
-					<div class="field-row">
-						<Button variant="default" onclick={saveAiConfig} disabled={aiSaving || !aiCanSave}>
-							{aiSaving ? 'Salvando…' : 'Salvar'}
-						</Button>
-					</div>
-
-					{#if aiMessage}
-						<p class="feedback" class:error={aiError}>{aiMessage}</p>
+						</div>
+					</section>
 					{/if}
 				{:else}
 					<p class="hint">Nenhum provedor de IA disponível.</p>
@@ -1411,6 +1810,12 @@
 		align-content: start;
 	}
 
+	#settings-panel-ai {
+		width: 100%;
+		max-width: var(--size-settings-content-max-width);
+		margin-inline: auto;
+	}
+
 	@media (max-width: 760px) {
 		.settings-layout {
 			grid-template-columns: minmax(0, 1fr);
@@ -1444,6 +1849,10 @@
 		.settings-panel-grid {
 			grid-template-columns: minmax(0, 1fr);
 		}
+
+		.provider-field-grid {
+			grid-template-columns: minmax(0, 1fr);
+		}
 	}
 
 	.settings-section {
@@ -1451,6 +1860,403 @@
 		flex-direction: column;
 		gap: var(--spacing-field-block);
 		min-width: 0;
+	}
+
+	.provider-selector {
+		min-width: 0;
+		margin: 0;
+		padding: 0;
+		border: 0;
+	}
+
+	.provider-selector legend {
+		margin-bottom: var(--spacing-field-group);
+		color: var(--text-primary);
+		font-size: var(--type-body-prominent);
+	}
+
+	.provider-card-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--size-settings-provider-option-min-width)), 1fr));
+		gap: var(--spacing-field-group);
+	}
+
+	.provider-option {
+		display: grid;
+		align-content: start;
+		gap: var(--spacing-control-internal);
+		min-width: 0;
+		padding: var(--spacing-widget-inset);
+		border: var(--size-hud-frame-line) solid var(--color-hud-line-subtle);
+		border-radius: var(--radius);
+		background: var(--color-surface-1);
+		transition: border-color 140ms ease, background-color 140ms ease;
+	}
+
+	.provider-option.selected {
+		border-color: var(--color-selection);
+		background: var(--color-selection-subtle);
+	}
+
+	.provider-choice {
+		display: flex;
+		align-items: start;
+		gap: var(--spacing-control-internal);
+		min-width: 0;
+		color: var(--text-body);
+		cursor: pointer;
+	}
+
+	.provider-choice input {
+		flex: 0 0 auto;
+		margin-block-start: var(--spacing-inline-tight);
+		accent-color: var(--color-selection);
+	}
+
+	.provider-choice:focus-within .provider-brand-icon {
+		outline: var(--size-hud-frame-line) solid var(--color-selection);
+		outline-offset: var(--spacing-inline-tight);
+	}
+
+	.provider-brand-icon {
+		display: grid;
+		place-items: center;
+		flex: 0 0 auto;
+		width: var(--size-touch-target);
+		aspect-ratio: 1;
+		border-radius: var(--radius);
+		background: var(--color-surface-3);
+		color: var(--text-accent);
+	}
+
+	.provider-brand-icon .material-symbols-outlined {
+		font-size: var(--type-icon-medium);
+	}
+
+	.provider-brand-icon img {
+		width: var(--type-icon-medium);
+		max-height: var(--type-icon-medium);
+		object-fit: contain;
+	}
+
+	.provider-brand-icon:has(img[alt*="Anthropic"]) {
+		background: var(--color-neutral);
+	}
+
+	.provider-choice-copy {
+		display: grid;
+		gap: var(--spacing-label-to-value);
+		min-width: 0;
+	}
+
+	.provider-name {
+		color: var(--text-primary);
+		font-size: var(--type-body-prominent);
+	}
+
+	.provider-description {
+		color: var(--text-secondary);
+		font-size: var(--type-body-compact);
+		line-height: var(--line-height-body);
+	}
+
+	.provider-readiness {
+		font-size: var(--type-caption);
+		line-height: var(--line-height-hud-compact);
+	}
+
+	.provider-readiness.ready {
+		color: var(--color-success);
+	}
+
+	.provider-readiness.incomplete {
+		color: var(--color-warning);
+	}
+
+	.provider-links {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--spacing-inline-related);
+		padding-inline-start: calc(var(--size-touch-target) + var(--spacing-control-internal));
+	}
+
+	.provider-links a {
+		color: var(--text-accent);
+		font-size: var(--type-caption);
+		text-decoration: underline;
+		text-underline-offset: var(--spacing-inline-tight);
+	}
+
+	.provider-settings {
+		display: grid;
+		gap: var(--spacing-field-group);
+		min-width: 0;
+		padding: var(--spacing-widget-inset);
+		border: var(--size-hud-frame-line) solid var(--color-hud-line-subtle);
+		border-radius: var(--radius);
+		background: var(--color-surface-1);
+	}
+
+	.provider-settings-heading {
+		display: grid;
+		gap: var(--spacing-field-group);
+		min-width: 0;
+	}
+
+	.provider-settings-title {
+		display: flex;
+		align-items: center;
+		gap: var(--spacing-control-internal);
+		min-width: 0;
+	}
+
+	.provider-settings-title h4 {
+		margin: 0;
+		color: var(--text-primary);
+		font-size: var(--type-heading);
+		font-weight: 400;
+	}
+
+	.provider-settings-title p {
+		margin: var(--spacing-label-to-value) 0 0;
+		color: var(--text-secondary);
+		font-size: var(--type-body-compact);
+	}
+
+	.provider-field-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--size-settings-field-min-width)), 1fr));
+		gap: var(--spacing-field-group) var(--spacing-section);
+		align-items: start;
+		min-width: 0;
+	}
+
+	.settings-field {
+		display: grid;
+		gap: var(--spacing-label-to-value);
+		min-width: 0;
+	}
+
+	.fallback-field {
+		grid-column: 1 / -1;
+	}
+
+	.fallback-list {
+		display: grid;
+		gap: var(--spacing-inline-related);
+		min-width: 0;
+	}
+
+	.fallback-item {
+		display: flex;
+		align-items: center;
+		gap: var(--spacing-control-internal);
+		min-width: 0;
+		padding-inline-start: var(--spacing-control-internal);
+		border-bottom: var(--size-hud-frame-line) solid var(--color-hud-line-subtle);
+	}
+
+	.fallback-model-name {
+		flex: 1;
+		min-width: 0;
+		color: var(--text-body);
+		font-size: var(--type-body-compact);
+		overflow-wrap: anywhere;
+	}
+
+	.fallback-empty {
+		margin: 0;
+		color: var(--text-secondary);
+		font-size: var(--type-body-compact);
+	}
+
+	.fallback-priority {
+		display: inline-grid;
+		place-items: center;
+		flex: 0 0 auto;
+		min-width: var(--size-settings-priority-indicator);
+		min-height: var(--size-settings-priority-indicator);
+		padding-inline: var(--space-2);
+		border: var(--size-hud-frame-line) solid var(--color-hud-line);
+		border-radius: 999px;
+		color: var(--text-body);
+		font-family: var(--font-mono);
+		font-size: var(--type-body-compact);
+	}
+
+	.field-save-status {
+		min-height: var(--type-caption);
+		margin: 0;
+		color: var(--text-secondary);
+		font-size: var(--type-caption);
+		line-height: var(--line-height-hud-compact);
+		overflow-wrap: anywhere;
+	}
+
+	.field-save-status.saving {
+		color: var(--color-transition);
+	}
+
+	.field-save-status.error {
+		color: var(--color-error);
+	}
+
+	.configured-model {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-4);
+		padding: var(--spacing-widget-inset);
+		border: 1px solid var(--color-hud-line);
+		border-radius: var(--radius);
+		background: var(--color-surface-2);
+	}
+
+	.configured-model-copy {
+		display: grid;
+		gap: var(--space-1);
+		min-width: 0;
+	}
+
+	.configured-model-label {
+		color: var(--text-secondary);
+		font-family: var(--font-mono);
+		font-size: var(--type-label);
+		letter-spacing: var(--tracking-hud-label);
+	}
+
+	.configured-model-copy strong {
+		color: var(--text-body);
+		font-size: var(--type-title);
+		font-weight: 400;
+		overflow-wrap: anywhere;
+	}
+
+	.configured-model-provider {
+		color: var(--text-secondary);
+		font-size: var(--type-body-compact);
+	}
+
+	.configured-model :global([data-slot="button"]) {
+		flex-shrink: 0;
+	}
+
+	:global([data-slot="dialog-content"].model-picker-dialog) {
+		display: flex;
+		flex-direction: column;
+		width: min(92vw, 80rem);
+		max-width: min(92vw, 80rem);
+		max-height: 90vh;
+		min-height: 0;
+		overflow: hidden;
+		background: var(--color-surface-3);
+		color: var(--text-body);
+	}
+
+	.model-picker-body {
+		min-width: 0;
+		min-height: 0;
+		overflow: auto;
+		padding-inline-end: var(--space-1);
+	}
+
+	:global([data-slot="dialog-content"].fallback-picker-dialog) {
+		width: min(96vw, 96rem);
+		max-width: min(96vw, 96rem);
+	}
+
+	.fallback-picker-body {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(18rem, 0.34fr);
+		align-items: start;
+		gap: var(--spacing-section);
+		min-width: 0;
+		min-height: 0;
+		overflow: auto;
+		padding-inline-end: var(--space-1);
+	}
+
+	.fallback-catalog {
+		min-width: 0;
+	}
+
+	.fallback-priority-panel {
+		position: sticky;
+		top: 0;
+		display: grid;
+		gap: var(--spacing-inline-related);
+		min-width: 0;
+		max-height: 72vh;
+		overflow: auto;
+		padding: var(--spacing-widget-inset);
+		border: var(--size-hud-frame-line) solid var(--color-hud-line-subtle);
+		border-radius: var(--radius);
+		background: var(--color-surface-2);
+	}
+
+	.fallback-priority-panel h3 {
+		margin: 0;
+		color: var(--text-body);
+		font-size: var(--type-heading);
+		font-weight: 400;
+	}
+
+	.fallback-priority-panel > p {
+		margin: 0;
+		color: var(--text-secondary);
+		font-size: var(--type-body-compact);
+	}
+
+	.fallback-priority-list {
+		display: grid;
+		gap: var(--spacing-inline-related);
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.fallback-priority-entry {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr) auto;
+		align-items: center;
+		gap: var(--spacing-control-internal);
+		min-width: 0;
+		padding-block: var(--space-1);
+		border-bottom: var(--size-hud-frame-line) solid var(--color-hud-line-subtle);
+	}
+
+	.fallback-priority-entry .fallback-priority {
+		min-width: var(--size-settings-priority-indicator);
+		min-height: var(--size-settings-priority-indicator);
+	}
+
+	.fallback-priority-actions {
+		display: flex;
+		align-items: center;
+		gap: var(--spacing-control-internal);
+	}
+
+	.fallback-priority-actions :global([data-slot="button"]) {
+		min-width: var(--size-touch-target);
+		min-height: var(--size-touch-target);
+	}
+
+	:global([data-slot="dialog-footer"].model-picker-actions) {
+		flex-shrink: 0;
+		padding-top: var(--space-2);
+		border-top: 1px solid var(--color-hud-line-subtle);
+	}
+
+	.model-picker-error {
+		margin: 0;
+		color: var(--color-error);
+		font-size: var(--type-body-compact);
+	}
+
+	.model-picker-saving {
+		margin: var(--space-2) 0 0;
+		color: var(--color-transition);
+		font-size: var(--type-body-compact);
 	}
 
 	/* .section-title and .field-label come from global base.css */
@@ -1479,19 +2285,35 @@
 		align-items: center;
 	}
 
-	.text-input {
-		flex: 1;
-		min-width: 0;
-		background: var(--color-surface-3);
-		border: none;
-		border-radius: var(--radius);
-		color: var(--color-neutral-active);
-		font-family: var(--font-body);
-		font-size: 14px;
-		padding: 7px 10px;
-		line-height: 1.4;
-		outline: none;
-		box-sizing: border-box;
+	@media (max-width: 42rem) {
+		.configured-model {
+			align-items: flex-start;
+			flex-direction: column;
+		}
+
+		:global([data-slot="dialog-content"].model-picker-dialog) {
+			width: calc(100vw - var(--space-4));
+			max-width: calc(100vw - var(--space-4));
+			max-height: 94vh;
+		}
+
+		.fallback-picker-body {
+			grid-template-columns: minmax(0, 1fr);
+		}
+
+		.fallback-priority-panel {
+			position: static;
+			max-height: none;
+		}
+
+		.fallback-priority-entry {
+			grid-template-columns: auto minmax(0, 1fr);
+		}
+
+		.fallback-priority-actions {
+			grid-column: 2;
+			justify-content: end;
+		}
 	}
 
 	/* save-btn / danger-btn replaced by <Button> component */
