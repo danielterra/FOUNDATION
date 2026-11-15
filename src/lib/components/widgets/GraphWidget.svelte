@@ -118,6 +118,8 @@
       <GraphVisualization
         bind:this={graphComponent}
         {graphData}
+        enableWheelZoom={false}
+        fitContent={true}
         onNodeClick={handleNodeClick}
       />
     {:else}
@@ -130,9 +132,8 @@
 
 <style>
   .widget-content {
-    flex: 1;
     position: relative;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .loading {

@@ -6,17 +6,23 @@
 - ALWAYS respond to the user in Portuguese.
 - ALWAYS keep progress updates short and direct.
 - ALWAYS ask one validation item at a time, NEVER several at once. Use structured input when available for optional choices; when an answer is required to proceed, ask one concise plain-text question.
-- ALWAYS create a new branch when starting a new work item, naming it exactly for the target release version (`MAJOR.MINOR.PATCH`); default to the next minor version (`MAJOR.(MINOR+1).0`).
+- ALWAYS continue work on the currently open release branch by default; switch or create a different release-version branch only after the user explicitly confirms.
 - NEVER create a patch or major release branch unless the user explicitly requests that release type.
 - NEVER stash, reset, commit, or push without an explicit order; read-only git (status/diff/log) is free.
 - ALWAYS keep this file in en-US, terse, bullet-only with ALWAYS/NEVER prefixes, H1/H2 headers only, zero prose or boilerplate.
+- ALWAYS give the user concise progress updates only at significant milestones; NEVER ask the user to wait in silence or send no-op updates during an active task.
 - ALWAYS name skills as `entity-action` (e.g. `ontology-create`, `ontology-change`, `widget-remove`, `release-create`). NEVER use other naming patterns.
 
 ## Foundation principles — non-negotiable
 - **OWNERSHIP** — local-first; data lives on the user's machine; no Big Tech servers; AGPL-3.0 prevents closed cloud forks. ALWAYS reject designs that require a centralized backend, hosted SaaS dependency or telemetry/exfiltration.
 - **ONTOLOGY-FIRST** — model via classes/properties/individuals in the live DB (via MCP), never via ad-hoc tables. ALWAYS use `foundation:*`/`anthropic:*` vocabulary; NEVER hardcode IRIs that didn't come from `search`/`describe_*`.
+- ALWAYS store ChatGPT OAuth credentials through FOUNDATION's local ontology-backed secret-storage pattern; NEVER depend on the macOS Keychain for this integration.
+- ALWAYS store ChatGPT OAuth credentials in the local SQLite ontology without at-rest encryption, as explicitly approved by the user on 2026-11-11; keep them masked in UI/MCP reads and never depend on the macOS Keychain for this integration.
+- ALWAYS track the user's requested full-database at-rest encryption as a separate SoftwareFeature covering all local data and safe migration of existing databases; do not implement it as part of the ChatGPT credential change.
+- ALWAYS retain at most one FOUNDATION-managed database backup at a time; verify a replacement backup before removing the previous FOUNDATION-managed copy, and never remove user-created backups.
 - **IMMUTABLE STORE** — Datomic-style append-only triples with monotonic `tx`. ALWAYS update by writing a new triple with higher tx; NEVER `UPDATE` rows; `retracted=1` only to permanently delete a fact.
-- **AUTOMATION-REACTIVE** — data acts on itself: writes notify, readevopsrs run, widgets refresh. ALWAYS route entity writes through the notify→emit path so readevopsrs and UI converge automatically; NEVER bypass with direct `app.emit` or out-of-band SQL.
+- **AUTOMATION-REACTIVE** — data acts on itself: writes notify, readevopsrs run, widgets refresh. ALWAYS route entity writes through the notify→emit path so readevopsrs and UI converge automatically; NEVER bypass with direct `app.emit` or out-of-band SQL. ALWAYS reflect persisted changes in every affected open widget in real time.
+- ALWAYS make authentication initiation, callback handling, and credential persistence idempotent; duplicate or retried callbacks must not create competing active sessions or duplicate credentials.
 - ALWAYS evaluate every design/code decision against these four pillars. A change that violates one is a blocker.
 
 ## Design defaults — pre-production
@@ -29,28 +35,105 @@
 
 ## Visual language
 - ALWAYS derive every visual decision from this chain: user goal and UI context → semantic role and state → design-system token → reusable component variant.
+- ALWAYS use the same minimal Design System spacing between every Inspector label and its value or reference chip; field-specific spacing must not make related label-value pairs look disconnected.
+- ALWAYS render ontology entity references with the shared `OntologyEntityReferenceChip`; keep dimensions, typography, icon sizing, and interaction affordance consistent across class and individual variants, changing only semantic colors.
+- ALWAYS give every visual treatment a clear semantic purpose tied to the user's intent, meaning, and context.
+- ALWAYS use a readable neutral text color for non-interactive labels; reserve interaction colors for controls and clickable actions.
+- ALWAYS show `cursor: pointer` on enabled buttons, links, and semantic interactive controls across the app; disabled controls must not imply clickability.
+- NEVER repeat the same section label inside one Inspector group; render one heading for each semantic section.
+- ALWAYS use the semantic ontology class surface token for the title header, action row, and content of Class Inspectors; use magenta frame/icon cues to distinguish class definitions from individuals.
+- NEVER add decorative, redundant, or one-off styling without a distinct semantic purpose.
+- ALWAYS style every Inspector property label through the shared global label role; section headings such as “Parent Classes” must use the same semantic label treatment and must not receive a cyan-only background or local decorative surface.
+- NEVER add Inspector-local colors, typography, spacing, backgrounds, borders, or effects when an equivalent Design System token or component role exists.
+- ALWAYS apply the semantic component model to widgets, migrating them one at a time while preserving current behavior until each replacement is validated; keep non-widget screens on their existing Svelte implementation unless the user expands scope.
 - ALWAYS make the Design System encode intent for color, typography, size, spacing, surface, depth, motion, and interaction; components select semantic roles instead of inventing local presentation values.
 - ALWAYS define component variants by purpose and context (for example, primary action, supporting metadata, destructive action, selected state, or compact density), not by arbitrary color or size names.
 - ALWAYS define AI-facing and reusable UI components by user intent and decision semantics (for example, decision cardinality, complexity, candidate volume, consequence, reversibility, and comparison factors); NEVER require the caller to prescribe cards, selects, dialogs, or other presentation patterns.
 - ALWAYS let semantic components resolve their presentation from intent and context; keep low-level visual primitives such as Card, Select, RadioGroup, Dialog, and Button inside the rendering implementation rather than exposing them as the primary product vocabulary in generated UI specs.
+- ALWAYS make reusable semantic components infer information hierarchy and responsive grouping from declared roles, context, and ordering; avoid screen-specific size/layout instructions when the information itself can express priority.
+- ALWAYS treat ordering inside a semantic metric group as meaningful: the first item is the primary focus and following items support it; fixed-width widgets may use deliberately declared rows and columns rather than automatic responsive reflow.
+- ALWAYS define each proposed semantic component's intent, user problem, inputs, states, and concrete widget example for user approval before implementation; implement only after explicit approval.
+- ALWAYS migrate existing custom-widget consumers one at a time; propose a new semantic intent only when a concrete existing consumer requires it, then obtain user approval before adding it.
+- ALWAYS model a user's intent to find matching items as `Search`; treat query, filters, ranking, sorting, pagination, result count, and opening a result as context for that intent, not as an `ExploreCollection` intent.
 - ALWAYS model a complex single decision with its domain, available candidates, comparison factors, and selected value; the semantic component chooses an appropriate presentation, such as a compact control, comparative choices, or a searchable detailed chooser, based on context and scale.
+- ALWAYS add new semantic components as separate implementations alongside existing components; keep existing components working while each screen is migrated and validated, then remove old components only after every consumer has moved.
+- ALWAYS keep the Inspector read-only on open; enter global edit mode only through its explicit edit action, and save or discard the complete draft explicitly.
+- ALWAYS hide Inspector properties with no value in read-only mode and reveal them in edit mode so the user can add a value.
+- ALWAYS open long Inspector property content of any field type in a collapsed summary capped at three lines, with an accessible per-property expand/collapse control; omit that control when the value fits.
+- ALWAYS align Inspector expand/collapse controls to the left and style them with the Design System's interactive cyan action color inside a subtle square outline; use a restrained hover surface to distinguish them from labels without making them primary actions.
+- ALWAYS make semantic `ValueEntry` honor field cardinality; edit multi-valued literals as a complete draft set and persist the set atomically so adding or removing one value cannot silently drop others.
+- ALWAYS build every AI-created custom widget from the semantic json-render catalog; custom widget specs declare intent and context, not low-level visual components.
+- NEVER put application-specific domain rules, calculations, or presentation behavior in Foundation backend code; model them in the ontology and semantic widget. Backend changes for widgets MUST provide generic, cross-domain capabilities reusable by different applications, and the plan must state why existing generic APIs are insufficient.
+- ALWAYS version each semantic component contract in the ontology and record the component version used by every widget spec; when a contract changes, identify affected widgets and let the agent update them against the new version.
+- ALWAYS decide semantic-component compatibility from canonical contract fields only; ignore unrelated entity metadata, while still validating the canonical contract content and its integrity.
+- NEVER implement the coexistence period as hidden fallback behavior or compatibility wrappers; migrate consumers explicitly, screen by screen.
 - ALWAYS use a recognizable brand logo or semantic icon as a visible, accessible visual identifier whenever the concept has one; keep supporting text available, and use a tooltip or accessible label for clarification rather than making users scan text alone.
 - ALWAYS use the official brand logo for a named provider or product when an official asset is available; reserve generic semantic icons for concepts without a brand mark.
 - ALWAYS distinguish an inference provider/runtime (where a model runs, such as OpenRouter, Anthropic, or local execution) from a model (such as Gemma); provider selection describes the execution route, while model selection belongs within that route.
+- ALWAYS restrict model selection and test execution to models offered by the currently selected provider/account; never substitute a model from another provider's catalog.
 - NEVER choose visual values independently of the information priority, relationship, task, location, and interaction state they communicate.
 - ALWAYS extend the shared semantic tokens and component recipes when a new interface need appears; do not solve recurring needs with one-off styles.
 - ALWAYS give each screen one clear user goal and avoid overloading it with secondary tasks; use progressive disclosure for detailed search, comparison, and configuration flows.
+- ALWAYS present optional explanatory text for fields and metrics on demand (such as a tooltip); do not reserve persistent layout space for explanations the user can reread when needed.
+- ALWAYS compose information widgets to use available space intentionally: group related metrics in responsive columns, establish clear primary/supporting/metadata hierarchy, remove repeated labels, and avoid large blank areas caused by a purely vertical layout.
+- ALWAYS use a chart when visual comparison or trend is central to the user's question; numeric comparison alone is insufficient when a concise chart can make the change easier to understand.
+- ALWAYS attach month-over-month comparisons to each comparable metric in its own context; do not isolate comparisons in a separate group that disconnects them from their metrics.
+- ALWAYS make charts self-explanatory by identifying what each series and period represents; replace a chart with a clearer direct comparison when its visual encoding is ambiguous.
 - ALWAYS extract a reusable UX principle from each user correction and add it to this UX knowledge base to prevent recurring issues.
 - ALWAYS compare each new UX request with the recorded UX principles and decisions before planning; surface material conflicts and resolve them with the user before implementing inconsistent behavior.
 - ALWAYS separate diagnosis and solution proposal from implementation when the user asks to understand a problem and decide on a solution first; make no product-code changes until the user chooses a solution.
 - ALWAYS group AI configuration fields under the selected provider; present a small provider set as accessible radio cards with provider branding, a concise explanation, and official site/setup-help links.
 - ALWAYS save each edited settings field when it loses focus and show a subtle, field-level saved/saving/error indicator; do not imply that one global Save button persists unrelated settings.
 - ALWAYS constrain settings content to a readable maximum width and use a responsive grid of up to four columns where the content supports it; do not stretch inputs across ultra-wide screens.
+- ALWAYS keep deployment intentional: CI/release builds run only through the configured explicit tag or manual workflow trigger; do not add branch-merge deployment triggers without the user's explicit request.
 - ALWAYS make AI model names the primary card heading, place the publisher name and description before model metrics, use available horizontal space for readable information density, and make the active model unmistakable and visibly update when selection changes.
 - NEVER show raw provider IRIs in user-facing model selection; resolve and display the provider's friendly name.
 - ALWAYS keep the configured AI model visible on the Settings page and open model search/comparison in a dedicated modal; confirming a model in that modal must persist the choice immediately and close the modal, without a second global Save action.
+- ALWAYS align provider identity, connection status, account actions, and dependent model controls in a consistent semantic layout; keep related information grouped and avoid splitting primary status and actions across unrelated edges of the panel.
+- ALWAYS refresh the OpenAI model catalog in the ontology when the OpenAI API connection is established and at least once daily in the background, so model selection reflects current availability and excludes discontinued models.
+- ALWAYS make OpenAI model-catalog synchronization idempotent: repeated or concurrent refreshes must not create duplicate model individuals, and unchanged models must not generate redundant ontology writes; update changed metadata and remove or deactivate models no longer offered by the provider.
 - ALWAYS preserve the reviewed Oblivion canvas texture: a black field with a subtle, evenly spaced cyan dot grid behind widgets.
+- ALWAYS give each blackboard widget a fixed width from its widget definition; do not allow user resizing.
+- ALWAYS set the Automation widget's default width to 1200 px so its flow remains readable.
+- ALWAYS render blackboard widgets at the same scale and opacity regardless of their stack order; do not imply depth through per-widget scaling or fading.
+- ALWAYS derive blackboard widget height from its content; do not add internal widget scrolling as a way to constrain content.
+- ALWAYS keep Automation widgets at least 600 px tall while allowing their height to grow with content.
+- ALWAYS treat the blackboard as an infinite pannable canvas: dragging the background pans the canvas, dragging a widget repositions it, middle-button drag pans, and zoom controls change canvas scale.
+- ALWAYS remove widget maximize/fullscreen controls from the blackboard; keep minimize and close actions available.
+- ALWAYS render Inspector action controls in the live ocean-cyan interactive color; separate the action row with spacing and a square, subtle surface instead of a rounded outline.
 - ALWAYS keep the floating widgets menu collapsed to its smallest useful affordance while the pointer is outside; expand it on hover and collapse it when the pointer leaves.
+- ALWAYS open the Inspector in read-only viewing mode; expose an explicit edit action that switches eligible properties to edit mode, with explicit save and cancel actions.
+- ALWAYS hide empty Inspector properties while viewing and show them when editing, where they are available for adding values.
+- ALWAYS present the Inspector's read-only-to-edit action as a compact icon in the widget header, aligned with the existing header actions; keep its accessible name and tooltip explicit.
+- ALWAYS align the Inspector entity icon and minimize/close controls to the top edge of the header, independent of title wrapping.
+- ALWAYS pin required completion actions for an active Inspector edit session to the bottom of the widget; make the primary completion action visually dominant and secondary actions subordinate.
+- ALWAYS style Inspector edit-mode context labels through the Design System's semantic role for interaction state, consistently with entity-type metadata; never invent a local typography or color treatment.
+- ALWAYS use one persistence model per Inspector edit session: when global Save/Cancel is active, all field controls only update the shared draft and no field-level control may imply that it independently saved data.
+- ALWAYS make Inspector edit mode visibly distinct across the widget surface using an established interaction-state treatment; do not introduce decorative edit-mode icons or badges without an existing semantic pattern.
+- ALWAYS separate Inspector properties with generous semantic spacing, keep each label close to its value with the shared label-to-value spacing token across both property fields and class sections, and use spacing rather than internal divider lines to show grouping. Preserve only the outer widget boundary and purposeful state/focus indicators.
+- ALWAYS define separate global semantic roles and tokens for field labels and metadata: labels identify the value that follows; metadata describes context such as time, token usage, cost, or relative age.
+- ALWAYS use one global semantic label role across the application, including Inspector properties and headers, chat widgets, settings, and other surfaces; derive typography, casing, color, and spacing from that role rather than component-specific styling.
+- ALWAYS use one shared metadata token and component role for all secondary/tertiary metadata across the application; all metadata uses the same global monospaced family, font size, uppercase casing, and subdued but legible color, without variants, label tracking, or interactive/focus emphasis.
+- ALWAYS omit the property's datatype/range metadata from Inspector entity fields; the label and displayed value provide the relevant reading context.
+- ALWAYS persist Inspector property order in the ontology on the class and apply that order to individuals of that class; let users reorder fields from the class Inspector.
+- ALWAYS ensure Inspector property reordering works by dragging as well as by accessible move controls; validate pointer drag in the integrated browser.
+- ALWAYS refresh open Inspector widgets in real time when a class's persisted property order changes, applying the same order to regular and calculated properties without a separate top group.
+- ALWAYS identify each property in the class-ordering list by its defining class; never label it generically as defined here or inherited from another class.
+- ALWAYS represent ontology Classes and Individuals with their own icon and friendly name; use cyan for Individuals/data and a distinct magenta definition accent for Classes, including a restrained whole-widget tint, matching Inspector frame/guide lines, and tinted header-action/property-group surfaces; show references as rounded entity chips with a standard-color open-reference action.
+- ALWAYS show a visible insertion gap/placeholder at the prospective destination while an Inspector property is being dragged.
+- ALWAYS distinguish labels and metadata from primary values; keep primary content in the readable body font and maintain strong contrast.
+- ALWAYS give decision-relevant labels and values the strongest visual hierarchy; keep optional descriptions compact and metadata subdued but legible.
+- NEVER repeat a field's meaning in both its label and its description; remove explanatory copy when the label already conveys that meaning.
+- ALWAYS distinguish semantic groups with the shared group-surface role when spacing alone does not provide enough separation; do not invent local borders or colors.
+- ALWAYS style message timestamps, token counts, model cost, Inspector relative dates, and equivalent contextual information with the shared metadata role rather than label styling.
+- ALWAYS format relative dates and times using the operating system's locale so metadata follows the user's system language.
+- ALWAYS use one monospaced font family across the entire application, including headings, body content, controls, labels, metadata, and widgets; typography hierarchy may vary by semantic size, color, spacing, and weight, but never by font family.
+- NEVER define a label/metadata visual language specifically for one widget when the same semantic role appears elsewhere; consume the shared Design System role.
+- NEVER use low-contrast gray secondary text for labels on dark surfaces; use the shared high-contrast metadata color, distinct in intent from interactive/focus styling.
+- ALWAYS align Inspector edit-session actions to the right, with Cancel immediately to the left of Save; use short verb labels such as “Salvar”.
+- ALWAYS pair action buttons with a representative icon, retaining concise text when needed for clarity; prefer one-word verb labels over multiword button copy when meaning stays clear.
+- ALWAYS use a checkmark icon for the Inspector's explicit Save action; NEVER use a floppy-disk icon.
+- ALWAYS render each Inspector property label exactly once in both viewing and editing modes; semantic editors must not repeat a label already owned by the property row.
 - ALWAYS animate floating widgets menu expansion and collapse smoothly; align the compact icon and count; constrain the panel to a maximum width and wrap long widget names within it.
 
 ## Product communication
@@ -60,6 +143,7 @@
 - NEVER publish absolute offline, security, performance, or token-saving claims without verifying their scope and evidence.
 
 ## Foundation vocabulary — domain entities
+- NEVER create or retain a Foundation Feature, UserStory, AcceptanceCriterion, Bug, or other backlog item for an application built on Foundation; implement application-specific behavior directly in that application's ontology data, automations, and semantic widgets. Create backlog items only for reusable Foundation platform capabilities.
 - `foundation:Project` / `foundation:SoftwareFeature` / `foundation:UserStory` / `foundation:ArchitectureDecisionRecord` (ADR) — work planning.
 - `foundation:SoftwareAgent` — product-side agent personas only: NOVA (`foundation:LocalAIAssistant`), Automator, etc. **Dev-process personas (architect, support, ux, developer-backend, developer-frontend, qa, devops) live in [.codex/agents/](.codex/agents/) — NEVER in the ontology**. Process roles are tooling, not product.
 - `foundation:Persona` — end-user personas (audience of the product): João (non-tech, `_1772476248172`), Daniel (power user, `_1773783644387`), AI Agent (`_1773180459062`).
@@ -85,6 +169,9 @@
 - `foundation:Status_1772570972069` — Cancelado.
 
 ## Product status integrity
+- NEVER create Foundation SoftwareFeatures, UserStories, or AcceptanceCriteria to track an application configured on top of Foundation; apply application-level ontology models, automations, and semantic widget specs directly as the in-product agent would. Reserve product work items for changes to Foundation's reusable platform capabilities.
+- ALWAYS classify the subject before creating any work-tracking entity: if the requested outcome changes only one configured application, edit that application's ontology, automation, or widget spec directly; create Foundation work items only when reusable Foundation platform behavior changes.
+- NEVER create Foundation Bugs, Tasks, TestCases, or QA validation records for defects or scenarios confined to one configured application; fix or configure them directly in the application data. Keep implementation plans, examples, and changelogs for platform work free of app-specific requirements.
 - ALWAYS read the current Feature → UserStory → AcceptanceCriterion graph through Foundation MCP before changing a status.
 - ALWAYS persist and read back the correct UserStory and affected AcceptanceCriterion status immediately after each lifecycle action; never defer status transitions until the end of the work item.
 - ALWAYS keep an AcceptanceCriterion Pending until concrete evidence confirms its outcome; planning or implementation progress alone does not complete it.
@@ -106,9 +193,18 @@
 - NEVER let the read-only product integrity audit mutate entities or statuses.
 
 ## Development process — PO → Architect → specialists
+- ALWAYS keep authorized active work moving across internal handoffs; do not leave implementation idle while waiting on a non-blocking internal step, and report only meaningful milestones concisely.
+- ALWAYS use the QUICK-FIX path for a localized defect that violates an existing Acceptance Criterion without changing user-visible scope, architecture, data model, or security posture: keep the same UserStory/AC, have the architect make a concise scope/owner/checks decision using the existing plan, dispatch only the owning developer, and proceed directly to costura and focused QA after checks pass.
+- ALWAYS skip a separate UX phase on the QUICK-FIX path only when the correction does not change visible interaction, visual language, or accessibility; include UX when any of these user-facing aspects changes.
+- ALWAYS make QUICK-FIX costura the immediate next handoff after implementation: verify the diff/checks, record the test steps and changelog, move the UserStory to QA, and invoke QA without waiting for a separate planning cycle.
+- ALWAYS have QA validate the affected AC plus nearby regression risks, record concrete evidence, update only statuses whose outcomes were verified, and read back the complete AC status set.
+- NEVER use QUICK-FIX for a new capability, changed requirement, cross-layer architectural change, data-model migration, or unresolved ownership; route those through the full planning flow.
+- NEVER let QUICK-FIX bypass developer ownership, required checks, QA evidence, status readback, or visible browser validation when UI behavior is affected.
+- ALWAYS inspect the managed server's recent logs and process activity before restarting it; restart only when evidence shows the server is failed, stuck, or unable to serve the required local app/MCP work.
 - Roles: **PO** (Codex principal / user) → **architect** (single coordination point) → **ux** + **developer-backend** + **developer-frontend** → **qa** → **devops**. **Bug flow** adds **support** before `architect`: Bug → **support** (technical dossier) → **architect** (Modo Triagem) → dev → **qa** → Concluído.
 - ALWAYS delegate to the specialist agent — the main loop (PO) ONLY orchestrates (dispatches agents, relays to the user, decides between options). NEVER do a specialist's work yourself when an agent exists for it: bug investigation/code reading-for-diagnosis → `support`; create/refine `SoftwareProduct`/`SoftwareFeature`/`UserStory`/`AcceptanceCriterion` (and discovery: searching/describing product entities) → `product-owner`; architecture/codebase mapping & planning → `architect`; UX spec → `ux`; code → `developer-backend`/`developer-frontend`; validation → `qa`; review/merge/release → `devops`. The PO does NOT grep/read code to investigate, NOT write ontology entities, NOT plan, NOT implement.
 - ALWAYS route every planning / implementation / bug request through `architect`. NEVER let the PO invoke `developer-backend`, `developer-frontend`, `ux` or `support` directly **for a fix** (even a one-line/micro change — route through `architect`).
+- ALWAYS fulfill refactors against existing applicable acceptance criteria when the user identifies them as the requirements; NEVER create a new UserStory solely to re-track a refactor unless a requirements gap is confirmed.
 - `architect` has three modes: **Planejamento** (designs architecture, writes `foundation:implementationPlan`, moves US to Planejado), **Execução** (delegates the plan's "Fatia de execução" to specialists in parallel, costura builds + `## Como testar` + changelog, moves US to Em Validação (QA)), and **Triagem de Bug** (reads `support` dossier, picks the dev, delegates, costura, moves Bug to Em Validação (QA)).
 - `architect` NEVER writes code, NEVER investigates bugs (that's `support`), NEVER closes items. Specialists never move status or persist plan/dossier — `architect` costura everything.
 - `support` is the bug entry point. Investigates (logs → messages → DB → code), produces dossier in `foundation:Bug`, moves to Pronto para Dev. NEVER edits code, NEVER picks the dev, NEVER closes the bug.
@@ -248,9 +344,11 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 - ALWAYS treat personal financial reconciliation, account ownership, and budget configuration as application work through ontology and existing automations; NEVER create User Stories or invoke Foundation/core development workflows for this demand.
 - ALWAYS scope each MonthlyBudget to one person or organization; explicitly link bank accounts to their owner and filter budget transactions and cash balances through that owner's accounts. Personal accounts belong to ThisUser; business accounts belong to their organization.
 - ALWAYS use the existing Foundation Nubank/C6 bank statement import automation when importing statements; inspect its configuration and existing import requests before running it.
+- ALWAYS keep the current Nubank credit-card import deduplication in place until the user requests the occurrence-counting change.
 - ALWAYS check Foundation email and attachments for bank statements already sent before asking the user to resend them.
 - ALWAYS use foundation:MonthlyBudget to verify financial reconciliation totals and opening/closing balances.
 - ALWAYS treat C6 Bank PF and C6 Bank - Conta Corrente as the same bank account; use a single canonical account for imports and budgets.
+- ALWAYS reconcile C6 card endings 1748, 5715, 5862, and 6108 under the same credit account and shared statement; preserve the card ending on each imported line.
 - ALWAYS automate recurring credit-card statement imports and matching with deterministic rules to avoid manual work and repeated AI token use.
 - ALWAYS use the bank statement's transaction identifier and description as the source of truth for transaction classification; count card bill payments once as bank transfers.
 - ALWAYS treat Nubank PF and Daniel's Nubank Personal Account as the same bank account; keep a single canonical personal Nubank account.
@@ -269,6 +367,11 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 - ALWAYS distinguish an AI service provider from a model publisher in model-picker language; explain publisher sorting as alphabetical ordering by the organization in the model ID (e.g. Anthropic, Google, OpenAI).
 - ALWAYS provide model-picker sorting by capability, price, size, and publisher; prioritize comparison information in this order: capability/power, price, and model publisher. Identify the source/metric for capability ranking; NEVER infer it from size or context alone.
 - ALWAYS use `json-render.dev` with `@json-render/core` and `@json-render/svelte` for AI-generated custom widgets; maintain one canonical catalog of all eligible reusable UI components and allowed props/actions.
+- ALWAYS bind AI-created dynamic widget data to persisted ontology entities and properties using the same live-read and realtime-refresh behavior as the Inspector; widget specs describe presentation and bindings, NEVER hardcoded snapshots of database values.
+- ALWAYS keep numeric values and their units visually intact in semantic widgets; prevent awkward line breaks inside numbers and preserve enough width for quick scanning.
+- ALWAYS preserve the monthly budget widget as the sole user-owned dynamic widget during semantic contract resets; other dynamic widget specs are disposable test fixtures and may be removed when needed.
+- ALWAYS expose semantic component schemas to the agent on demand from the ontology only when it creates or edits a dynamic widget; keep the baseline conversation context compact and NEVER inject the full component catalog into every conversation.
+- ALWAYS keep `foundation:WidgetType.widgetUsageNote` for AI-creatable JSON widgets to a short discovery pointer to the ontology catalog; store component schemas and examples in ontology individuals and retrieve them on demand with ontology search/read tools.
 - ALWAYS allow closures until the planned closures-to-named-functions refactor is complete; only reintroduce the named-functions-only rule after that refactor.
 - ALWAYS paginate EVERY method/command/MCP tool that returns a collection with STABLE pagination = `snapshot_tx` + `ORDER BY` domain-key + offset/keyset INSIDE the snapshot. (1) Pin `snapshot_tx = MAX(tx)` on the FIRST page and echo it on every later page. (2) Read every page AS-OF snapshot_tx: BOTH membership as-of (the membership triple's `MAX(tx) <= snapshot_tx` and not retracted) AND the ordering-key value as-of (key's value at `MAX(tx) <= snapshot_tx`) — freezing only one re-introduces mid-scroll reordering. (3) `ORDER BY` the list's natural DOMAIN key (`foundation:lastUpdatedAt` for activity, `foundation:createdAt`, `rdfs:label`, `foundation:receivedAt`…), NEVER `tx`. (4) With the dataset frozen, offset is stable again (offset only broke because a new row entered the top — the snapshot removes that). Return `{ items, next_cursor, has_more, snapshot_tx }`. The frontend pins snapshot_tx on page 1 and passes it back. NEVER load-all-then-slice, NEVER return an unbounded list. Rationale + revision recorded in the pagination ADR (`foundation:ArchitectureDecisionRecord_1781556688201`).
 - ALWAYS make pagination explicit to the user: show that more results exist, how many are available when known, and a clear next/load-more control or page indicator; APIs must expose `has_more` and a continuation cursor. NEVER silently truncate a list/property/relation or present a partial page as complete.
@@ -288,16 +391,17 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 - ALWAYS style Oblivion-inspired widget frames with restrained cyan corner marks and thin separators, preserving the black canvas and dark widget bodies.
 - NEVER retain a continuous card outline or broad outer glow on projected widgets; corner marks define their frame.
 - ALWAYS scale widgets progressively by stacking depth: the rearmost open widget is 30%, the frontmost is 100%, and intermediate widgets are evenly spaced; selecting one animates it to full scale with a subtle lift.
-- ALWAYS place inspector property labels above their values to preserve horizontal space; align each value's left edge with its label and keep consistent vertical spacing between them.
+- ALWAYS place Inspector property labels above their values, slightly smaller than the content; align each value's left edge with its label, keep label-to-value spacing minimal, and give separate properties more vertical breathing room.
 - ALWAYS keep the chat panel and open-widgets menu visually consistent with widget frames: dark square surfaces and restrained cyan corner accents.
 - ALWAYS define color and typography-size tokens only in `src/app.css`; components consume semantic tokens and never declare ad hoc colors or font sizes.
 - ALWAYS ensure syntax-highlighting token colors are vivid and clearly distinguishable in the rendered inspector; if users cannot distinguish them, strengthen semantic design-system tokens in `src/app.css` and validate in the integrated browser.
 - ALWAYS use a recognizable language-brand icon as the visible identifier when one is available; keep its name in a tooltip and accessible label instead of repeating it as visible text.
 - ALWAYS define spacing tokens semantically in `src/app.css`; components consume those tokens for control internals, related items, field groups, and section separation instead of ad hoc spacing values.
-- ALWAYS keep a field label visually close to its value/content; use minimal spacing within a related label-value pair and reserve larger spacing for separate fields or sections.
+- ALWAYS keep a field label visually close to and slightly smaller than its value/content; use minimal spacing within a related label-value pair and reserve larger spacing between separate properties or sections.
 - ALWAYS keep widget-control glyphs aligned to the sidebar icon size and give touch-operated icon buttons at least a 44px target.
 - ALWAYS right-align widget window controls and submenu actions with the same semantic gap and 44px touch targets for icon actions.
 - ALWAYS show the complete editable entity title in the Inspector header; NEVER duplicate it as a field in the body.
+- ALWAYS place the Inspector entity-class label above the entity title in the header; keep the title larger than the label and use bold weight for this primary title.
 - ALWAYS keep the inspector's editable entity title and status visible; missing either is a regression.
 - ALWAYS style the inspector's entity class in the header as readable secondary context: smaller and less prominent than the entity title, but not faint or tiny.
 - ALWAYS allow long inspector class names up to two compact lines, truncate overflow with an ellipsis, and expose the complete name in a hover tooltip.

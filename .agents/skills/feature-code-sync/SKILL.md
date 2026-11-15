@@ -116,6 +116,8 @@ Mantenha o relatório navegável — IRIs como `foundation:UserStory_xxx`, paths
 
 ## Regras
 
+- **NEVER** create or retain Feature/UserStory/AcceptanceCriterion records solely for an application configured on top of Foundation; direct that application's changes to its ontology, automations, or widget specs and reserve reconciliation for reusable Foundation behavior.
+- **ALWAYS** classify the product scope before syncing code; exclude application-specific configuration and examples from Foundation backlog.
 - **NEVER** retract User Stories aqui — apenas mude status. Retract definitivo é responsabilidade de `$feature-remove` ou ação explícita do usuário.
 - **NEVER** mude a Feature para `Cancelado`/`Concluído` automaticamente.
 - **NEVER** marque Acceptance Criterion como Concluído só porque encontrou implementação; só QA com evidência do comportamento pode fazê-lo.

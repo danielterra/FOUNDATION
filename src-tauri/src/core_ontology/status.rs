@@ -1,8 +1,42 @@
 use crate::owl::{
     get_all_iri_properties, get_iri_property, get_literal_property, icon_iri_to_display,
-    icon_literal_to_display, is_instance_of, Connection, Individual, OwlError, Result, Thing,
+    icon_literal_to_display, is_instance_of, Class, Connection, Individual, OwlError, Result,
+    Thing,
 };
 use std::collections::HashSet;
+
+pub fn resolve_active_status(conn: &Connection) -> std::result::Result<String, String> {
+    resolve_status_by_label(conn, "Ativo")
+}
+
+fn resolve_status_by_label(
+    conn: &Connection,
+    expected_label: &str,
+) -> std::result::Result<String, String> {
+    let candidates =
+        Class::get_instances(conn, "foundation:Status").map_err(|error| error.to_string())?;
+    let mut matches = Vec::new();
+    for iri in candidates {
+        if get_literal_property(conn, &iri, "rdfs:label")
+            .map_err(|error| error.to_string())?
+            .as_deref()
+            == Some(expected_label)
+        {
+            matches.push(iri);
+        }
+    }
+
+    match matches.as_slice() {
+        [status_iri] => Ok(status_iri.clone()),
+        [] => Err(format!(
+            "Ontology has no foundation:Status individual labeled '{expected_label}'"
+        )),
+        _ => Err(format!(
+            "Ontology has multiple foundation:Status individuals labeled '{expected_label}': {}",
+            matches.join(", ")
+        )),
+    }
+}
 
 /// Validates that `status_iri` is in the `foundation:allowedStatus` list of `class_iri`.
 pub fn validate_allowed_status(conn: &Connection, class_iri: &str, status_iri: &str) -> Result<()> {
@@ -183,6 +217,59 @@ pub fn get_entity_status_info(
 mod tests {
     use super::*;
     use crate::eavto::{store, test_helpers::setup_test_db, Object, Triple};
+    use crate::owl::ClassType;
+
+    fn seed_status_class(conn: &mut Connection) {
+        if !Class::exists(conn, "foundation:Status") {
+            Class::new("foundation:Status")
+                .assert(
+                    conn,
+                    ClassType::OwlClass,
+                    "Status",
+                    "category",
+                    None,
+                    "test",
+                )
+                .unwrap();
+        }
+    }
+
+    fn seed_status(conn: &mut Connection, iri: &str, label: &str) {
+        Individual::new(iri)
+            .assert_without_icon(conn, "foundation:Status", label, "test")
+            .unwrap();
+    }
+
+    #[test]
+    fn resolves_status_by_unique_label() {
+        let mut conn = setup_test_db();
+        seed_status_class(&mut conn);
+        seed_status(&mut conn, "test:ActiveStatus", "Ativo");
+
+        assert_eq!(resolve_active_status(&conn).unwrap(), "test:ActiveStatus");
+    }
+
+    #[test]
+    fn reports_missing_status_label() {
+        let mut conn = setup_test_db();
+        seed_status_class(&mut conn);
+
+        let error = resolve_status_by_label(&conn, "Missing test status").unwrap_err();
+        assert!(error.contains("no foundation:Status individual"));
+    }
+
+    #[test]
+    fn rejects_ambiguous_status_label() {
+        let mut conn = setup_test_db();
+        seed_status_class(&mut conn);
+        seed_status(&mut conn, "test:ActiveStatusOne", "Ativo");
+        seed_status(&mut conn, "test:ActiveStatusTwo", "Ativo");
+
+        let error = resolve_active_status(&conn).unwrap_err();
+        assert!(error.contains("multiple foundation:Status individuals"));
+        assert!(error.contains("test:ActiveStatusOne"));
+        assert!(error.contains("test:ActiveStatusTwo"));
+    }
 
     #[test]
     fn status_info_keeps_execution_and_step_values_at_the_requested_snapshot() {

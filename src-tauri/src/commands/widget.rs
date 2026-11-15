@@ -10,12 +10,12 @@ const PRED_WIDGET_TYPE: &str = "foundation:widgetType";
 const PRED_ENTITY_ID: &str = "foundation:widgetEntityId";
 const PRED_POSITION_X: &str = "foundation:widgetPositionX";
 const PRED_POSITION_Y: &str = "foundation:widgetPositionY";
-const PRED_SIZE_WIDTH: &str = "foundation:widgetSizeWidth";
-const PRED_SIZE_HEIGHT: &str = "foundation:widgetSizeHeight";
 const WIDGET_ORIGIN: &str = "widget";
 const PRED_WINDOW_STATE: &str = "foundation:widgetWindowState";
 const PRED_BLACKBOARD: &str = "foundation:onBlackboard";
 const PRED_FOR_CONVERSATION: &str = "foundation:forConversation";
+const CLASS_DEFAULT_WIDGET_SPEC: &str = "foundation:defaultWidgetSpec";
+const SEMANTIC_JSON_RENDERER_TYPE: &str = "semantic_json_render";
 
 pub const DEFAULT_BLACKBOARD_IRI: &str = "foundation:DefaultBlackboard";
 
@@ -28,7 +28,6 @@ pub enum WindowState {
     #[default]
     Normal,
     Minimized,
-    Maximized,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,9 +36,11 @@ pub struct Widget {
     pub widget_type: String,
     pub entity_id: String,
     pub position: Position,
-    pub size: Size,
+    pub width: f64,
     pub window_state: WindowState,
     pub blackboard_iri: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spec_template_iri: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,19 +50,13 @@ pub struct Position {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Size {
-    pub width: f64,
-    pub height: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WidgetType {
     pub id: String,
     pub name: String,
     pub description: String,
     /// Class IRI this widget is designed for. `"owl:Thing"` means any entity.
     pub supported_class: String,
-    pub default_size: Size,
+    pub default_width: f64,
     pub icon: String,
     /// If set, this widget is AI-creatable and this text is shown to the AI in the system prompt.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -73,7 +68,7 @@ pub struct WidgetDefinitionInfo {
     pub widget_type: String,
     pub description: String,
     pub icon: String,
-    pub default_size: Size,
+    pub default_width: f64,
 }
 
 fn str_obj(value: impl Into<String>) -> Object {
@@ -130,19 +125,37 @@ pub fn resolve_widget_type(conn: &Connection, entity_id: &str, requested_type: &
     "inspector".to_string()
 }
 
-fn individual_to_widget(ind: Individual) -> Option<Widget> {
+pub fn resolve_widget_spec_template(
+    conn: &Connection,
+    entity_id: &str,
+    widget_type: &str,
+) -> Option<String> {
+    if widget_type != SEMANTIC_JSON_RENDERER_TYPE {
+        return None;
+    }
+
+    let class_iri = crate::owl::get_iri_property(conn, entity_id, "rdf:type")
+        .ok()
+        .flatten()?;
+    crate::owl::get_iri_property(conn, &class_iri, CLASS_DEFAULT_WIDGET_SPEC)
+        .ok()
+        .flatten()
+}
+
+fn individual_to_widget(
+    ind: Individual,
+    type_widths: &std::collections::HashMap<String, f64>,
+) -> Option<Widget> {
     let widget_type = prop_str(&ind, PRED_WIDGET_TYPE)?;
     let entity_id = prop_str(&ind, PRED_ENTITY_ID)?;
     let x = prop_f64(&ind, PRED_POSITION_X)?;
     let y = prop_f64(&ind, PRED_POSITION_Y)?;
-    let width = prop_f64(&ind, PRED_SIZE_WIDTH)?;
-    let height = prop_f64(&ind, PRED_SIZE_HEIGHT)?;
+    let width = *type_widths.get(&widget_type)?;
     let blackboard_iri = prop_iri(&ind, PRED_BLACKBOARD)?;
 
     let window_state = prop_str(&ind, PRED_WINDOW_STATE)
         .and_then(|s| match s.as_str() {
             "minimized" => Some(WindowState::Minimized),
-            "maximized" => Some(WindowState::Maximized),
             _ => Some(WindowState::Normal),
         })
         .unwrap_or_default();
@@ -152,9 +165,10 @@ fn individual_to_widget(ind: Individual) -> Option<Widget> {
         widget_type,
         entity_id,
         position: Position { x, y },
-        size: Size { width, height },
+        width,
         window_state,
         blackboard_iri,
+        spec_template_iri: None,
     })
 }
 
@@ -245,24 +259,9 @@ pub fn owl_insert_widget(conn: &mut Connection, widget: &Widget) -> Result<(), S
         WIDGET_ORIGIN,
     )
     .map_err(|e| e.to_string())?;
-    ind.add_property(
-        conn,
-        PRED_SIZE_WIDTH,
-        vec![Object::Number(widget.size.width)],
-        WIDGET_ORIGIN,
-    )
-    .map_err(|e| e.to_string())?;
-    ind.add_property(
-        conn,
-        PRED_SIZE_HEIGHT,
-        vec![Object::Number(widget.size.height)],
-        WIDGET_ORIGIN,
-    )
-    .map_err(|e| e.to_string())?;
     let state_str = match widget.window_state {
         WindowState::Normal => "normal",
         WindowState::Minimized => "minimized",
-        WindowState::Maximized => "maximized",
     };
     ind.add_property(
         conn,
@@ -307,9 +306,16 @@ pub fn owl_get_widgets_for_blackboard_bounded(
     .map_err(|e| e.to_string())?;
 
     let mut widgets = Vec::new();
+    let type_widths = blackboard__list_widget_types(conn)
+        .into_iter()
+        .map(|widget_type| (widget_type.id, widget_type.default_width))
+        .collect::<std::collections::HashMap<_, _>>();
+
     for iri in widget_iris {
         if let Ok(Some(ind)) = Individual::get(conn, &iri) {
-            if let Some(widget) = individual_to_widget(ind) {
+            if let Some(mut widget) = individual_to_widget(ind, &type_widths) {
+                widget.spec_template_iri =
+                    resolve_widget_spec_template(conn, &widget.entity_id, &widget.widget_type);
                 widgets.push(widget);
             }
         }
@@ -368,28 +374,6 @@ fn owl_update_widget_position(
     .map_err(|e| e.to_string())
 }
 
-fn owl_update_widget_size(
-    conn: &mut Connection,
-    widget_id: &str,
-    size: &Size,
-) -> Result<(), String> {
-    let ind = Individual::new(widget_id);
-    ind.add_property(
-        conn,
-        PRED_SIZE_WIDTH,
-        vec![Object::Number(size.width)],
-        WIDGET_ORIGIN,
-    )
-    .map_err(|e| e.to_string())?;
-    ind.add_property(
-        conn,
-        PRED_SIZE_HEIGHT,
-        vec![Object::Number(size.height)],
-        WIDGET_ORIGIN,
-    )
-    .map_err(|e| e.to_string())
-}
-
 fn owl_update_widget_window_state(
     conn: &mut Connection,
     widget_id: &str,
@@ -398,7 +382,6 @@ fn owl_update_widget_window_state(
     let state_str = match state {
         WindowState::Normal => "normal",
         WindowState::Minimized => "minimized",
-        WindowState::Maximized => "maximized",
     };
     let ind = Individual::new(widget_id);
     ind.add_property(
@@ -437,11 +420,13 @@ fn owl_update_widget_content(
 /// Intended to be appended to the cached system prompt block so Claude always
 /// knows what widgets exist and how to use them — without querying at runtime.
 pub fn widget_system_context(conn: &Connection) -> String {
-    let all_types = blackboard__list_widget_types(conn);
+    format_ai_creatable_widget_context(&blackboard__list_widget_types(conn))
+}
 
-    let ai_creatable: Vec<&WidgetType> = all_types
+fn format_ai_creatable_widget_context(widget_types: &[WidgetType]) -> String {
+    let ai_creatable: Vec<&WidgetType> = widget_types
         .iter()
-        .filter(|t| t.usage_note.is_some())
+        .filter(|widget_type| widget_type.usage_note.is_some())
         .collect();
 
     if ai_creatable.is_empty() {
@@ -463,8 +448,69 @@ pub fn widget_system_context(conn: &Connection) -> String {
     format!(
         "## AI-creatable widgets\n\
          Create the required entity first, then pass its IRI in `speak.iris` to display it:\n\
-         {list}"
+         {list}\n\
+         Before creating or changing a `semantic_json_render` specification, discover the current contracts in the ontology: search for `foundation:SemanticComponentDefinition`, then inspect each selected definition's `foundation:componentPropsSchema`, `foundation:componentActionsSchema`, and `foundation:componentExamples`. Use the example matching each intent and follow its declared slots. A spec is a `root` element ID plus an `elements` map; connect nested elements through `children` arrays (include `children: []` on leaf elements), and keep every intended element reachable from `root`. Put live entity values in the element-level `bindings` map beside `type` and `props` (for example, `bindings: {{ facts: {{ source: \"entity\", propertyIri: \"foundation:...\" }} }}`); do not put binding metadata inside `props.facts`. Preserve the component contract version recorded for each element. Do not copy the full catalogue into the conversation or invent props/actions outside those contracts."
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn widget_type(id: &str, usage_note: Option<&str>) -> WidgetType {
+        WidgetType {
+            id: id.to_string(),
+            name: id.to_string(),
+            description: String::new(),
+            supported_class: "foundation:JsonRenderSpec".to_string(),
+            default_width: 700.0,
+            icon: String::new(),
+            usage_note: usage_note.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn ai_widget_context_exposes_semantic_catalog_without_legacy_catalog() {
+        let widget_types = vec![
+            widget_type("json_render", None),
+            widget_type("semantic_json_render", Some("Intent-based components")),
+        ];
+
+        let context = format_ai_creatable_widget_context(&widget_types);
+
+        assert!(context.contains("semantic_json_render"));
+        assert!(!context.contains("json_render —"));
+    }
+
+    #[test]
+    fn ai_widget_context_points_to_ontology_contracts_and_spec_structure() {
+        let widget_types = vec![widget_type(
+            "semantic_json_render",
+            Some("Create an ontology-backed semantic widget."),
+        )];
+
+        let context = format_ai_creatable_widget_context(&widget_types);
+
+        assert!(context.contains("foundation:SemanticComponentDefinition"));
+        assert!(context.contains("foundation:componentPropsSchema"));
+        assert!(context.contains("foundation:componentActionsSchema"));
+        assert!(context.contains("foundation:componentExamples"));
+        assert!(context.contains("children: []"));
+        assert!(context.contains("bindings: { facts:"));
+        assert!(context.contains("do not put binding metadata inside `props.facts`"));
+        assert!(context.contains("Do not copy the full catalogue into the conversation"));
+    }
+
+    #[test]
+    fn semantic_spec_error_response_contains_only_the_stable_code() {
+        let response = semantic_spec_error_response("invalid_spec_structure");
+        let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(parsed["code"], "invalid_spec_structure");
+        assert_eq!(parsed.as_object().unwrap().len(), 1);
+        assert!(!response.contains("foundation:JsonRenderSpec"));
+        assert!(!response.contains("invalid component references"));
+    }
 }
 
 #[allow(non_snake_case)]
@@ -495,10 +541,6 @@ pub fn blackboard__list_widget_types(conn: &Connection) -> Vec<WidgetType> {
                 Some(w) => w,
                 None => continue,
             };
-            let height = match prop_f64(&ind, "foundation:widgetDefaultHeight") {
-                Some(h) => h,
-                None => continue,
-            };
             let icon = ind.icon.clone().unwrap_or_default();
             let usage_note = prop_str(&ind, "foundation:widgetUsageNote");
             types.push(WidgetType {
@@ -506,7 +548,7 @@ pub fn blackboard__list_widget_types(conn: &Connection) -> Vec<WidgetType> {
                 name,
                 description,
                 supported_class,
-                default_size: Size { width, height },
+                default_width: width,
                 icon,
                 usage_note,
             });
@@ -652,28 +694,65 @@ pub async fn widget_blackboard__get_widgets(
 
 #[tauri::command]
 #[allow(non_snake_case)]
+pub async fn widget_blackboard__get_semantic_spec(
+    spec_iri: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    executor
+        .read(move |conn| {
+            match crate::core_ontology::semantic_catalog::inspect_semantic_spec_compatibility(
+                conn, &spec_iri,
+            ) {
+                Ok(compatibility) => {
+                    serde_json::to_string(&compatibility).map_err(|error| error.to_string())
+                }
+                Err(error) => {
+                    if let Some(code) = error.user_error_code() {
+                        crate::commands::log_backend(
+                            "warn",
+                            &format!(
+                                "[SEMANTIC_WIDGET] Invalid spec structure spec={spec_iri}: {}",
+                                error.diagnostic()
+                            ),
+                        );
+                        Err(semantic_spec_error_response(code))
+                    } else {
+                        Err(error.to_string())
+                    }
+                }
+            }
+        })
+        .await
+}
+
+fn semantic_spec_error_response(code: &str) -> String {
+    serde_json::json!({ "code": code }).to_string()
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
 pub async fn widget_blackboard__add_widget(
     app: AppHandle,
     widget_type: String,
     entity_id: String,
     position: Option<Position>,
-    size: Option<Size>,
     blackboard_id: Option<String>,
     conversation_id: Option<String>,
     executor: State<'_, DbExecutor>,
 ) -> Result<Widget, String> {
     let widget_type_check = widget_type.clone();
     let entity_id_check = entity_id.clone();
-    let (resolved_type, default_size) = executor
+    let (resolved_type, default_width, spec_template_iri) = executor
         .read(move |conn| {
             let resolved = resolve_widget_type(conn, &entity_id_check, &widget_type_check);
             let valid_types = blackboard__list_widget_types(conn);
-            let size = valid_types
+            let width = valid_types
                 .into_iter()
                 .find(|t| t.id == resolved)
-                .map(|t| t.default_size)
+                .map(|t| t.default_width)
                 .ok_or_else(|| format!("Invalid widget type: {}", resolved.clone()))?;
-            Ok((resolved, size))
+            let template = resolve_widget_spec_template(conn, &entity_id_check, &resolved);
+            Ok((resolved, width, template))
         })
         .await?;
 
@@ -698,9 +777,10 @@ pub async fn widget_blackboard__add_widget(
             x: DEFAULT_POS_X,
             y: DEFAULT_POS_Y,
         }),
-        size: size.unwrap_or(default_size),
+        width: default_width,
         window_state: WindowState::Normal,
         blackboard_iri: bb_iri,
+        spec_template_iri,
     };
 
     app.emit("widget-added", widget.clone()).ok();
@@ -750,22 +830,6 @@ pub async fn widget_blackboard__update_widget_position(
     executor
         .write(move |conn| {
             owl_update_widget_position(conn, &widget_id, &position)?;
-            Ok("updated".to_string())
-        })
-        .await?;
-    Ok(())
-}
-
-#[tauri::command]
-#[allow(non_snake_case)]
-pub async fn widget_blackboard__update_widget_size(
-    widget_id: String,
-    size: Size,
-    executor: State<'_, DbExecutor>,
-) -> Result<(), String> {
-    executor
-        .write(move |conn| {
-            owl_update_widget_size(conn, &widget_id, &size)?;
             Ok("updated".to_string())
         })
         .await?;
@@ -832,7 +896,7 @@ pub async fn widget_blackboard__list_widget_definitions(
                     widget_type: t.id,
                     description: t.description,
                     icon: t.icon,
-                    default_size: t.default_size,
+                    default_width: t.default_width,
                 })
                 .collect();
 

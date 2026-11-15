@@ -157,6 +157,7 @@ pub fn run() {
         .manage(commands::ConversationProcessingState::new())
         .manage(commands::LocalModelDownloadState::default())
         .manage(commands::SetupEmailVerificationState::default())
+        .manage(crate::ai::chatgpt_auth::ChatGptAuthState::default())
         .manage(realtime::SubscriptionRegistry::default())
         .setup(|app| {
             let app_handle = app.handle().clone();
@@ -214,16 +215,22 @@ pub fn run() {
             commands::setup__init,
             commands::setup__list_ai_services,
             commands::setup__list_ai_models,
+            commands::setup__get_ai_model_catalog_status,
+            commands::ai__sync_openai_model_catalog,
             commands::setup__get_current_ai_model,
             commands::setup__save_ai_model,
+            commands::setup__save_ai_configuration,
             commands::setup__get_active_model_info,
             commands::setup__get_current_ai_service,
             commands::setup__save_ai_service,
             commands::agent__get_ai_config,
             commands::agent__set_ai_config,
             commands::inspector__get_entity,
+            commands::inspector__save_property_order,
             commands::inspector__get_backlink_page,
             commands::inspector__get_property_value_page,
+            commands::widget_inspector__get_entity_property_snapshot,
+            commands::widget_inspector__get_entity_property_page,
             commands::inspector__get_applicable_properties,
             commands::inspector__record_criterion_validation,
             commands::inspector__list_criterion_validations,
@@ -233,6 +240,7 @@ pub fn run() {
             commands::notification__list_iris,
             commands::widget_inspector__clear_property,
             commands::widget_inspector__update_property,
+            commands::widget_inspector__set_literal_values,
             commands::widget_inspector__set_references,
             commands::widget_inspector__add_property_value,
             commands::widget_inspector__remove_property_value,
@@ -263,6 +271,12 @@ pub fn run() {
             commands::ai__validate_provider_key,
             commands::ai__get_service_base_url,
             commands::ai__save_service_base_url,
+            commands::ai__chatgpt_start_auth,
+            commands::ai__chatgpt_cancel_auth,
+            commands::ai__chatgpt_get_connection_status,
+            commands::ai__chatgpt_acknowledge_plan_use,
+            commands::ai__chatgpt_list_models,
+            commands::ai__chatgpt_disconnect,
             commands::ai__initialize,
             commands::chat__attach_file,
             commands::chat__get_recent_messages,
@@ -284,10 +298,10 @@ pub fn run() {
             commands::chat::conversation::chat__set_conversation_agent,
             commands::widget_blackboard__resolve_blackboard,
             commands::widget_blackboard__get_widgets,
+            commands::widget_blackboard__get_semantic_spec,
             commands::widget_blackboard__add_widget,
             commands::widget_blackboard__remove_widget,
             commands::widget_blackboard__update_widget_position,
-            commands::widget_blackboard__update_widget_size,
             commands::widget_blackboard__update_widget_content,
             commands::widget_blackboard__update_widget_window_state,
             commands::widget_blackboard__list_widget_definitions,

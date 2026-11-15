@@ -73,7 +73,6 @@
         widgetType: 'connector_credential',
         entityId,
         position: null,
-        size: null,
         conversationId: conversationIri,
       });
     } catch (err) {
@@ -170,8 +169,6 @@
 
 <style>
   .widget-content {
-    flex: 1;
-    overflow: auto;
     padding: 16px;
     display: flex;
     flex-direction: column;
@@ -267,13 +264,11 @@
   .json-preview {
     background: color-mix(in srgb, var(--color-black) 60%, transparent);
     padding: 10px;
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
     font-size: 11px;
     color: var(--color-neutral);
-    overflow: auto;
-    max-height: 200px;
-    white-space: pre;
-    word-break: break-all;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 
   .import-section {
@@ -283,28 +278,21 @@
     flex: 1;
   }
 
-  .field-label {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--color-neutral);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
   :global([data-slot="textarea"].json-input) {
-    flex: 1;
+    flex: 0 1 auto;
     min-height: 160px;
     background: color-mix(in srgb, var(--color-white) 6%, transparent);
     border: none;
     box-shadow: none;
     padding: 10px;
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
     font-size: 12px;
     color: var(--color-neutral-active);
     outline: none;
     resize: vertical;
     border-radius: 0;
-    field-sizing: unset;
+    field-sizing: content;
+    overflow-y: hidden;
   }
 
   .import-actions {

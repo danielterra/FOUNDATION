@@ -50,6 +50,7 @@
   --color-warning-base:     #fbbf24;
   --color-success-base:     #4caf50;
   --color-error-base:       #f44336;
+  --color-definition-base:  #ff6bd6;
   --color-black:            rgb(0, 0, 0);
   --color-white:            rgb(242, 253, 255);
 
@@ -73,7 +74,8 @@
   --color-hud-line-subtle: color-mix(in srgb, var(--color-interactive) 38%, transparent);
   --color-hud-line: color-mix(in srgb, var(--color-interactive) 58%, transparent);
   --color-hud-point: color-mix(in srgb, var(--color-interactive) 78%, transparent);
-  --color-hud-grid-dot: color-mix(in srgb, var(--color-interactive) 20%, transparent);
+  --color-hud-grid-dot: color-mix(in srgb, var(--color-interactive) 45%, transparent);
+  --color-information-group-surface: color-mix(in srgb, var(--color-surface-3) 45%, var(--color-surface-1));
   --color-hud-glow: color-mix(in srgb, var(--color-interactive) 32%, transparent);
   --color-widget-surface-front: color-mix(in srgb, var(--color-surface-4) 34%, var(--color-black));
   --color-widget-surface-back: color-mix(in srgb, var(--color-surface-2) 30%, var(--color-black));
@@ -99,8 +101,10 @@
   --size-hud-frame-run: 18px;
   --size-hud-frame-line: 1px;
   --size-hud-marker: 3px;
+  --size-comparison-bar-height: 0.75rem;
   --size-hud-grid: 24px;
   --size-hud-grid-dot: 1px;
+  --size-inspector-preview-lines: 3lh;
   --size-startup-progress-height: 3px;
   --size-startup-progress-sweep: 35%;
   --size-setup-panel-width: 600px;
@@ -164,6 +168,8 @@
   --text-primary:   var(--color-neutral-active);
   --text-body:      var(--color-neutral);
   --text-secondary: var(--color-neutral-secondary);
+  --text-label:     var(--color-neutral);
+  --text-metadata:  color-mix(in srgb, var(--color-white) 72%, black);
   --text-tertiary:  color-mix(in srgb, var(--color-white) 58%, black);
   --text-disabled:  var(--color-neutral-disabled);
   --text-accent:    var(--color-interactive);
@@ -192,6 +198,16 @@
   --color-surface-2: #090c0e;
   --color-surface-3: #182024;
   --color-surface-4: #253138;
+
+  /* Ontology identity: magenta marks definitions; cyan marks concrete data. */
+  --color-ontology-class: var(--color-definition-base);
+  --color-ontology-individual: var(--color-interactive);
+  --color-ontology-class-line: color-mix(in srgb, var(--color-ontology-class) 42%, transparent);
+  --color-ontology-class-point: color-mix(in srgb, var(--color-ontology-class) 78%, transparent);
+  --color-ontology-class-glow: color-mix(in srgb, var(--color-ontology-class) 32%, transparent);
+  --color-ontology-class-surface: color-mix(in srgb, var(--color-ontology-class) 8%, var(--color-widget-surface-front));
+  --color-ontology-class-chip: color-mix(in srgb, var(--color-ontology-class) 12%, var(--color-surface-2));
+  --color-ontology-individual-chip: color-mix(in srgb, var(--color-surface-4) 70%, var(--color-surface-2));
 
   /* --------------------------------------------------------
    * ACCENT — hover de item em lista elevada (= surface-4)
@@ -222,6 +238,7 @@
   --type-body-prominent: 16px;
   --type-heading: 18px;
   --type-title: 20px;
+  --weight-primary-title: 700;
   --type-display: 28px;
   --type-micro: 9px;
   --type-caption-compact: 11px;
@@ -244,7 +261,9 @@
   --spacing-control-internal: var(--space-2);
   --spacing-inline-tight: var(--space-1);
   --spacing-inline-related: var(--space-2);
-  --spacing-label-to-value: 2px;
+  --spacing-label-to-value: var(--space-1);
+  --spacing-inspector-property: var(--space-6);
+  --spacing-inspector-label-value: var(--spacing-label-to-value);
   --spacing-field-group: var(--space-3);
   --spacing-field-block: var(--space-3);
   --spacing-section: var(--space-5);
@@ -266,7 +285,11 @@
    * TIPOGRAFIA — famílias de fonte (complementa fonts.css)
    * -------------------------------------------------------- */
 
-  --font-mono: 'Monaspace Krypton', 'SF Mono', 'Monaco', 'Courier New', monospace;
+  --font-family-app: 'Monaspace Krypton';
+  --font-title: var(--font-family-app);
+  --font-body: var(--font-family-app);
+  --font-code: var(--font-family-app);
+  --font-mono: var(--font-family-app);
   --color-code-keyword: var(--color-selection);
   --color-code-string: var(--color-success-hover);
   --color-code-number: var(--color-warning-hover);
@@ -287,6 +310,8 @@
    * -------------------------------------------------------- */
 
   --radius: 10px;
+  --radius-entity-chip: 999px;
+  --size-entity-reference-chip: 34px;
 
   /* --------------------------------------------------------
    * Z-INDEX — escala canônica de empilhamento
@@ -302,6 +327,70 @@
   --z-tooltip:    9300;
   --z-dialog:     99999;
   --z-toast:      100000;
+}
+
+/* Shared ontology references use the same chip language in every widget. */
+.entity-reference-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-inline-related);
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  min-height: var(--size-entity-reference-chip);
+  padding: var(--spacing-inline-tight) var(--spacing-control-internal);
+  border: 1px solid color-mix(in srgb, var(--color-ontology-individual) 35%, transparent);
+  border-radius: var(--radius-entity-chip);
+  background: color-mix(in srgb, var(--color-ontology-individual) 8%, var(--color-surface-2));
+  color: var(--color-ontology-individual);
+  font: inherit;
+  font-size: var(--type-body-compact);
+  line-height: var(--line-height-hud-compact);
+  text-align: left;
+  cursor: pointer;
+}
+
+.entity-reference-chip .ontology-entity-identity .identity-icon,
+.entity-reference-chip .ontology-entity-identity .identity-icon-image {
+  width: var(--type-icon-medium);
+  height: var(--type-icon-medium);
+  font-size: var(--type-icon-medium);
+}
+
+.entity-reference-chip.class-reference {
+  border-color: color-mix(in srgb, var(--color-ontology-class) 35%, transparent);
+  background: color-mix(in srgb, var(--color-ontology-class) 8%, var(--color-surface-2));
+  color: var(--color-ontology-class);
+}
+
+.entity-reference-chip.status-reference {
+  border-color: color-mix(in srgb, var(--status-color) 42%, transparent);
+  background: color-mix(in srgb, var(--status-color) 12%, var(--color-surface-2));
+  color: var(--status-color);
+}
+
+.entity-reference-chip.status-reference.selected {
+  background: color-mix(in srgb, var(--status-color) 22%, var(--color-surface-2));
+}
+
+.entity-reference-chip:hover {
+  border-color: color-mix(in srgb, var(--color-interactive) 55%, transparent);
+  background: color-mix(in srgb, var(--color-interactive) 12%, var(--color-surface-2));
+}
+
+.entity-reference-chip:focus-visible {
+  outline: 2px solid var(--color-interactive);
+  outline-offset: 2px;
+}
+
+.entity-reference-chip .reference-open-icon {
+  flex: 0 0 auto;
+  color: var(--color-interactive);
+  font-size: var(--type-icon-small);
+}
+
+.entity-reference-chip .item-label {
+  color: inherit;
 }
 
 /* ============================================================
@@ -388,6 +477,16 @@
   body {
     background-color: var(--background);
     color: var(--foreground);
+  }
+
+  .semantic-label {
+    color: var(--text-label);
+    font-family: var(--font-mono);
+    font-size: var(--type-label);
+    font-weight: 400;
+    letter-spacing: var(--tracking-hud-label);
+    line-height: var(--line-height-hud-compact);
+    text-transform: uppercase;
   }
 
   :root {

@@ -50,7 +50,7 @@
     if (!commentTextareaEl) return;
     metaDraft;
     commentTextareaEl.style.height = 'auto';
-    commentTextareaEl.style.height = Math.min(commentTextareaEl.scrollHeight, 400) + 'px';
+    commentTextareaEl.style.height = `${commentTextareaEl.scrollHeight}px`;
   });
 
   $effect(() => {
@@ -103,7 +103,7 @@
   }
 
   .description.editable {
-    cursor: text;
+    cursor: pointer;
     padding: 4px 6px;
     margin: 0 -6px;
     transition: background 0.15s;
@@ -123,10 +123,10 @@
     color: var(--color-neutral-active);
     line-height: 1.6;
     resize: none;
-    overflow-y: auto;
+    overflow-y: hidden;
     outline: none;
     box-shadow: none;
-    field-sizing: fixed;
+    field-sizing: content;
   }
 
   .description {

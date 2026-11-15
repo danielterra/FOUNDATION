@@ -50,7 +50,7 @@
 {/snippet}
 
 <div class="property-row">
-	<div class="property-label" title={comment || undefined}>
+	<div class="property-label field-label" title={comment || undefined}>
 		{label}
 	</div>
 	<div class="property-value-container">
@@ -80,11 +80,6 @@
 	}
 
 	.property-label {
-		font-size: 9px;
-		font-weight: 700;
-		color: var(--color-neutral-disabled);
-		letter-spacing: 0.5px;
-		text-transform: uppercase;
 		cursor: help;
 	}
 

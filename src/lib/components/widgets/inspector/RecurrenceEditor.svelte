@@ -8,7 +8,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
 
-  let { value = '', onconfirm, oncancel } = $props();
+  let { value = '', onconfirm, oncancel, draftOnly = false, onDraftChange = null } = $props();
 
   function parseRrule(s) {
     const def = {
@@ -106,6 +106,17 @@
   }
 
   function confirm() { onconfirm(buildRrule()); }
+
+  let hasStagedInitialValue = false;
+  $effect(() => {
+    if (!draftOnly) return;
+    const nextValue = buildRrule();
+    if (!hasStagedInitialValue) {
+      hasStagedInitialValue = true;
+      return;
+    }
+    onDraftChange?.(nextValue);
+  });
 
   const WEEKDAYS = [
     { code: 'SU', label: 'D' }, { code: 'MO', label: 'S' }, { code: 'TU', label: 'T' },
@@ -317,10 +328,12 @@
     {/if}
 
     <!-- Botões -->
-    <div class="btn-row">
-      <Button type="button" variant="ghost" size="sm" onclick={oncancel}>Cancelar</Button>
-      <Button type="button" variant="default" size="sm" onclick={confirm}>OK</Button>
-  </div>
+    {#if !draftOnly}
+      <div class="btn-row">
+        <Button type="button" variant="ghost" size="sm" onclick={oncancel}>Cancelar</Button>
+        <Button type="button" variant="default" size="sm" onclick={confirm}>OK</Button>
+      </div>
+    {/if}
 </div>
 
 <style>
@@ -340,11 +353,7 @@
     gap: 10px;
   }
 
-  .field-label {
-    flex-shrink: 0;
-    color: var(--color-neutral);
-    font-size: 13px;
-  }
+  .field-label { flex-shrink: 0; }
 
   :global(.freq-select-trigger),
   :global(.ordinal-select-trigger) {

@@ -129,6 +129,12 @@ pub async fn chat__send_and_reply(
     executor: State<'_, DbExecutor>,
     cancellation: State<'_, CancellationState>,
 ) -> Result<Vec<serde_json::Value>, String> {
+    crate::commands::openai_model_catalog::ensure_fresh_for_conversation(
+        app.clone(),
+        executor.inner(),
+        &conversation_id,
+    )
+    .await?;
     let conv_id = conversation_id.clone();
     let app_for_config = app.clone();
     let agent_config = executor

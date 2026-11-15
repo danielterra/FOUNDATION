@@ -912,7 +912,7 @@
 
   .error-detail-value {
     color: var(--color-neutral-active);
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
     word-break: break-all;
     overflow-wrap: anywhere;
   }
@@ -944,7 +944,7 @@
     background: var(--color-surface-2);
     padding: 0.125rem 0.375rem;
     border-radius: var(--radius);
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
     font-size: 0.8125rem;
   }
 
@@ -1013,7 +1013,7 @@
     font-size: 0.875rem;
     color: var(--color-neutral);
     margin: 0;
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
   }
 
   .recovery-summary {
@@ -1032,7 +1032,7 @@
     max-width: 100%;
     word-break: break-word;
     text-align: left;
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
     max-height: 8rem;
     overflow-y: auto;
   }
@@ -1158,7 +1158,7 @@
     width: 100%;
     font-size: 0.75rem;
     color: var(--color-neutral);
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
   }
 
   .recovery-metrics span:nth-child(2) {
@@ -1181,6 +1181,6 @@
 
   .recovery-elapsed strong {
     color: var(--color-neutral-active);
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
   }
 </style>

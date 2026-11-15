@@ -6,6 +6,8 @@
 
 	export let graphData;
 	export let onNodeClick;
+	export let enableWheelZoom = true;
+	export let fitContent = false;
 
 	let svg;
 	let width = 0;
@@ -14,6 +16,8 @@
 	let zoomBehavior = null;
 	let currentSimulation = null;
 	let focusedNodeId = null;
+	let resizeObserver = null;
+	let intrinsicBounds = null;
 
 	let nodes, links, linkLabelGroups, layoutLinks, layoutNodes;
 
@@ -98,6 +102,27 @@
 		}
 	}
 
+	function updateIntrinsicBounds() {
+		if (!fitContent || !svgSelection) return;
+		const points = (layoutNodes ?? []).filter(node => Number.isFinite(node.x) && Number.isFinite(node.y));
+		if (points.length === 0) return;
+
+		const padding = 72;
+		const minX = Math.min(...points.map(node => node.x - getNodeVisualConfig(node).nodeRadius - padding));
+		const minY = Math.min(...points.map(node => node.y - getNodeVisualConfig(node).nodeRadius - padding));
+		const maxX = Math.max(...points.map(node => node.x + getNodeVisualConfig(node).nodeRadius + String(node.label ?? '').length * 8.5 + padding));
+		const maxY = Math.max(...points.map(node => node.y + getNodeVisualConfig(node).nodeRadius + padding));
+		const viewWidth = Math.max(1, maxX - minX);
+		const viewHeight = Math.max(1, maxY - minY);
+		intrinsicBounds = { minX, minY, viewWidth, viewHeight };
+		const naturalHeight = Math.max(180, width * viewHeight / viewWidth);
+		 svgSelection
+			.attr('viewBox', `${minX} ${minY} ${viewWidth} ${viewHeight}`)
+			.attr('width', width)
+			.attr('height', naturalHeight);
+		height = naturalHeight;
+	}
+
 	function clearFocusMode() {
 		focusedNodeId = null;
 
@@ -124,16 +149,18 @@
 		}
 
 		const updateSize = () => {
-			const newWidth = window.innerWidth;
-			const newHeight = window.innerHeight;
+			const parentRect = fitContent ? svg?.parentElement?.getBoundingClientRect() : null;
+			const newWidth = Math.max(1, parentRect?.width ?? window.innerWidth);
+			if (fitContent && Math.abs(newWidth - width) < 1) return;
+			const newHeight = fitContent ? height || 240 : window.innerHeight;
+			width = newWidth;
+			height = newHeight;
 
 			// Only update SVG size, don't re-render entire graph
 			if (svgSelection) {
 				svgSelection.attr('width', newWidth).attr('height', newHeight);
+				if (intrinsicBounds) updateIntrinsicBounds();
 			}
-
-			width = newWidth;
-			height = newHeight;
 		};
 
 		// Handle ESC key to clear focus mode
@@ -144,11 +171,18 @@
 		};
 
 		updateSize();
-		window.addEventListener('resize', updateSize);
+		if (fitContent && svg?.parentElement) {
+			resizeObserver = new ResizeObserver(updateSize);
+			resizeObserver.observe(svg.parentElement);
+		} else {
+			window.addEventListener('resize', updateSize);
+		}
 		window.addEventListener('keydown', handleKeyDown);
 
 		return () => {
-			window.removeEventListener('resize', updateSize);
+			resizeObserver?.disconnect();
+			resizeObserver = null;
+			if (!fitContent) window.removeEventListener('resize', updateSize);
 			window.removeEventListener('keydown', handleKeyDown);
 		};
 	});
@@ -163,8 +197,9 @@
 	$: if (svg && graphData) {
 		// Initialize size if not set
 		if (!width || !height) {
-			width = window.innerWidth;
-			height = window.innerHeight;
+			const parentWidth = fitContent ? svg.parentElement?.getBoundingClientRect().width : null;
+			width = Math.max(1, parentWidth ?? window.innerWidth);
+			height = fitContent ? 240 : window.innerHeight;
 		}
 		renderGraph(graphData);
 	}
@@ -175,7 +210,7 @@
 		svgSelection
 			.transition()
 			.duration(750)
-			.call(zoomBehavior.transform, d3.zoomIdentity.translate(width / 2, height / 2).scale(1));
+			.call(zoomBehavior.transform, fitContent ? d3.zoomIdentity : d3.zoomIdentity.translate(width / 2, height / 2).scale(1));
 	}
 
 	async function renderGraph(data) {
@@ -191,11 +226,13 @@
 
 		// Create SVG container
 		svgSelection = d3.select(svg).attr('width', width).attr('height', height);
+		if (fitContent) svgSelection.attr('viewBox', `0 0 ${width} ${height}`);
 
 		// Create zoom behavior
 		zoomBehavior = d3
 			.zoom()
 			.scaleExtent([0.1, 4])
+			.filter((event) => enableWheelZoom || event.type !== 'wheel')
 			.on('zoom', (event) => {
 				g.attr('transform', event.transform);
 			});
@@ -238,7 +275,7 @@
 		// Center graph initially
 		svgSelection.call(
 			zoomBehavior.transform,
-			d3.zoomIdentity.translate(width / 2, height / 2).scale(1)
+			(fitContent ? d3.zoomIdentity : d3.zoomIdentity.translate(width / 2, height / 2).scale(1))
 		);
 
 		// Track visible nodes for dynamic rendering
@@ -353,7 +390,7 @@
 				.append('text')
 				.text((d) => d.label || '')
 				.attr('font-size', '11px')
-				.attr('font-family', "'Science Gothic SemiCondensed Light', 'Science Gothic', sans-serif")
+				.attr('font-family', 'Monaspace Krypton')
 				.attr('fill', OWL_VISUAL.PROPERTY.labelColor)
 				.attr('text-anchor', 'middle')
 				.attr('dy', '0.3em')
@@ -710,6 +747,7 @@
 
 		// Register tick handler
 		simulation.on('tick', onTick);
+		if (fitContent) simulation.on('end', updateIntrinsicBounds);
 
 		// Cleanup function
 		const cleanup = () => {
@@ -718,7 +756,7 @@
 	}
 </script>
 
-<svg bind:this={svg} />
+<svg bind:this={svg} class:fit-content={fitContent} />
 
 <style>
 	svg {
@@ -728,5 +766,10 @@
 		display: block;
 		position: relative;
 		z-index: 1;
+	}
+
+	svg.fit-content {
+		height: auto;
+		min-height: 180px;
 	}
 </style>

@@ -233,7 +233,7 @@ Example — find all active Tasks whose due date is before this Project's deadli
         ToolTemplate {
             name: "assert_individual".to_string(),
             array_mode: true,
-            description: "Create a new individual (instance) of a class.".to_string(),
+            description: "Create a new individual (instance) of a class. Provide initial property values as objects with property_iri and a values array; values may be strings, numbers, or booleans. The individual is persisted through the ontology write pipeline.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "class_iri".to_string(),
@@ -266,7 +266,7 @@ Example — find all active Tasks whose due date is before this Project's deadli
                 Parameter {
                     name: "properties".to_string(),
                     param_type: "array".to_string(),
-                    description: "Initial property values. Each: {property_iri, values[]}. foundation:hasStatus is validated.".to_string(),
+                    description: "Initial property values. Each entry must be {property_iri: string, values: array}. Values may be strings, numbers, or booleans. foundation:hasStatus is validated.".to_string(),
                     required: false,
                     schema: Some(serde_json::json!({
                         "type": "array",
@@ -274,7 +274,16 @@ Example — find all active Tasks whose due date is before this Project's deadli
                             "type": "object",
                             "properties": {
                                 "property_iri": { "type": "string" },
-                                "values": { "type": "array", "items": { "type": "string" } }
+                                "values": {
+                                    "type": "array",
+                                    "items": {
+                                        "anyOf": [
+                                            { "type": "string" },
+                                            { "type": "number" },
+                                            { "type": "boolean" }
+                                        ]
+                                    }
+                                }
                             },
                             "required": ["property_iri", "values"]
                         }
@@ -578,7 +587,7 @@ Example — find all active Tasks whose due date is before this Project's deadli
         ToolTemplate {
             name: "describe_individual".to_string(),
             array_mode: false,
-            description: "Fetch individual details with explicitly paginated property groups. The initial response returns at most 5 typed values per property and includes loaded, has_more, snapshot_tx, and cursor; total is null when the storage API cannot provide an exact count. When has_more is true, call this tool again with individual_iri, property_iri, snapshot_tx, and cursor copied unchanged from that property's pagination object to retrieve the next page. The cursor is valid only for the same individual, property, and snapshot. Do not omit or alter these values. The initial response also includes backlinks, allowed statuses, and each property's propertyType (value, calculation, reference, or query).".to_string(),
+            description: "Fetch individual details with explicitly paginated property groups. For an initial read, provide iris; strict function callers may send the continuation fields as null. MCP callers may omit those fields. The initial response returns at most 5 typed values per property and includes loaded, has_more, snapshot_tx, and cursor; total is null when the storage API cannot provide an exact count. When has_more is true, call this tool again with individual_iri, property_iri, snapshot_tx, and cursor copied unchanged from that property's pagination object to retrieve the next page; set iris to null when required by a strict function schema. All four continuation values must be supplied together. The cursor is valid only for the same individual, property, and snapshot. Do not alter these values. The initial response also includes backlinks, allowed statuses, and each property's propertyType (value, calculation, reference, or query).".to_string(),
             parameters: vec![
                 Parameter {
                     name: "iris".to_string(),
@@ -1003,7 +1012,7 @@ Example — find all active Tasks whose due date is before this Project's deadli
         ToolTemplate {
             name: "add_widget_to_blackboard".to_string(),
             array_mode: false,
-            description: "Open a widget on a blackboard to display an entity. If a widget for the same entity already exists on this blackboard, returns the existing widget instead of creating a duplicate. widget_type defaults to 'inspector' (universal). Use list_blackboard_widgets first to avoid duplicates.".to_string(),
+            description: "Open a widget on a blackboard to display an entity. If a widget for the same entity already exists on this blackboard, returns the existing widget instead of creating a duplicate. For a newly generated foundation:JsonRenderSpec, always use 'semantic_json_render'; the legacy 'json_render' type is only for opening an already-existing legacy widget. widget_type defaults to 'inspector' (universal) for other entities. Use list_blackboard_widgets first to avoid duplicates.".to_string(),
             parameters: vec![
                 Parameter {
                     name: "entity_iri".to_string(),
@@ -1015,7 +1024,7 @@ Example — find all active Tasks whose due date is before this Project's deadli
                 Parameter {
                     name: "widget_type".to_string(),
                     param_type: "string".to_string(),
-                    description: "Widget type ID (e.g. 'inspector', 'mermaid', 'graph'). Omit to use the class default or fall back to 'inspector'.".to_string(),
+                    description: "Widget type ID. For a newly generated foundation:JsonRenderSpec use 'semantic_json_render'; use legacy 'json_render' only to reopen an already-existing legacy widget. Omit to use the class default or 'inspector' for other entities.".to_string(),
                     required: false,
                     schema: None,
                 },

@@ -7,6 +7,7 @@
   import { Button } from '$lib/components/ui/button';
   import * as Select from '$lib/components/ui/select';
   import { Checkbox } from '$lib/components/ui/checkbox';
+  import { formatLocalizedDateTime, formatRelativeTime } from '$lib/utils/dateFormatters';
 
   let { widgetId, windowState = 'normal', onWindowStateChange, conversationIri = null } = $props();
 
@@ -123,27 +124,12 @@
     if (!iso) return '';
     const t = Date.parse(iso);
     if (isNaN(t)) return iso;
-    return new Date(t).toLocaleString();
+    return formatLocalizedDateTime(t);
   }
 
   function formatRelativeDate(timestampMs) {
     if (!timestampMs) return '';
-    const diffMs = Date.now() - timestampMs;
-    if (diffMs < 0) return 'agora';
-    const sec = Math.floor(diffMs / 1000);
-    if (sec < 60) return 'agora';
-    const min = Math.floor(sec / 60);
-    if (min < 60) return `${min}min atrás`;
-    const hr = Math.floor(min / 60);
-    if (hr < 24) return `${hr}h atrás`;
-    const days = Math.floor(hr / 24);
-    if (days < 7) return `${days}d atrás`;
-    const weeks = Math.floor(days / 7);
-    if (weeks < 5) return `${weeks}sem atrás`;
-    const months = Math.floor(days / 30);
-    if (months < 12) return `${months}mês atrás`;
-    const years = Math.floor(days / 365);
-    return `${years}a atrás`;
+    return formatRelativeTime(timestampMs, Date.now(), 'short');
   }
 
   function timestampFromIri(iri) {
@@ -491,7 +477,7 @@
                   <span class="notif-title">{notif.title}</span>
                 </div>
                 {#if notif._ts}
-                  <span class="meta-time" title={formatAbsoluteDate(notif.createdAt ?? notif.lastUpdatedAt)}>
+                  <span class="meta-time semantic-metadata" title={formatAbsoluteDate(notif.createdAt ?? notif.lastUpdatedAt)}>
                     {formatRelativeDate(notif._ts)}
                   </span>
                 {/if}
@@ -557,8 +543,6 @@
 
 <style>
   .widget-content {
-    flex: 1;
-    min-height: 0;
     display: flex;
     flex-direction: column;
   }
@@ -616,8 +600,6 @@
     padding: 0;
     display: flex;
     flex-direction: column;
-    flex: 1;
-    overflow: auto;
   }
 
   .notification-item {
@@ -689,16 +671,12 @@
     font-size: 12px;
     font-weight: 600;
     color: var(--foreground);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    white-space: normal;
     text-align: left;
   }
 
   .meta-time {
-    font-size: 11px;
-    color: var(--muted-foreground);
-    opacity: 0.85;
     white-space: nowrap;
     flex-shrink: 0;
     cursor: help;
@@ -783,10 +761,8 @@
   }
 
   .source-label {
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
 
   .spinning {

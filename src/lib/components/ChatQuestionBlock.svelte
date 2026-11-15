@@ -37,7 +37,7 @@
 <div class="question-block">
 	<div class="question-header">
 		<span class="material-symbols-outlined question-icon">help_outline</span>
-		<span class="question-label">Question</span>
+		<span class="question-label semantic-label">Question</span>
 	</div>
 	<div class="question-text">{q.question}</div>
 	{#if answer === '[Question dismissed by user]'}
@@ -92,14 +92,6 @@
 
 	.question-icon {
 		font-size: 14px;
-		color: var(--muted-foreground);
-	}
-
-	.question-label {
-		font-size: 10px;
-		font-weight: 600;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
 		color: var(--muted-foreground);
 	}
 

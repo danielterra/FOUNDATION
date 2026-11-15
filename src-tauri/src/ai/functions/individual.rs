@@ -142,6 +142,27 @@ fn type_name(v: &Value) -> &'static str {
     }
 }
 
+fn sync_spec_contract_bindings(
+    conn: &mut Connection,
+    individual_iri: &str,
+) -> Result<(), crate::owl::OwlError> {
+    let class_iri =
+        crate::owl::get_iri_property(conn, individual_iri, "rdf:type")?.unwrap_or_default();
+    if class_iri != "foundation:JsonRenderSpec" {
+        return Ok(());
+    }
+    let spec_source =
+        crate::owl::get_literal_property(conn, individual_iri, "foundation:specSource")?
+            .unwrap_or_default();
+    crate::core_ontology::semantic_catalog::link_spec_to_latest_contracts(
+        conn,
+        individual_iri,
+        &spec_source,
+    )
+    .map(|_| ())
+    .map_err(crate::owl::OwlError::ValidationError)
+}
+
 pub fn search(conn: &Connection, args: &Value) -> ToolResult {
     let query_str = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
     let entity_type_filter = args.get("type").and_then(|v| v.as_str());
@@ -377,11 +398,26 @@ pub fn read_property_page(conn: &Connection, args: &Value) -> ToolResult {
 
 pub fn describe_individual(conn: &Connection, args: &Value) -> ToolResult {
     let continuation_fields = ["individual_iri", "property_iri", "snapshot_tx", "cursor"];
-    let continuation_requested = continuation_fields
+    let continuation_values = continuation_fields
         .iter()
-        .any(|field| args.get(field).is_some());
-    if continuation_requested {
+        .map(|field| args.get(field).filter(|value| !value.is_null()))
+        .collect::<Vec<_>>();
+    let supplied_continuation_fields = continuation_values
+        .iter()
+        .filter(|value| value.is_some())
+        .count();
+    if supplied_continuation_fields == continuation_fields.len() {
         return describe_individual_property_page(conn, args);
+    }
+    if supplied_continuation_fields != 0 {
+        return ToolResult {
+            success: false,
+            result: None,
+            error: Some(
+                "Property-page continuation requires individual_iri, property_iri, snapshot_tx, and cursor together; set all four to null for an initial description".to_string(),
+            ),
+            concept: None,
+        };
     }
 
     let iris = match args.get("iris").and_then(|v| v.as_array()) {
@@ -487,7 +523,7 @@ fn describe_individual_property_page(conn: &Connection, args: &Value) -> ToolRes
             concept: None,
         };
     };
-    if args.get("iris").is_some() {
+    if args.get("iris").is_some_and(|value| !value.is_null()) {
         return ToolResult {
             success: false,
             result: None,
@@ -1094,6 +1130,8 @@ pub(crate) fn assert_individual_one(conn: &mut Connection, args: &Value) -> Tool
             }
         }
 
+        sync_spec_contract_bindings(conn, &generated_iri)?;
+
         super::batch::queue_event(
             "entity-created",
             serde_json::json!({"entityId": generated_iri.clone()}),
@@ -1199,6 +1237,10 @@ fn add_property_values_one(conn: &mut Connection, args: &Value) -> ToolResult {
         let individual = Individual::new(iri);
         individual.append_property(conn, property_iri, objects, "ai")?;
 
+        if property_iri == "foundation:specSource" {
+            sync_spec_contract_bindings(conn, iri)?;
+        }
+
         super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
         super::batch::queue_instance_recalc(iri.to_string(), property_iri.to_string());
 
@@ -1269,6 +1311,9 @@ fn replace_property_values_one(conn: &mut Connection, args: &Value) -> ToolResul
         if raw_values.is_empty() {
             crate::owl::cardinality::validate_property_cardinality(conn, iri, property_iri, 0)?;
             Individual::clear_property(conn, iri, property_iri, "ai")?;
+            if property_iri == "foundation:specSource" {
+                sync_spec_contract_bindings(conn, iri)?;
+            }
             super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
             return Ok::<_, crate::owl::OwlError>(serde_json::json!({"iri": iri}));
         }
@@ -1300,6 +1345,10 @@ fn replace_property_values_one(conn: &mut Connection, args: &Value) -> ToolResul
 
         let individual = Individual::new(iri);
         individual.add_property(conn, property_iri, objects, "ai")?;
+
+        if property_iri == "foundation:specSource" {
+            sync_spec_contract_bindings(conn, iri)?;
+        }
 
         super::batch::queue_event("entity-updated", serde_json::json!({"entityId": iri}));
         super::batch::queue_instance_recalc(iri.to_string(), property_iri.to_string());
@@ -1745,6 +1794,7 @@ mod property_page_tests {
             let page = describe_individual(
                 &conn,
                 &serde_json::json!({
+                    "iris": null,
                     "individual_iri": SUBJECT,
                     "property_iri": PROPERTY,
                     "snapshot_tx": snapshot_tx,
@@ -1768,6 +1818,86 @@ mod property_page_tests {
         }
 
         assert_eq!(values, expected);
+    }
+
+    #[test]
+    fn describe_individual_accepts_explicit_null_continuation_fields_as_initial_read() {
+        let mut conn = setup_test_db();
+        seed_values(&mut conn, &["value-1".to_string()]);
+
+        let result = describe_individual(
+            &conn,
+            &serde_json::json!({
+                "iris": [SUBJECT],
+                "individual_iri": null,
+                "property_iri": null,
+                "snapshot_tx": null,
+                "cursor": null,
+            }),
+        );
+
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(
+            result.result.unwrap()["individuals"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn describe_individual_rejects_partial_continuation_parameters() {
+        let conn = setup_test_db();
+
+        for args in [
+            serde_json::json!({
+                "iris": [SUBJECT],
+                "individual_iri": null,
+                "property_iri": "foundation:paginationTestProperty",
+                "snapshot_tx": null,
+                "cursor": null,
+            }),
+            serde_json::json!({
+                "iris": [SUBJECT],
+                "individual_iri": "foundation:paginationTestEntity",
+                "property_iri": "foundation:paginationTestProperty",
+                "snapshot_tx": null,
+                "cursor": null,
+            }),
+        ] {
+            let result = describe_individual(&conn, &args);
+            assert!(!result.success);
+            assert!(result.error.unwrap().contains(
+                "requires individual_iri, property_iri, snapshot_tx, and cursor together"
+            ));
+        }
+    }
+
+    #[test]
+    fn describe_individual_openai_strict_schema_requires_nullable_initial_and_continuation_fields()
+    {
+        let tool = crate::commands::chat::loop_tools::build_conversation_tools()
+            .into_iter()
+            .find(|tool| tool.name == "describe_individual")
+            .unwrap();
+        let schema = tool.input_schema;
+
+        for name in [
+            "iris",
+            "individual_iri",
+            "property_iri",
+            "snapshot_tx",
+            "cursor",
+        ] {
+            assert!(schema["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|required| required == name));
+            let types = schema["properties"][name]["type"].as_array().unwrap();
+            assert!(types.iter().any(|value| value == "null"), "{name}");
+        }
     }
 
     #[test]
@@ -1836,6 +1966,7 @@ mod property_page_tests {
         let continuation = describe_individual(
             &conn,
             &serde_json::json!({
+                "iris": null,
                 "individual_iri": SUBJECT,
                 "property_iri": PROPERTY,
                 "snapshot_tx": cursor["snapshot_tx"],

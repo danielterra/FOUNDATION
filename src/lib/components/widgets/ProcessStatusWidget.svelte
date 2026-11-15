@@ -126,8 +126,6 @@
   }
 
   .widget-content {
-    flex: 1;
-    overflow: auto;
     padding: 16px;
     display: flex;
     flex-direction: column;
@@ -218,7 +216,7 @@
 
   .step-output {
     color: var(--color-neutral);
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
     font-size: 11px;
     word-break: break-all;
   }

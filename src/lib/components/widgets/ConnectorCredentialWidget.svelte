@@ -454,8 +454,6 @@
   }
 
   .widget-content {
-    flex: 1;
-    overflow: auto;
     padding: 16px;
     display: flex;
     flex-direction: column;
@@ -466,14 +464,6 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-  }
-
-  .field-label {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--color-neutral);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
   }
 
   :global([data-slot="input"].field-input) {

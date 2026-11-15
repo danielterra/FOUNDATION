@@ -132,26 +132,26 @@
           <div class="email-meta">
             {#if emailData.from}
               <div class="meta-row">
-                <span class="meta-label">De</span>
+                <span class="meta-label semantic-label">De</span>
                 <span class="meta-value">{emailData.from}</span>
               </div>
             {/if}
             {#if emailData.to}
               <div class="meta-row">
-                <span class="meta-label">Para</span>
+                <span class="meta-label semantic-label">Para</span>
                 <span class="meta-value">{emailData.to}</span>
               </div>
             {/if}
             {#if emailData.sentAt}
               <div class="meta-row">
-                <span class="meta-label">Data</span>
+                <span class="meta-label semantic-label">Data</span>
                 <span class="meta-value">{formatDate(emailData.sentAt)}</span>
               </div>
             {/if}
           </div>
           <div class="email-content">
             {#if emailData.bodyHtml}
-              <SafeHtmlFrame value={emailData.bodyHtml} mode="fill" />
+              <SafeHtmlFrame value={emailData.bodyHtml} mode="contained" />
             {:else if emailData.bodyText}
               <pre class="email-text">{emailData.bodyText}</pre>
             {:else}
@@ -171,14 +171,11 @@
   .email-viewer-wrapper {
     display: flex;
     flex-direction: column;
-    height: 100%;
   }
 
   .email-body {
     display: flex;
     flex-direction: column;
-    height: 100%;
-    overflow: hidden;
   }
 
   .state-message {
@@ -227,7 +224,6 @@
   }
 
   .meta-label {
-    color: var(--color-neutral-disabled);
     min-width: 40px;
     flex-shrink: 0;
   }
@@ -238,17 +234,13 @@
   }
 
   .email-content {
-    flex: 1;
-    overflow: hidden;
     display: flex;
     flex-direction: column;
   }
 
   .email-text {
-    flex: 1;
     margin: 0;
     padding: 16px;
-    overflow: auto;
     white-space: pre-wrap;
     word-break: break-word;
     font-family: inherit;

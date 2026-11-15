@@ -384,7 +384,7 @@
 			const agent = await invoke('chat__get_conversation_agent', { conversationId: conversationIri });
 			conversationAgent = { iri: agent.iri, label: agent.label, icon: agent.icon };
 			const config = await invoke('agent__get_ai_config', { agentIri: agent.iri });
-			activeModelInfo = { modelLabel: config.modelLabel };
+			activeModelInfo = config;
 		} catch {
 			conversationAgent = null;
 		}
@@ -422,7 +422,6 @@
 				widgetType: 'inspector',
 				entityId: conversationAgent.iri,
 				position: null,
-				size: null,
 				conversationId: activeConversationIri
 			});
 		} catch (err) {

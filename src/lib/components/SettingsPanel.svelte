@@ -1,4 +1,5 @@
 <script>
+	import { onDestroy } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
@@ -6,10 +7,13 @@
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import * as Select from '$lib/components/ui/select';
 	import OpenRouterModelSelector from '$lib/components/OpenRouterModelSelector.svelte';
+	import ChatGPTSubscriptionSettings from '$lib/components/ChatGPTSubscriptionSettings.svelte';
 	import { aiServiceDisplayName } from '$lib/utils/aiServiceDisplayName';
 	import openRouterLogo from '$lib/assets/providers/openrouter.svg';
 	import anthropicLogo from '$lib/assets/providers/anthropic.svg';
+	import chatgptLogo from '$lib/assets/providers/chatgpt-logo-white.svg';
 	import posthog from 'posthog-js';
+	import { createEntitySubscription } from '$lib/realtime/subscriptions';
 
 	let { onClose } = $props();
 	const settingsTabs = [
@@ -27,6 +31,10 @@
 	let models = $state([]);
 	let aiServicesLoading = $state(true);
 	let aiServicesLoadError = $state(false);
+	let currentModelLoadError = $state('');
+	let openAiCatalog = $state({ status: 'unknown', lastSuccessAt: null, lastAttemptAt: null, error: '' });
+	let openAiCatalogRefreshing = $state(false);
+	let openAiCatalogLoadError = $state('');
 	let selectedServiceIri = $state('');
 	let selectedModelIri = $state('');
 	let apiKey = $state('');
@@ -75,6 +83,9 @@
 		selectedService ? aiServiceDisplayName(selectedService) : ''
 	);
 	let selectedServiceIsOpenRouter = $derived(selectedServiceLabel.toLowerCase().includes('openrouter'));
+	let selectedServiceIsChatGPT = $derived(selectedServiceLabel.toLowerCase().includes('chatgpt'));
+	let selectedServiceIsOpenAI = $derived(selectedServiceLabel.toLowerCase().includes('openai'));
+	let selectedServiceIsOpenAiApi = $derived(selectedServiceIsOpenAI && !selectedServiceIsChatGPT);
 	let loadedServiceLabel = $derived(
 		loadedServiceIri
 			? aiServiceDisplayName(services.find((service) => service.iri === loadedServiceIri) ?? {})
@@ -94,6 +105,43 @@
 			)
 	);
 	let currentModelLabel = $state('');
+	let savedOpenAiModelUnavailable = $derived(
+		selectedServiceIsOpenAiApi
+			&& !!loadedModelIri
+			&& openAiCatalog.status === 'current'
+			&& !models.some((model) => model.iri === loadedModelIri)
+	);
+	let savedOpenAiModelUnverified = $derived(
+		selectedServiceIsOpenAiApi
+			&& !!loadedModelIri
+			&& openAiCatalog.status !== 'current'
+	);
+
+	const openAiCatalogSubscription = createEntitySubscription((event) => {
+		if (event.type === 'updated' && event.entityId === selectedServiceIri && selectedServiceIsOpenAiApi) {
+			void loadModels(selectedServiceIri);
+		}
+	});
+
+	$effect(() => {
+		openAiCatalogSubscription.setIris(selectedServiceIsOpenAiApi && selectedServiceIri ? [selectedServiceIri] : []);
+	});
+
+	onDestroy(() => openAiCatalogSubscription.destroy());
+
+	function formatCatalogDate(value) {
+		if (!value) return '';
+		const date = new Date(value);
+		return Number.isNaN(date.getTime()) ? '' : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+	}
+
+	function catalogStatusLabel(catalog = openAiCatalog) {
+		if (catalog.status === 'syncing') return 'Sincronizando catálogo';
+		if (catalog.status === 'current') return 'Catálogo atualizado';
+		if (catalog.error) return 'Falha ao atualizar catálogo';
+		if (catalog.status === 'stale') return 'Catálogo desatualizado';
+		return 'Verificando catálogo';
+	}
 
 	function formatOpenRouterPrice(price) {
 		return price == null ? 'não informado' : `$${(price * 1_000_000).toFixed(2)} por 1M`;
@@ -124,8 +172,13 @@
 	function aiProviderLogo(service) {
 		const name = aiServiceDisplayName(service).toLowerCase();
 		if (name.includes('openrouter')) return openRouterLogo;
+		if (name.includes('openai') || name.includes('chatgpt')) return chatgptLogo;
 		if (name.includes('claude') || name.includes('anthropic')) return anthropicLogo;
 		return null;
+	}
+
+	function isChatGPTService(service) {
+		return aiServiceDisplayName(service ?? {}).toLowerCase().includes('chatgpt');
 	}
 
 	function aiProviderIcon(service) {
@@ -134,6 +187,19 @@
 
 	function runtimeReadinessLabel(service) {
 		const readiness = service.runtimeReadiness;
+		if (readiness?.status === 'needs_model') {
+			return aiServiceDisplayName(service).toLowerCase().includes('chatgpt')
+				? 'Escolha um modelo ChatGPT na configuração abaixo.'
+				: 'Escolha um modelo na configuração abaixo.';
+		}
+		if (readiness?.status === 'authentication_error') {
+			return aiServiceDisplayName(service).toLowerCase().includes('chatgpt')
+				? 'Reconecte sua conta ChatGPT para continuar.'
+				: 'Revise a autenticação deste provedor para continuar.';
+		}
+		if (aiServiceDisplayName(service).toLowerCase().includes('chatgpt')) {
+			return 'Conecte sua conta ChatGPT na configuração abaixo.';
+		}
 		if (!readiness || readiness.isReady) return 'Pronto';
 		const reasons = {
 			needs_credentials: 'Adicione uma chave de API nas configurações abaixo.',
@@ -423,6 +489,10 @@
 			apiKeyLoading = false;
 			return;
 		}
+		if (aiServiceDisplayName(services.find((service) => service.iri === serviceIri) ?? {}).toLowerCase().includes('chatgpt')) {
+			apiKeyLoading = false;
+			return;
+		}
 		apiKeyLoading = true;
 		try {
 			const [key, url, fbModels] = await Promise.all([
@@ -477,12 +547,16 @@
 	async function loadModelData() {
 		aiServicesLoading = true;
 		aiServicesLoadError = false;
+		currentModelLoadError = '';
 		try {
-			const [svcs, currentSvc] = await Promise.all([
-				invoke('setup__list_ai_services'),
-				invoke('setup__get_current_ai_service'),
-			]);
+			const svcs = await invoke('setup__list_ai_services');
 			services = svcs;
+			let currentSvc = null;
+			try {
+				currentSvc = await invoke('setup__get_current_ai_service');
+			} catch {
+				currentSvc = null;
+			}
 			if (currentSvc) {
 				selectedServiceIri = currentSvc.iri;
 				loadedServiceIri = currentSvc.iri;
@@ -491,12 +565,22 @@
 				loadedServiceIri = '';
 			}
 			if (selectedServiceIri) {
-				const [current, ,] = await Promise.all([
-					invoke('setup__get_current_ai_model'),
-					loadModels(selectedServiceIri),
-					loadApiKeyForService(selectedServiceIri),
+				const serviceIri = selectedServiceIri;
+				const currentModelRequest = invoke('setup__get_current_ai_model');
+				const sideLoads = Promise.all([
+					isChatGPTService(services.find((service) => service.iri === serviceIri))
+						? Promise.resolve()
+						: loadModels(serviceIri),
+					loadApiKeyForService(serviceIri),
 				]);
-				applyConfiguredModel(current, selectedServiceIri);
+				try {
+					const current = await currentModelRequest;
+					applyConfiguredModel(current, serviceIri);
+				} catch (error) {
+					currentModelLoadError = String(error);
+					applyConfiguredModel(null, serviceIri);
+				}
+				await sideLoads;
 			}
 		} catch {
 			aiServicesLoadError = true;
@@ -508,9 +592,52 @@
 	async function loadModels(serviceIri) {
 		try {
 			const result = await invoke('setup__list_ai_models', { serviceIri });
-			models = result.items;
+			if (serviceIri !== selectedServiceIri) return;
+			models = result.items ?? [];
+			const service = services.find((item) => item.iri === serviceIri);
+			const serviceName = aiServiceDisplayName(service ?? {}).toLowerCase();
+			if (serviceName.includes('openai') && !serviceName.includes('chatgpt')) {
+				openAiCatalog = result.catalog ?? { status: 'stale', lastSuccessAt: null, lastAttemptAt: null, error: '' };
+				openAiCatalogLoadError = '';
+				try {
+					const status = await invoke('setup__get_ai_model_catalog_status', { serviceIri });
+					if (serviceIri === selectedServiceIri && status) openAiCatalog = status;
+				} catch (error) {
+					openAiCatalogLoadError = String(error);
+				}
+			} else if (serviceIri === selectedServiceIri) {
+				openAiCatalog = { status: 'unknown', lastSuccessAt: null, lastAttemptAt: null, error: '' };
+				openAiCatalogLoadError = '';
+			}
 		} catch {
-			models = [];
+			if (serviceIri === selectedServiceIri) {
+				models = [];
+				if (selectedServiceIsOpenAiApi) openAiCatalogLoadError = 'Não foi possível ler o catálogo de modelos.';
+			}
+		}
+	}
+
+	async function refreshOpenAiCatalog() {
+		if (!selectedServiceIsOpenAiApi || openAiCatalogRefreshing) return;
+		const serviceIri = selectedServiceIri;
+		openAiCatalogRefreshing = true;
+		openAiCatalogLoadError = '';
+		openAiCatalog = { ...openAiCatalog, status: 'syncing', error: '' };
+		try {
+			await invoke('ai__sync_openai_model_catalog', { serviceIri });
+			await loadModels(serviceIri);
+		} catch (error) {
+			try {
+				const status = await invoke('setup__get_ai_model_catalog_status', { serviceIri });
+				if (serviceIri === selectedServiceIri && status) openAiCatalog = status;
+			} catch {
+				openAiCatalogLoadError = String(error);
+			}
+			if (serviceIri === selectedServiceIri && !openAiCatalog.error) {
+				openAiCatalog = { ...openAiCatalog, status: 'stale', error: String(error) };
+			}
+		} finally {
+			openAiCatalogRefreshing = false;
 		}
 	}
 
@@ -552,14 +679,23 @@
 		try {
 			await invoke('setup__save_ai_service', { serviceIri });
 			if (generation !== serviceChangeGeneration) return;
-			const currentModel = await invoke('setup__get_current_ai_model');
+			let currentModel = null;
+			currentModelLoadError = '';
+			try {
+				currentModel = await invoke('setup__get_current_ai_model');
+			} catch (error) {
+				currentModelLoadError = String(error);
+			}
 			if (generation !== serviceChangeGeneration) return;
 			loadedServiceIri = serviceIri;
 			applyConfiguredModel(currentModel, serviceIri);
 			openRouterModels = [];
 			openRouterModelsError = '';
 			setAiFieldStatus('provider', 'saved');
-			await Promise.all([loadModels(serviceIri), loadApiKeyForService(serviceIri)]);
+			await Promise.all([
+				isChatGPTService(services.find((service) => service.iri === serviceIri)) ? Promise.resolve() : loadModels(serviceIri),
+				loadApiKeyForService(serviceIri),
+			]);
 			if (generation !== serviceChangeGeneration) return;
 			if (aiServiceDisplayName(services.find((service) => service.iri === serviceIri) ?? {}).toLowerCase().includes('openrouter') && apiKey.trim() && baseUrl.trim()) {
 				await loadOpenRouterModels();
@@ -609,6 +745,7 @@
 			setAiFieldStatus('apiKey', 'saved');
 			await refreshAIServiceReadiness();
 			if (isOpenRouter && baseUrlToUse.trim()) await loadOpenRouterModels();
+			if (serviceIri === selectedServiceIri && selectedServiceIsOpenAiApi) await refreshOpenAiCatalog();
 		} catch (error) {
 			if (serviceIri === selectedServiceIri) setAiFieldStatus('apiKey', 'error', String(error));
 		}
@@ -659,6 +796,33 @@
 		} finally {
 			aiSaving = false;
 		}
+	}
+
+	async function saveChatGPTModel(modelIri) {
+		const serviceIri = selectedServiceIri;
+		if (!serviceIri || !modelIri || aiSaving) throw new Error('Selecione um modelo ChatGPT disponível.');
+		aiSaving = true;
+		setAiFieldStatus('model', 'saving');
+		try {
+			const configuration = await invoke('setup__save_ai_configuration', { serviceIri, modelIri });
+			selectedServiceIri = configuration.serviceIri;
+			loadedServiceIri = configuration.serviceIri;
+			selectedModelIri = configuration.modelIri;
+			loadedModelIri = configuration.modelIri;
+			currentModelLabel = '';
+			currentModelLoadError = '';
+			setAiFieldStatus('model', 'saved');
+			await refreshAIServiceReadiness();
+		} catch (error) {
+			setAiFieldStatus('model', 'error', String(error));
+			throw error;
+		} finally {
+			aiSaving = false;
+		}
+	}
+
+	async function acknowledgeChatGPTPlanUse() {
+		await invoke('ai__chatgpt_acknowledge_plan_use');
 	}
 
 	async function saveFallbackModels(nextFallbackModelIds) {
@@ -1144,9 +1308,59 @@
 						</div>
 							{/if}
 						</header>
+						{#if currentModelLoadError}
+							<p class="feedback error" role="status" aria-live="polite">
+								Não foi possível carregar o modelo atualmente selecionado. Os provedores continuam disponíveis; escolha um modelo abaixo para configurar esta rota.
+							</p>
+						{/if}
+
+						{#if selectedServiceIsOpenAiApi}
+							<section class="openai-catalog-status" aria-label="Atualização do catálogo de modelos OpenAI">
+								<div class="openai-catalog-copy">
+									<p class="openai-catalog-state" class:syncing={openAiCatalog.status === 'syncing'} class:error={!!openAiCatalog.error || !!openAiCatalogLoadError} role="status" aria-live="polite">
+										<span class="material-symbols-outlined" aria-hidden="true">
+											{openAiCatalog.status === 'syncing' ? 'sync' : openAiCatalog.status === 'current' ? 'check_circle' : (openAiCatalog.error || openAiCatalogLoadError) ? 'error' : 'schedule'}
+										</span>
+										{catalogStatusLabel()}
+									</p>
+									{#if openAiCatalog.lastSuccessAt}
+										<p class="openai-catalog-metadata">Última sincronização: {formatCatalogDate(openAiCatalog.lastSuccessAt)}</p>
+									{/if}
+									{#if openAiCatalog.error || openAiCatalogLoadError}
+										<p class="openai-catalog-error" role="alert">{openAiCatalog.error || openAiCatalogLoadError}</p>
+									{:else if openAiCatalog.status === 'stale'}
+										<p class="openai-catalog-hint">O catálogo desatualizado não será usado para escolher um modelo.</p>
+									{:else if openAiCatalog.status === 'syncing'}
+										<p class="openai-catalog-hint">A lista de modelos ficará disponível quando a sincronização terminar.</p>
+									{/if}
+									{#if savedOpenAiModelUnverified}
+										<p class="openai-catalog-hint">Modelo salvo: {currentModelLabel || loadedModelIri}. A disponibilidade ainda não pode ser confirmada.</p>
+									{:else if savedOpenAiModelUnavailable}
+										<p class="openai-catalog-error">O modelo salvo ({currentModelLabel || loadedModelIri}) não está disponível no catálogo atual. A configuração foi preservada; selecione outro modelo.</p>
+									{/if}
+								</div>
+								<Button variant="outline" onclick={refreshOpenAiCatalog} disabled={openAiCatalogRefreshing || openAiCatalog.status === 'syncing' || !loadedApiKey}>
+									<span class="material-symbols-outlined" aria-hidden="true">refresh</span>
+									{openAiCatalogRefreshing || openAiCatalog.status === 'syncing' ? 'Atualizando…' : 'Atualizar catálogo'}
+								</Button>
+							</section>
+							{#if !loadedApiKey}
+								<p class="openai-catalog-hint">Salve uma chave de API OpenAI para atualizar o catálogo.</p>
+							{/if}
+						{/if}
+
+						{#if selectedServiceIsChatGPT}
+							<ChatGPTSubscriptionSettings
+								serviceIri={selectedServiceIri}
+								selectedModelId={selectedModelIri}
+								selectedModelName={currentModelLabel}
+								onSelectModel={saveChatGPTModel}
+								onAcknowledgePlanUse={acknowledgeChatGPTPlanUse}
+							/>
+						{/if}
 
 						<div class="provider-field-grid">
-							{#if !selectedServiceIsLocal}
+							{#if !selectedServiceIsLocal && !selectedServiceIsChatGPT}
 								<div class="settings-field">
 						<label class="field-label" for="settings-api-key-input">Chave de API</label>
 						{#if apiKeyLoading}
@@ -1156,7 +1370,7 @@
 								<Input
 									id="settings-api-key-input"
 									type="password"
-									placeholder={selectedServiceIsOpenRouter ? 'sk-or-…' : 'sk-ant-…'}
+									placeholder={selectedServiceIsOpenRouter ? 'sk-or-…' : selectedServiceIsOpenAI ? 'sk-proj-…' : 'sk-ant-…'}
 									bind:value={apiKey}
 									oninput={() => setAiFieldStatus('apiKey', 'idle')}
 									onblur={saveApiKey}
@@ -1313,7 +1527,7 @@
 								</div>
 					{/if}
 
-							{#if !selectedServiceIsOpenRouter && models.length > 0}
+							{#if !selectedServiceIsOpenRouter && !selectedServiceIsChatGPT && models.length > 0}
 								<div class="settings-field">
 						<label class="field-label" for="settings-model-select">Modelo padrão</label>
 						<div class="field-row">
@@ -1333,11 +1547,14 @@
 							</Select.Root>
 						</div>
 						<p class="field-save-status" class:saving={aiFieldStatus.model === 'saving'} class:error={aiFieldStatus.model === 'error'} role="status" aria-live="polite">{aiFieldStatusLabel('model')}</p>
-						{#if !selectedServiceIsLocal && !apiKey.trim()}
+						{#if !selectedServiceIsLocal && !selectedServiceIsChatGPT && !apiKey.trim()}
 							<p class="feedback error">Informe a chave de API antes de ativar este provedor.</p>
 						{/if}
 								</div>
 					{/if}
+							{#if savedOpenAiModelUnavailable && models.length > 0}
+								<p class="openai-catalog-error" role="alert">Escolha um modelo disponível para substituir o modelo salvo.</p>
+							{/if}
 
 						</div>
 					</section>
@@ -2276,7 +2493,7 @@
 		color: var(--color-neutral);
 		word-break: break-all;
 		margin: 0;
-		font-family: monospace;
+		font-family: var(--font-family-app);
 	}
 
 	.field-row {
@@ -2516,7 +2733,7 @@
 	}
 
 	.claude-steps code {
-		font-family: monospace;
+		font-family: var(--font-family-app);
 		background: var(--color-surface-3);
 		padding: 0 4px;
 		border-radius: var(--radius);
@@ -2561,6 +2778,73 @@
 		gap: 12px;
 		overflow-y: auto;
 		max-height: 60vh;
+	}
+
+	.openai-catalog-status {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 16px;
+		padding: 12px 14px;
+		background: var(--color-surface-2);
+		border-radius: var(--radius);
+	}
+
+	.openai-catalog-copy {
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.openai-catalog-state {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin: 0;
+		color: var(--color-neutral-active);
+	}
+
+	.openai-catalog-state .material-symbols-outlined {
+		font-size: 18px;
+		color: var(--color-success);
+	}
+
+	.openai-catalog-state.syncing .material-symbols-outlined {
+		color: var(--color-transition);
+		animation: openai-catalog-spin 1.4s linear infinite;
+	}
+
+	.openai-catalog-state.error .material-symbols-outlined,
+	.openai-catalog-error {
+		color: var(--color-error);
+	}
+
+	.openai-catalog-metadata,
+	.openai-catalog-hint,
+	.openai-catalog-error {
+		margin: 0;
+		font-size: 12px;
+		line-height: 1.45;
+	}
+
+	.openai-catalog-metadata,
+	.openai-catalog-hint {
+		color: var(--color-neutral-active);
+	}
+
+	.openai-catalog-error {
+		overflow-wrap: anywhere;
+	}
+
+	@keyframes openai-catalog-spin {
+		to { transform: rotate(360deg); }
+	}
+
+	@media (max-width: 640px) {
+		.openai-catalog-status {
+			flex-direction: column;
+		}
 	}
 
 </style>

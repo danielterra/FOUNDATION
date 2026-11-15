@@ -1,6 +1,7 @@
 use super::super::log_backend;
 use super::trace;
 use crate::ai::local::LocalProvider;
+use crate::ai::openai_responses::OpenAIResponsesProvider;
 use crate::ai::providers::{
     ClaudeProvider, ContentBlock as ApiContentBlock, MessageContent, OpenRouterProvider,
 };
@@ -54,6 +55,21 @@ pub async fn run_conversation_loop(
             .to_string_lossy()
             .into_owned();
         AiProvider::Local(LocalProvider::new(model_path))
+    } else if url::Url::parse(&agent_config.base_url)
+        .ok()
+        .and_then(|url| url.host_str().map(|host| host == "api.openai.com"))
+        .unwrap_or(false)
+    {
+        let token = if agent_config.authentication_mode == "chatgpt_plan" {
+            crate::ai::chatgpt_auth::access_token(executor).await?
+        } else {
+            agent_config.api_key.clone()
+        };
+        AiProvider::OpenAIResponses(OpenAIResponsesProvider::new(
+            token,
+            agent_config.model_identifier.clone(),
+            agent_config.timeout_secs,
+        ))
     } else if agent_config.base_url.contains("openrouter.ai") {
         AiProvider::OpenRouter(OpenRouterProvider::with_model(
             agent_config.api_key.clone(),

@@ -49,7 +49,6 @@
         widgetType: 'workflow_execution',
         entityId: executionIri,
         position: null,
-        size: null,
         conversationId: appState.activeConversationIri,
       }).catch(e => console.error('[toast] Failed to open execution widget:', e));
       return;

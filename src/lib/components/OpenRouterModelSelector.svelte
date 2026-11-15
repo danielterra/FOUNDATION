@@ -268,7 +268,7 @@
 		<div class="selector-controls">
 			<Input id={`${idPrefix}-search`} type="search" aria-label="Buscar modelos por nome, identificador, publicador ou descrição" placeholder="Buscar modelo, publicador ou descrição" value={search} oninput={handleSearch} />
 			<div class="control-field">
-				<label for={`${idPrefix}-sort`}>Ordenar por</label>
+				<label class="semantic-label" for={`${idPrefix}-sort`}>Ordenar por</label>
 				<Select.Root type="single" value={sortBy} onValueChange={handleSortChange}>
 					<Select.Trigger id={`${idPrefix}-sort`}><Select.Value /></Select.Trigger>
 					<Select.Content>
@@ -280,7 +280,7 @@
 				</Select.Root>
 			</div>
 			<div class="control-field">
-				<label for={`${idPrefix}-direction`}>Direção</label>
+				<label class="semantic-label" for={`${idPrefix}-direction`}>Direção</label>
 				<Select.Root type="single" value={direction} onValueChange={handleDirectionChange}>
 					<Select.Trigger id={`${idPrefix}-direction`}><Select.Value /></Select.Trigger>
 					<Select.Content>
@@ -291,7 +291,7 @@
 			</div>
 			{#if sortBy === 'capability' && benchmarks?.available}
 				<div class="control-field">
-					<label for={`${idPrefix}-dimension`}>Dimensão de capacidade</label>
+					<label class="semantic-label" for={`${idPrefix}-dimension`}>Dimensão de capacidade</label>
 					<Select.Root type="single" value={benchmarkDimension} onValueChange={handleDimensionChange}>
 						<Select.Trigger id={`${idPrefix}-dimension`}><Select.Value /></Select.Trigger>
 						<Select.Content>
@@ -325,7 +325,7 @@
 				<div class="selected-summary" role="status" aria-live="polite">
 					<span class="material-symbols-outlined" aria-hidden="true">check_circle</span>
 					<span class="selected-summary-model">
-						<span class="selected-summary-label">Modelos selecionados</span>
+						<span class="selected-summary-label semantic-label">Modelos selecionados</span>
 						<span class="selected-summary-name">{selectedModelIds.length} na lista de prioridade</span>
 					</span>
 				</div>
@@ -333,7 +333,7 @@
 				<div class="selected-summary" role="status" aria-live="polite">
 					<span class="material-symbols-outlined" aria-hidden="true">check_circle</span>
 					<span class="selected-summary-model">
-						<span class="selected-summary-label">Modelo selecionado</span>
+						<span class="selected-summary-label semantic-label">Modelo selecionado</span>
 						<span class="selected-summary-name">{selectedModel.name}</span>
 					</span>
 					<span class="selected-summary-publisher">{provider(selectedModel)}</span>
@@ -357,31 +357,31 @@
 							{#if (selectionMode === 'multiple' && selectedModelIds.includes(model.id)) || (selectionMode === 'single' && model.id === selectedModelId)}<span class="selection-state"><span class="material-symbols-outlined" aria-hidden="true">check_circle</span>{selectionMode === 'multiple' ? `Prioridade ${selectedModelIds.indexOf(model.id) + 1}` : 'Selecionado'}</span>{/if}
 						</span>
 						<span class="model-publisher-row"><span class="model-publisher">{provider(model)}</span><span class="model-id">{model.id}</span></span>
-						{#if model.description}<span class="model-description"><span class="metric-label">Descrição do publicador</span>{model.description}</span>{/if}
+						{#if model.description}<span class="model-description"><span class="metric-label semantic-label">Descrição do publicador</span>{model.description}</span>{/if}
 						<span class="benchmark-grid" aria-label="Avaliações de capacidade">
 							{#each benchmarkDimensions as dimension}
 								{@const benchmark = benchmarkFor(model, dimension)}
 								<span class="benchmark-item">
-									<span class="metric-label">{dimensionLabel(dimension)}</span>
+									<span class="metric-label semantic-label">{dimensionLabel(dimension)}</span>
 									<span class="metric-value">{benchmarkLabel(model, dimension)}</span>
 									{#if benchmark}<span class="metric-source">{benchmark.source} · {formatDate(benchmark.asOf)}</span>{/if}
 								</span>
 							{/each}
 						</span>
 						<span class="model-facts">
-							<span><span class="metric-label">Tamanho</span>{formatSize(model)}</span>
-							<span><span class="metric-label">Contexto</span>{formatContext(model)}</span>
-							<span><span class="metric-label">Custo total / 1M</span>{formatCombinedPrice(model)}</span>
-							<span><span class="metric-label">Entrada</span>{formatPrice(model.inputCostPerToken)}</span>
-							<span><span class="metric-label">Saída</span>{formatPrice(model.outputCostPerToken)}</span>
+							<span><span class="metric-label semantic-label">Tamanho</span>{formatSize(model)}</span>
+							<span><span class="metric-label semantic-label">Contexto</span>{formatContext(model)}</span>
+							<span><span class="metric-label semantic-label">Custo total / 1M</span>{formatCombinedPrice(model)}</span>
+							<span><span class="metric-label semantic-label">Entrada</span>{formatPrice(model.inputCostPerToken)}</span>
+							<span><span class="metric-label semantic-label">Saída</span>{formatPrice(model.outputCostPerToken)}</span>
 						</span>
 						<span class="model-capabilities">
-							<span><span class="metric-label">Recursos declarados</span>{capabilityState(model)}</span>
-							<span><span class="metric-label">Entrada</span>{modalities(model.inputModalities)}</span>
-							<span><span class="metric-label">Saída</span>{modalities(model.outputModalities)}</span>
-							<span><span class="metric-label">Ferramentas</span>{model.supportsTools == null ? 'Não informado pelo publicador' : model.supportsTools ? 'Suportadas' : 'Não suportadas'}</span>
+							<span><span class="metric-label semantic-label">Recursos declarados</span>{capabilityState(model)}</span>
+							<span><span class="metric-label semantic-label">Entrada</span>{modalities(model.inputModalities)}</span>
+							<span><span class="metric-label semantic-label">Saída</span>{modalities(model.outputModalities)}</span>
+							<span><span class="metric-label semantic-label">Ferramentas</span>{model.supportsTools == null ? 'Não informado pelo publicador' : model.supportsTools ? 'Suportadas' : 'Não suportadas'}</span>
 						</span>
-						<span class="model-guidance"><span class="metric-label">Orientação de uso</span>{recommendation(model)}</span>
+						<span class="model-guidance"><span class="metric-label semantic-label">Orientação de uso</span>{recommendation(model)}</span>
 					</button>
 				{/each}
 			</div>
@@ -403,14 +403,14 @@
 	.catalog-provider { color: var(--text-body); }
 	.selector-controls { display: grid; grid-template-columns: minmax(12rem, 2fr) repeat(2, minmax(8rem, 1fr)); align-items: end; gap: var(--space-2); }
 	.control-field { display: grid; gap: var(--space-1); min-width: 0; }
-	.control-field label, .metric-label { color: var(--text-secondary); font-size: var(--type-label); letter-spacing: var(--tracking-hud-label); text-transform: uppercase; }
+	.control-field label, .metric-label { display: flex; }
 	.catalog-range { color: var(--text-body); }
 	.state-error, .state-empty { display: grid; justify-items: start; gap: var(--space-2); padding: var(--space-3); border-inline-start: var(--size-hud-frame-line) solid var(--color-danger); background: var(--color-surface-2); color: var(--text-body); }
 	.state-error p, .state-empty p { margin: 0; }
 	.selected-summary { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: var(--size-hud-frame-line) solid var(--color-interactive); border-radius: var(--radius); background: var(--color-surface-2); }
 	.selected-summary > .material-symbols-outlined { color: var(--color-interactive); font-size: var(--type-icon-medium); }
 	.selected-summary-model { display: grid; min-width: 0; }
-	.selected-summary-label { color: var(--text-secondary); font-size: var(--type-label); text-transform: uppercase; letter-spacing: var(--tracking-hud-label); }
+	.selected-summary-label { display: flex; }
 	.selected-summary-name { color: var(--text-body); font-size: var(--type-body-prominent); overflow-wrap: anywhere; }
 	.selected-summary-publisher { color: var(--text-secondary); font-size: var(--type-body-compact); text-align: end; overflow-wrap: anywhere; }
 	.selected-note { padding: var(--space-2) var(--space-3); border-inline-start: var(--size-hud-frame-line) solid var(--color-interactive); background: var(--color-surface-2); color: var(--text-secondary); font-size: var(--type-body-compact); }

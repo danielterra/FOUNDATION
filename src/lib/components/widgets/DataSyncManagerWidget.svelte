@@ -248,8 +248,6 @@
 
 <style>
   .sync-content {
-    flex: 1;
-    overflow-y: auto;
     padding: 12px;
     display: flex;
     flex-direction: column;
@@ -329,9 +327,7 @@
     font-size: 13px;
     font-weight: 600;
     color: var(--color-neutral-active);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
   }
 
   /* ── Pills (chips arredondados conforme convenção do projeto) ── */

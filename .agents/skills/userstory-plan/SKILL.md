@@ -118,6 +118,8 @@ Repasse o relatório final do `architect` ao usuário tal qual, e acrescente um 
 
 ## Regras
 
+- **NEVER** plan or create a Foundation UserStory for an application configured on top of Foundation; apply that application's ontology, automation, or widget spec directly. Plan only reusable Foundation platform behavior.
+- **ALWAYS** verify the story delivers a reusable Foundation capability before UX or architecture planning; stop if it only describes one configured application's behavior.
 - **NEVER** invoque `developer-backend` ou `developer-frontend` daqui — eles só entram em Execução (`$userstory-implement`).
 - **NEVER** invoque o `architect` antes de resolver a heurística de UX (Passo 1) — economiza um round-trip.
 - **NEVER** persista plano nem mude status aqui — isso é responsabilidade do `architect` na sua chamada final.

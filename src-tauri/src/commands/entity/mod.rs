@@ -61,6 +61,10 @@ pub struct EntityData {
     pub allowed_statuses: Vec<StatusInfo>,
 
     pub properties: Vec<PropertyValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inspector_property_order: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub property_order_fingerprint: Option<String>,
     pub backlinks: Vec<PropertyValue>,
     pub status: Option<StatusInfo>,
     pub required_fields: Vec<String>,
@@ -119,6 +123,8 @@ pub struct PropertyValue {
     pub property_label: String,
     pub property_comment: Option<String>,
     pub value: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_entity_kind: Option<crate::core_ontology::entity_kind::EntityKind>,
     pub value_label: Option<String>,
     pub value_icon: Option<String>,
     pub is_object_property: bool,
@@ -239,6 +245,8 @@ pub async fn owl__search_entities(
 #[serde(rename_all = "camelCase")]
 pub struct BacklinkPageItem {
     pub value: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_entity_kind: Option<crate::core_ontology::entity_kind::EntityKind>,
     pub value_label: Option<String>,
     pub value_icon: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -293,6 +301,9 @@ pub async fn inspector__get_backlink_page(
             let subjects: Vec<String> = page.into_iter().map(|(iri, _)| iri).collect();
 
             let things = crate::owl::Thing::get_batch(conn, &subjects);
+            let entity_kinds =
+                crate::core_ontology::entity_kind::resolve_entity_kinds(conn, &subjects)
+                    .map_err(|e| e.to_string())?;
 
             let status_iris =
                 crate::owl::get_first_iri_property_batch(conn, &subjects, "foundation:hasStatus")
@@ -337,6 +348,7 @@ pub async fn inspector__get_backlink_page(
                         .cloned();
                     BacklinkPageItem {
                         value: iri.clone(),
+                        value_entity_kind: entity_kinds.get(iri).copied(),
                         value_label: Some(thing.label),
                         value_icon: thing.icon,
                         value_status,
@@ -363,6 +375,8 @@ pub struct PropertyPageItem {
     pub is_object_property: bool,
     /// IRI string for object properties; lexical value string for literals.
     pub value: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_entity_kind: Option<crate::core_ontology::entity_kind::EntityKind>,
     /// Resolved label for the target entity (object properties only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value_label: Option<String>,
@@ -419,6 +433,9 @@ pub async fn inspector__get_property_value_page(
             } else {
                 crate::owl::Thing::get_batch(conn, &iri_rows)
             };
+            let entity_kinds =
+                crate::core_ontology::entity_kind::resolve_entity_kinds(conn, &iri_rows)
+                    .map_err(|e| e.to_string())?;
 
             let status_iris = if iri_rows.is_empty() {
                 std::collections::HashMap::new()
@@ -470,6 +487,7 @@ pub async fn inspector__get_property_value_page(
                             .cloned();
                         PropertyPageItem {
                             is_object_property: true,
+                            value_entity_kind: entity_kinds.get(&iri).copied(),
                             value: iri,
                             value_label: Some(thing.label),
                             value_icon: thing.icon,
@@ -485,6 +503,7 @@ pub async fn inspector__get_property_value_page(
                         PropertyPageItem {
                             is_object_property: false,
                             value: row.object.as_literal().unwrap_or_default(),
+                            value_entity_kind: None,
                             value_label: None,
                             value_icon: None,
                             value_status: None,
@@ -502,6 +521,62 @@ pub async fn inspector__get_property_value_page(
                 "snapshot_tx": page.snapshot_tx,
             });
             serde_json::to_string(&response).map_err(|e| e.to_string())
+        })
+        .await
+}
+
+/// Reads only requested forward property values for a semantic widget from one revision.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget_inspector__get_entity_property_snapshot(
+    entity_iri: String,
+    property_iris: Vec<String>,
+    property_projections: Option<HashMap<String, Vec<String>>>,
+    snapshot_tx: Option<i64>,
+    page_size: Option<usize>,
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    executor
+        .read(move |conn| {
+            let snapshot =
+                crate::core_ontology::semantic_widget_data::get_entity_property_snapshot(
+                    conn,
+                    &entity_iri,
+                    &property_iris,
+                    snapshot_tx,
+                    page_size.unwrap_or(20),
+                    property_projections.as_ref(),
+                )?;
+            serde_json::to_string(&snapshot).map_err(|error| error.to_string())
+        })
+        .await
+}
+
+/// Reads the next page of one semantic widget property at its original revision.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget_inspector__get_entity_property_page(
+    entity_iri: String,
+    property_iri: String,
+    projection_property_iris: Option<Vec<String>>,
+    cursor: Option<crate::owl::PropertyValueCursor>,
+    snapshot_tx: i64,
+    page_size: Option<usize>,
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    executor
+        .read(move |conn| {
+            let page =
+                crate::core_ontology::semantic_widget_data::get_property_page_with_projection(
+                    conn,
+                    &entity_iri,
+                    &property_iri,
+                    page_size.unwrap_or(20),
+                    snapshot_tx,
+                    cursor.as_ref(),
+                    projection_property_iris.as_deref(),
+                )?;
+            serde_json::to_string(&page).map_err(|error| error.to_string())
         })
         .await
 }
@@ -639,6 +714,45 @@ pub async fn inspector__get_entity(
                     entity_id_for_read
                 ));
             };
+            if data.is_class {
+                let order = crate::core_ontology::inspector_property_order::for_class(
+                    conn,
+                    &entity_id_for_read,
+                )?;
+                let class_order = order.property_iris;
+                data.inspector_property_order = Some(class_order.clone());
+                data.property_order_fingerprint = Some(order.schema_fingerprint);
+                let positions: HashMap<&str, usize> = class_order
+                    .iter()
+                    .enumerate()
+                    .map(|(index, property)| (property.as_str(), index))
+                    .collect();
+                data.properties.sort_by_key(|property| {
+                    positions
+                        .get(property.property.as_str())
+                        .copied()
+                        .unwrap_or(usize::MAX)
+                });
+            } else {
+                let property_order = crate::core_ontology::inspector_property_order::for_types(
+                    conn,
+                    &data
+                        .types
+                        .iter()
+                        .map(|type_info| type_info.iri.clone())
+                        .collect::<Vec<_>>(),
+                )?
+                .into_iter()
+                .enumerate()
+                .map(|(index, property)| (property, index))
+                .collect::<HashMap<_, _>>();
+                data.properties.sort_by_key(|property| {
+                    property_order
+                        .get(&property.property)
+                        .copied()
+                        .unwrap_or(usize::MAX)
+                });
+            }
             for property_value in &mut data.properties {
                 let presentation =
                     crate::core_ontology::property_configuration::property_presentation(
@@ -728,6 +842,27 @@ pub async fn graph__get_node_type_config(
 
 #[tauri::command]
 #[allow(non_snake_case)]
+pub async fn inspector__save_property_order(
+    class_iri: String,
+    property_iris: Vec<String>,
+    schema_fingerprint: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    executor
+        .write(move |conn| {
+            let order = crate::core_ontology::inspector_property_order::save(
+                conn,
+                &class_iri,
+                property_iris,
+                &schema_fingerprint,
+            )?;
+            serde_json::to_string(&order).map_err(|error| error.to_string())
+        })
+        .await
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
 pub async fn widget_inspector__clear_property(
     entity_id: String,
     property_iri: String,
@@ -792,6 +927,68 @@ pub async fn widget_inspector__update_property(
                     )
                     .map_err(|e| e.to_string())?;
             }
+            Ok(String::new())
+        })
+        .await?;
+    let jobs = if is_property_formula {
+        let worker = app.state::<crate::commands::formula_worker::FormulaWorker>();
+        worker.cancel_property(&entity_id);
+        vec![
+            crate::commands::formula_worker::cancel_and_create_property_job(&executor, &entity_id)
+                .await?,
+        ]
+    } else {
+        crate::commands::formula_worker::create_instance_recalc_jobs(
+            &executor,
+            &entity_id,
+            &property_iri,
+        )
+        .await?
+    };
+    enqueue_formula_jobs(&app, jobs);
+    crate::realtime::emit_entity_updated(&app, &entity_id);
+    Ok(())
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget_inspector__set_literal_values(
+    entity_id: String,
+    property_iri: String,
+    values: Vec<String>,
+    datatype: Option<String>,
+    app: tauri::AppHandle,
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    let entity_id_clone = entity_id.clone();
+    let property_iri_clone = property_iri.clone();
+    let is_property_formula =
+        property_iri == "foundation:formula" || property_iri == "foundation:aggregation";
+    executor
+        .write(move |conn| {
+            let effective_datatype = datatype.unwrap_or_else(|| {
+                Property::get(conn, &property_iri_clone)
+                    .ok()
+                    .flatten()
+                    .and_then(|property| {
+                        property
+                            .ranges
+                            .into_iter()
+                            .find(|range| range.starts_with("xsd:"))
+                    })
+                    .unwrap_or_else(|| "xsd:string".to_string())
+            });
+            let literal_values = values
+                .into_iter()
+                .map(|value| Object::Literal {
+                    value,
+                    datatype: Some(effective_datatype.clone()),
+                    language: None,
+                })
+                .collect();
+            Individual::new(&entity_id_clone)
+                .replace_property_literals(conn, &property_iri_clone, literal_values, "user")
+                .map_err(|error| error.to_string())?;
             Ok(String::new())
         })
         .await?;
@@ -1389,6 +1586,34 @@ fn get_class_data(
     let label = class.label.unwrap_or_else(|| class_id.to_string());
     let icon = class.icon;
     let comment = class.comment;
+    let mut reference_iris: std::collections::HashSet<String> = class
+        .types
+        .iter()
+        .chain(class.super_classes.iter())
+        .map(|thing| thing.iri.clone())
+        .collect();
+    for (property_iri, _) in &class.properties {
+        if let Some(property) = Property::get(conn, property_iri).map_err(|e| e.to_string())? {
+            if property.property_type == crate::owl::PropertyType::ObjectProperty {
+                reference_iris.extend(property.ranges);
+            }
+        }
+    }
+    for (_, value) in &class.concept_properties {
+        if let Some(iri) = value.as_iri() {
+            reference_iris.insert(iri.to_string());
+        }
+    }
+    reference_iris.extend(
+        class
+            .backlinks
+            .iter()
+            .map(|(subject, _, _)| subject.clone()),
+    );
+    let reference_iris: Vec<String> = reference_iris.into_iter().collect();
+    let entity_kinds =
+        crate::core_ontology::entity_kind::resolve_entity_kinds(conn, &reference_iris)
+            .map_err(|e| e.to_string())?;
 
     let mut nodes = Vec::new();
     let mut links = Vec::new();
@@ -1445,6 +1670,9 @@ fn get_class_data(
     }
 
     for (property_iri, _source_class_iri) in &class.properties {
+        if property_iri == "foundation:inspectorPropertyOrder" {
+            continue;
+        }
         let prop = Property::get(conn, property_iri)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("Property {} not found", property_iri))?;
@@ -1523,6 +1751,7 @@ fn get_class_data(
             property_label: "type".to_string(),
             property_comment: Some("The type of this entity".to_string()),
             value: type_thing.iri.clone(),
+            value_entity_kind: entity_kinds.get(&type_thing.iri).copied(),
             value_label: Some(type_thing.label.clone()),
             value_icon: type_thing.icon.clone(),
             is_object_property: true,
@@ -1562,6 +1791,7 @@ fn get_class_data(
             property_label: "subClassOf".to_string(),
             property_comment: Some("Parent class of this class".to_string()),
             value: super_class.iri.clone(),
+            value_entity_kind: entity_kinds.get(&super_class.iri).copied(),
             value_label: Some(super_class.label.clone()),
             value_icon: super_class.icon.clone(),
             is_object_property: true,
@@ -1594,6 +1824,9 @@ fn get_class_data(
     }
 
     for (property_iri, source_class_iri) in &class.properties {
+        if property_iri == "foundation:inspectorPropertyOrder" {
+            continue;
+        }
         let prop = Property::get(conn, property_iri)
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("Property {} not found", property_iri))?;
@@ -1610,6 +1843,11 @@ fn get_class_data(
                 (range_iri.clone(), range_thing.label, range_thing.icon)
             })
             .unwrap_or_else(|| ("owl:Thing".to_string(), "Any".to_string(), None));
+        let value_entity_kind = if is_object_property {
+            entity_kinds.get(&value).copied()
+        } else {
+            None
+        };
 
         let (source_class, source_class_label, source_class_icon) = if source_class_iri != class_id
         {
@@ -1650,6 +1888,7 @@ fn get_class_data(
             property_label,
             property_comment,
             value,
+            value_entity_kind,
             value_label: Some(value_label),
             value_icon,
             is_object_property,
@@ -1704,6 +1943,11 @@ fn get_class_data(
         } else {
             None
         };
+        let value_entity_kind = if is_object_property {
+            entity_kinds.get(&value).copied()
+        } else {
+            None
+        };
 
         properties.push(PropertyValue {
             presentation: None,
@@ -1712,6 +1956,7 @@ fn get_class_data(
             property_label,
             property_comment,
             value,
+            value_entity_kind,
             value_label,
             value_icon: None,
             is_object_property,
@@ -1800,6 +2045,7 @@ fn get_class_data(
             property_label: "type of".to_string(),
             property_comment: None,
             value: source_entity.clone(),
+            value_entity_kind: entity_kinds.get(source_entity).copied(),
             value_label: Some(source_thing.label),
             value_icon: source_thing.icon,
             is_object_property: true,
@@ -1877,6 +2123,8 @@ fn get_class_data(
         disjoint_groups,
         instances: vec![],
         properties,
+        inspector_property_order: None,
+        property_order_fingerprint: None,
         backlinks,
         status,
         required_fields,

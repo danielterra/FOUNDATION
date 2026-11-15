@@ -5,6 +5,10 @@ description: "Use when the user asks to fix a Foundation bug by IRI. Orchestrate
 
 # Bug Fix
 
+## Escopo antes da triagem
+- **Classifique o escopo antes de encaminhar ao Support:** Bug de capacidade reutilizável do Foundation segue este fluxo; falha confinada à configuração de uma aplicação sobre Foundation deve ser corrigida diretamente nos dados, automações ou widgets dessa aplicação e **não** vira `foundation:Bug`.
+- Se a aplicação for apenas o cenário de reprodução de um defeito do núcleo, mantenha o Bug genérico e remova do registro os nomes, IRIs e dados pessoais da aplicação.
+
 Skill que conduz um `foundation:Bug` por todo o pipeline do FOUNDATION, dentro do ciclo:
 
 ```

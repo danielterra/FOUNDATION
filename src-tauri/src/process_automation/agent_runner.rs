@@ -15,7 +15,15 @@ pub struct AgentConfig {
 /// falling back to the configured service/model when the agent has none.
 pub async fn resolve_agent_config(executor: &DbExecutor, agent_iri: &str) -> Result<AgentConfig> {
     let agent_iri = agent_iri.to_string();
-    executor
+    let (
+        mut api_key,
+        authentication_mode,
+        model_identifier,
+        base_url,
+        fallback_models,
+        timeout_secs,
+        system_prompt,
+    ) = executor
         .read(move |conn| {
             let service_iri = get_iri_property(conn, &agent_iri, "foundation:usesService")
                 .map_err(|e| e.to_string())?
@@ -31,13 +39,20 @@ pub async fn resolve_agent_config(executor: &DbExecutor, agent_iri: &str) -> Res
                     )
                 })?;
 
-            let api_key_iri = get_iri_property(conn, &service_iri, "foundation:apiKey")
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| "API key not configured".to_string())?;
-
-            let api_key = get_literal_property(conn, &api_key_iri, "foundation:credentialValue")
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| "API key has no value".to_string())?;
+            let authentication_mode =
+                get_literal_property(conn, &service_iri, "foundation:aiAuthenticationMode")
+                    .unwrap_or_default()
+                    .unwrap_or_else(|| "api_key".to_string());
+            let api_key = if authentication_mode == "chatgpt_plan" {
+                String::new()
+            } else {
+                let api_key_iri = get_iri_property(conn, &service_iri, "foundation:apiKey")
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| "API key not configured".to_string())?;
+                get_literal_property(conn, &api_key_iri, "foundation:credentialValue")
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| "API key has no value".to_string())?
+            };
 
             let model_iri = get_iri_property(conn, &agent_iri, "foundation:usesModel")
                 .map_err(|e| e.to_string())?
@@ -91,21 +106,32 @@ pub async fn resolve_agent_config(executor: &DbExecutor, agent_iri: &str) -> Res
                 format!("{}\n\n{}", base_system_prompt, agent_base_prompt)
             };
 
-            let provider = build_provider(
-                &api_key,
-                &model_identifier,
-                &base_url,
-                &fallback_models,
-                timeout_secs,
-            );
-
-            Ok(AgentConfig {
-                provider,
+            Ok((
+                api_key,
+                authentication_mode,
                 model_identifier,
+                base_url,
+                fallback_models,
+                timeout_secs,
                 system_prompt,
-            })
+            ))
         })
-        .await
+        .await?;
+    if authentication_mode == "chatgpt_plan" {
+        api_key = crate::ai::chatgpt_auth::access_token(executor).await?;
+    }
+    let provider = build_provider(
+        &api_key,
+        &model_identifier,
+        &base_url,
+        &fallback_models,
+        timeout_secs,
+    );
+    Ok(AgentConfig {
+        provider,
+        model_identifier,
+        system_prompt,
+    })
 }
 
 fn build_provider(
@@ -115,7 +141,13 @@ fn build_provider(
     fallback_models: &[String],
     timeout_secs: u64,
 ) -> AiProvider {
-    if base_url.contains("openrouter.ai") {
+    if base_url.contains("openai.com") {
+        AiProvider::OpenAIResponses(crate::ai::openai_responses::OpenAIResponsesProvider::new(
+            api_key.to_string(),
+            model_identifier.to_string(),
+            timeout_secs,
+        ))
+    } else if base_url.contains("openrouter.ai") {
         AiProvider::OpenRouter(crate::ai::providers::OpenRouterProvider::with_model(
             api_key.to_string(),
             base_url.to_string(),

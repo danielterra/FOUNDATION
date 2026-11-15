@@ -13,7 +13,6 @@
     windowState = 'normal',
     onWindowStateChange,
     onClose,
-    canExpand = true,
     entityId,
     canOpenInspector = true,
     canCopyId = true,
@@ -22,6 +21,8 @@
     headerExtra,
     headerSubtitle,
     headerTitle,
+    subtitleBeforeTitle = false,
+    minHeight,
     children,
   }: {
     icon?: string
@@ -31,7 +32,6 @@
     windowState?: string
     onWindowStateChange?: (state: string) => void
     onClose?: () => void
-    canExpand?: boolean
     entityId?: string
     canOpenInspector?: boolean
     canCopyId?: boolean
@@ -40,6 +40,8 @@
     headerExtra?: Snippet
     headerSubtitle?: Snippet
     headerTitle?: Snippet
+    subtitleBeforeTitle?: boolean
+    minHeight?: number
     children?: Snippet
   } = $props();
 
@@ -52,7 +54,6 @@
       widgetType: 'inspector',
       entityId,
       position: null,
-      size: null,
       conversationId: conversationIri ?? null,
     }).catch(() => {});
   }
@@ -79,10 +80,6 @@
     onWindowStateChange?.(windowState === 'minimized' ? 'normal' : 'minimized');
   }
 
-  function toggleExpanded() {
-    onWindowStateChange?.(windowState === 'maximized' ? 'normal' : 'maximized');
-  }
-
   function resolveIconSrc(src: string): string {
     if (!src) return '';
     if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('data:')) return src;
@@ -92,7 +89,7 @@
   }
 </script>
 
-<div class="widget" class:minimized={windowState === 'minimized'}>
+<div class="widget" class:minimized={windowState === 'minimized'} class:fill-content={minHeight !== undefined} style:min-height={minHeight ? `${minHeight}px` : null}>
   <div class="widget-header">
     <div class="header-top">
       <div class="header-left">
@@ -104,6 +101,9 @@
           {/if}
         </div>
         <div class="header-title-block">
+          {#if subtitleBeforeTitle && headerSubtitle}
+            <div class="header-subtitle">{@render headerSubtitle()}</div>
+          {/if}
           {#if showTitle}
             {#if headerTitle}
               {@render headerTitle()}
@@ -111,7 +111,7 @@
               <span class="header-title">{title}</span>
             {/if}
           {/if}
-          {#if headerSubtitle}
+          {#if !subtitleBeforeTitle && headerSubtitle}
             <div class="header-subtitle">{@render headerSubtitle()}</div>
           {/if}
         </div>
@@ -142,12 +142,6 @@
           title={windowState === 'minimized' ? 'Restore' : 'Minimize'}
           onclick={toggleMinimize}
         ><span class="material-symbols-outlined">{windowState === 'minimized' ? 'filter_none' : 'horizontal_rule'}</span></Button>
-        {#if canExpand}
-          <Button variant="ghost" size="icon-touch"
-            title={windowState === 'maximized' ? 'Restore' : 'Maximize'}
-            onclick={toggleExpanded}
-          ><span class="material-symbols-outlined">{windowState === 'maximized' ? 'filter_none' : 'check_box_outline_blank'}</span></Button>
-        {/if}
         <Button variant="ghost" size="icon-touch" title="Close" onclick={onClose}><span class="material-symbols-outlined">close</span></Button>
       </div>
     </div>
@@ -168,23 +162,28 @@
   .widget {
     position: relative;
     width: 100%;
-    height: 100%;
+    height: max-content;
+    min-height: max-content;
     display: flex;
     flex-direction: column;
-    background: color-mix(
-      in srgb,
-      color-mix(
-        in srgb,
-        var(--color-widget-surface-front) calc(100% - var(--widget-background-darkness)),
-        var(--color-widget-surface-back) var(--widget-background-darkness)
-      ) var(--opacity-widget-surface),
-      transparent
-    );
+    flex-shrink: 0;
+    background: color-mix(in srgb, var(--color-widget-surface-front) var(--opacity-widget-surface), transparent);
     backdrop-filter: blur(var(--blur-widget-surface));
     border: 0;
     border-radius: 0;
-    overflow: hidden;
+    overflow: visible;
     box-shadow: none;
+  }
+
+  .widget.fill-content > .content-wrapper {
+    flex: 1 0 auto;
+    min-height: 0;
+    display: flex;
+  }
+
+  .widget.fill-content > .content-wrapper > .widget-content {
+    flex: 1 0 auto;
+    min-height: 0;
   }
 
   .widget::before {
@@ -331,22 +330,22 @@
   }
 
   .content-wrapper {
-    flex: 1;
-    min-height: 0;
-    display: grid;
-    grid-template-rows: 1fr;
-    transition: grid-template-rows 250ms cubic-bezier(0.4, 0, 0.2, 1);
-    overflow: hidden;
+    flex: none;
+    min-height: auto;
+    display: block;
+    overflow: visible;
   }
 
   .content-wrapper > .widget-content {
-    min-height: 0;
-    overflow: hidden;
+    min-height: auto;
+    overflow: visible;
   }
 
   .widget-content {
     display: flex;
     flex-direction: column;
-    height: 100%;
+    height: auto;
+    min-height: auto;
+    overflow: visible;
   }
 </style>

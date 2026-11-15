@@ -4,7 +4,7 @@
 	import { openPath } from '@tauri-apps/plugin-opener';
 	import { marked } from 'marked';
 	import { onMount, onDestroy } from 'svelte';
-	import moment from 'moment';
+	import { formatLocalizedDateTime, formatRelativeTime as formatLocalizedRelativeTime } from '$lib/utils/dateFormatters';
 	import { modal } from '$lib/stores/modal';
 	import MarkdownValue from './widgets/inspector/MarkdownValue.svelte';
 	import { Button } from '$lib/components/ui/button';
@@ -154,16 +154,12 @@
 	function formatRelativeTime(ts) {
 		if (!ts || isNaN(new Date(ts).getTime())) return '';
 		now;
-		const m = moment(ts);
-		return m.isSame(moment(), 'day') ? m.fromNow() : m.calendar();
+		return formatLocalizedRelativeTime(ts, now);
 	}
 
 	function formatAbsoluteTime(ts) {
 		if (!ts || isNaN(new Date(ts).getTime())) return '';
-		return new Date(ts).toLocaleString(undefined, {
-			day: 'numeric', month: 'short', year: 'numeric',
-			hour: '2-digit', minute: '2-digit'
-		});
+		return formatLocalizedDateTime(ts);
 	}
 </script>
 
@@ -178,7 +174,7 @@
 			>
 				<span class="material-symbols-outlined subconscious-icon">neurology</span>
 				<span class="subconscious-summary-text">{subconsciousSummary(unit.subconscious_entities)}</span>
-				<span class="subconscious-tokens">~{estimateSubconsciousTokens(unit.subconscious_entities).toLocaleString()} tokens</span>
+				<span class="subconscious-tokens semantic-metadata">~{estimateSubconsciousTokens(unit.subconscious_entities).toLocaleString()} tokens</span>
 			</Button>
 		{/if}
 		<div class="message-bubble" class:streaming={isStreaming}>
@@ -281,7 +277,7 @@
 								</span>
 								<span class="tool-chip-name">{tc.reason ?? tc.name}</span>
 								{#if tc.duration_ms != null}
-									<span class="tool-chip-duration">{(tc.duration_ms / 1000).toFixed(1)}s</span>
+									<span class="tool-chip-duration semantic-metadata">{(tc.duration_ms / 1000).toFixed(1)}s</span>
 								{/if}
 							</Button>
 						{/each}
@@ -305,19 +301,19 @@
 			{/if}
 
 			<div class="message-bubble-footer">
-				<span class="message-time" title={formatAbsoluteTime(unit.timestamp)}>{formatRelativeTime(unit.timestamp)}</span>
+				<span class="message-time semantic-metadata" title={formatAbsoluteTime(unit.timestamp)}>{formatRelativeTime(unit.timestamp)}</span>
 				{#if unit.type === 'text' && unit.input_tokens != null}
-					<span class="token-pill" title="Input tokens">
+					<span class="token-pill semantic-metadata" title="Input tokens">
 						<span class="material-symbols-outlined token-pill-icon">arrow_upward</span>{(unit.input_tokens / 1000).toFixed(1)}k
 					</span>
 				{/if}
 				{#if unit.type === 'text' && unit.output_tokens != null}
-					<span class="token-pill" title="Output tokens">
+					<span class="token-pill semantic-metadata" title="Output tokens">
 						<span class="material-symbols-outlined token-pill-icon">arrow_downward</span>{unit.output_tokens.toLocaleString()}
 					</span>
 				{/if}
 				{#if unit.type === 'text' && unit.estimated_cost != null}
-					<span class="token-pill" title="Estimated cost">
+					<span class="token-pill semantic-metadata" title="Estimated cost">
 						<span class="material-symbols-outlined token-pill-icon">attach_money</span>{unit.estimated_cost < 0.01 ? '<$0.01' : '$' + unit.estimated_cost.toFixed(2)}
 					</span>
 				{/if}
@@ -523,20 +519,10 @@
 		margin-top: 2px;
 	}
 
-	.message-time {
-		font-size: 10px;
-		color: var(--color-neutral-disabled);
-		opacity: 0.7;
-		line-height: 1;
-	}
-
 	.token-pill {
 		display: inline-flex;
 		align-items: center;
 		gap: 2px;
-		font-size: 9px;
-		font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
-		color: var(--muted-foreground);
 		background: var(--muted);
 		border-radius: var(--radius);
 		padding: 1px 6px;
@@ -571,7 +557,7 @@
 		max-height: 200px;
 		overflow-y: auto;
 		color: color-mix(in srgb, var(--color-neutral) 70%, transparent);
-		font-family: monospace;
+		font-family: var(--font-family-app);
 	}
 
 	@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
@@ -617,8 +603,6 @@
 	:global([data-slot="button"].tool-chip-summary.pending .tool-chip-icon) { color: var(--color-transition); opacity: 1; animation: thinking-pulse 1.5s infinite ease-in-out; }
 
 	.tool-chip-duration {
-		font-size: 10px;
-		opacity: 0.5;
 		margin-left: 4px;
 		font-variant-numeric: tabular-nums;
 		white-space: nowrap;
@@ -629,7 +613,7 @@
 	.tool-chip-name {
 		font-size: 11px;
 		color: var(--color-neutral);
-		font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+		font-family: var(--font-family-app);
 	}
 
 	@keyframes thinking-pulse { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
@@ -661,8 +645,6 @@
 	}
 
 	.subconscious-tokens {
-		opacity: 0.5;
-		font-size: 9px;
 		white-space: nowrap;
 		margin-left: 2px;
 	}

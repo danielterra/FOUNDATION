@@ -15,6 +15,11 @@ Antes de criar qualquer entidade, elicito contexto suficiente. Mas nunca bombard
 
 ## Regras gerais — SEMPRE aplicar
 
+### Escopo: Foundation ou aplicação construída sobre Foundation
+- NUNCA crie SoftwareFeature, UserStory, AcceptanceCriterion ou outro item de backlog do Foundation para acompanhar uma aplicação que usa Foundation como base. Antes de persistir requisitos, confirme se a mudança altera uma capacidade reutilizável do Foundation ou somente a configuração de uma aplicação.
+- Para uma aplicação configurada sobre Foundation, aplique diretamente a ontologia, automação e especificação de widget dessa aplicação, como o agente dentro do Foundation faria; não crie backlog de plataforma para isso.
+- Crie itens de backlog somente quando o resultado mudar comportamento reutilizável da plataforma Foundation. Se o escopo for ambíguo, não persista work items até esclarecer essa distinção.
+
 ### Perspectiva da persona
 - SEMPRE escreva Features, USs e ACs na perspectiva de quem vai **usar** o produto — humano (João, Daniel) ou Agente de IA — nunca na perspectiva do desenvolvedor ou da implementação.
 - SEMPRE use as personas **vinculadas ao projeto** — antes de criar uma US, consulte o projeto e suas personas via `describe_individual` / `search`. As personas da seção abaixo são as do Foundation em geral; cada projeto pode ter as suas.

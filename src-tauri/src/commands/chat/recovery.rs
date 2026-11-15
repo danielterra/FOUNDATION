@@ -154,6 +154,13 @@ pub async fn run_conversation_from_current_state(
         return Ok(());
     }
 
+    crate::commands::openai_model_catalog::ensure_fresh_for_conversation(
+        app.clone(),
+        &executor,
+        &conversation_id,
+    )
+    .await?;
+
     let conv_id_for_config = conversation_id.clone();
     let app_for_config = app.clone();
     let agent_config = executor

@@ -25,6 +25,14 @@ function subProcessExtraHeight(node) {
     : 0
 }
 
+export function getNodeLayoutSize(node) {
+  const base = NODE_SIZES[node.data?.nodeType] ?? { width: 170, height: 55 }
+  return {
+    width: base.width,
+    height: base.height + subProcessExtraHeight(node) + STATUS_BADGE_HEIGHT,
+  }
+}
+
 function findBackEdges(nodes, edges) {
   const adj = new Map(nodes.map(n => [n.id, []]))
   const inDegree = new Map(nodes.map(n => [n.id, 0]))
@@ -65,9 +73,7 @@ export function applyDagreLayout(nodes, edges, direction = 'LR') {
   g.setDefaultEdgeLabel(() => ({}))
 
   for (const node of nodes) {
-    const base = NODE_SIZES[node.data?.nodeType] ?? { width: 170, height: 55 }
-    const size = { ...base, height: base.height + subProcessExtraHeight(node) }
-    g.setNode(node.id, { width: size.width, height: size.height + STATUS_BADGE_HEIGHT })
+    g.setNode(node.id, getNodeLayoutSize(node))
   }
   for (const edge of layoutEdges) {
     g.setEdge(edge.source, edge.target)
@@ -76,9 +82,8 @@ export function applyDagreLayout(nodes, edges, direction = 'LR') {
   dagre.layout(g)
 
   return nodes.map(node => {
-    const base = NODE_SIZES[node.data?.nodeType] ?? { width: 170, height: 55 }
-    const size = { ...base, height: base.height + subProcessExtraHeight(node) }
-    const totalHeight = size.height + STATUS_BADGE_HEIGHT
+    const size = getNodeLayoutSize(node)
+    const totalHeight = size.height
     const { x, y } = g.node(node.id)
     return { ...node, position: { x: x - size.width / 2, y: y - totalHeight / 2 } }
   })

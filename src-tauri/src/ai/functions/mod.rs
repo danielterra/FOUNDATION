@@ -777,10 +777,12 @@ fn add_widget_to_blackboard_tool(
     }
 
     let widget_type = resolve_widget_type(conn, &entity_iri, &requested_type);
+    let spec_template_iri =
+        crate::commands::widget::resolve_widget_spec_template(conn, &entity_iri, &widget_type);
 
     let valid_types = blackboard__list_widget_types(conn);
-    let default_size = match valid_types.into_iter().find(|t| t.id == widget_type) {
-        Some(t) => t.default_size,
+    let default_width = match valid_types.into_iter().find(|t| t.id == widget_type) {
+        Some(t) => t.default_width,
         None => {
             return ToolResult {
                 success: false,
@@ -798,9 +800,10 @@ fn add_widget_to_blackboard_tool(
         widget_type: widget_type.clone(),
         entity_id: entity_iri.clone(),
         position: Position { x: 100.0, y: 100.0 },
-        size: default_size,
+        width: default_width,
         window_state: WindowState::Normal,
         blackboard_iri: bb_iri,
+        spec_template_iri,
     };
 
     if let Err(e) = owl_insert_widget(conn, &widget) {

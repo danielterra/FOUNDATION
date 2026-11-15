@@ -1,9 +1,10 @@
 <script>
-  import { onMount, onDestroy, untrack } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { fly } from 'svelte/transition';
   import { cubicOut, cubicIn } from 'svelte/easing';
+  import { Button } from '$lib/components/ui/button';
   import InspectorWidget from './InspectorWidget.svelte';
   import MermaidWidget from './MermaidWidget.svelte';
   import ProcessStatusWidget from './ProcessStatusWidget.svelte';
@@ -19,6 +20,7 @@
   import AICallHistoryWidget from './AICallHistoryWidget.svelte';
   import EmailViewerWidget from './EmailViewerWidget.svelte';
   import JsonRenderWidget from './JsonRenderWidget.svelte';
+  import SemanticJsonRenderWidget from './SemanticJsonRenderWidget.svelte';
   import WidgetSidebar from './WidgetSidebar.svelte';
   import { openEntity } from '$lib/blackboard';
 
@@ -28,10 +30,9 @@
   const BASE_WIDGET_Z_INDEX = 100;
   const MAX_WIDGET_Z_INDEX = 9000;
   const WIDGET_FLY_DURATION = 600;
-  const WIDGET_BACKGROUND_SHADE_SCALE = 500;
-  const MIN_WIDGET_WIDTH = 200;
-  const MIN_WIDGET_HEIGHT = 100;
-  const CANVAS_PADDING = 3;
+  const MIN_CANVAS_SCALE = 0.3;
+  const MAX_CANVAS_SCALE = 2.5;
+  const CANVAS_SCALE_STEP = 0.1;
 
   let widgets = $state([]);
   let unlisteners = [];
@@ -39,47 +40,18 @@
   let managerDestroyed = false;
   let draggedWidget = $state(null);
   let dragOffset = $state({ x: 0, y: 0 });
-  let resizingWidget = $state(null);
-  let resizeStart = $state({ mouseX: 0, mouseY: 0, width: 0, height: 0 });
+  let panningCanvas = $state(false);
+  let panStart = $state({ mouseX: 0, mouseY: 0, cameraX: 0, cameraY: 0 });
+  let camera = $state({ x: 0, y: 0, scale: 1 });
   let topZIndex = $state(BASE_WIDGET_Z_INDEX);
   let viewportWidth = $state(0);
-  let viewportHeight = $state(0);
+  let canvasElement = $state(null);
   let reducedMotion = $state(false);
   let motionPreference = null;
-  const premaximizePosition = new Map();
-  const preminimizeState = new Map();
-  const widgetDefaultSize = new Map();
   const pendingEntityOpens = new Set();
   let widgetAnnouncement = $state('');
 
   const widgetTypeInfo = new Map();
-
-  function widgetBackgroundDarkness(y) {
-    return `${(1 - Math.exp(-Math.max(y, 0) / WIDGET_BACKGROUND_SHADE_SCALE)) * 100}%`;
-  }
-
-  function isOpenWidget(widget) {
-    return widget.window_state !== 'minimized';
-  }
-
-  function compareWidgetDepth(a, b) {
-    return a.zIndex - b.zIndex;
-  }
-
-  function widgetDepthScale(widget) {
-    const openWidgets = widgets.filter(isOpenWidget).sort(compareWidgetDepth);
-    if (openWidgets.length <= 1) return 1;
-
-    let depthIndex = 0;
-    for (let index = 0; index < openWidgets.length; index += 1) {
-      if (openWidgets[index].id === widget.id) {
-        depthIndex = index;
-        break;
-      }
-    }
-
-    return 0.3 + (depthIndex / (openWidgets.length - 1)) * 0.7;
-  }
 
   let entityResolutionByIri = $state(new Map());
 
@@ -117,45 +89,6 @@
       .catch(() => {});
   });
 
-  function constrainSize(size) {
-    const maxW = Math.max(MIN_WIDGET_WIDTH, viewportWidth);
-    const maxH = Math.max(MIN_WIDGET_HEIGHT, viewportHeight);
-    return {
-      width: Math.min(Math.max(size.width, MIN_WIDGET_WIDTH), maxW),
-      height: Math.min(Math.max(size.height, MIN_WIDGET_HEIGHT), maxH)
-    };
-  }
-
-  function constrainToBounds(position, size, displayHeight) {
-    const minX = CANVAS_PADDING;
-    const minY = CANVAS_PADDING;
-    const maxX = viewportWidth - size.width - CANVAS_PADDING;
-    const maxY = viewportHeight - (displayHeight ?? size.height) - CANVAS_PADDING;
-
-    return {
-      x: Math.max(minX, Math.min(maxX, position.x)),
-      y: Math.max(minY, Math.min(maxY, position.y))
-    };
-  }
-
-  function updateViewportSize() {
-    if (viewportWidth === 0 || viewportHeight === 0) return;
-    widgets = widgets.map(w => {
-      const constrainedSize = constrainSize(w.size);
-      if (constrainedSize.width !== w.size.width || constrainedSize.height !== w.size.height) {
-        invoke('widget_blackboard__update_widget_size', {
-          widgetId: w.id,
-          size: constrainedSize
-        }).catch(error => console.error('Failed to update widget size:', error));
-      }
-      return {
-        ...w,
-        size: constrainedSize,
-        position: constrainToBounds(w.position, constrainedSize, constrainedSize.height)
-      };
-    });
-  }
-
   async function loadWidgets(blackboardIri) {
     const requestId = ++widgetLoadRequestId;
     if (!blackboardIri) {
@@ -171,7 +104,6 @@
       }));
       topZIndex = Math.max(BASE_WIDGET_Z_INDEX, ...widgets.map(w => w.zIndex));
 
-      updateViewportSize();
     } catch (error) {
       if (requestId !== widgetLoadRequestId || blackboardIri !== activeBlackboardIri) return;
       console.error('Failed to load widgets:', error);
@@ -182,17 +114,41 @@
     loadWidgets(activeBlackboardIri);
   });
 
-  $effect(() => {
-    viewportWidth;
-    viewportHeight;
-    untrack(() => updateViewportSize());
-  });
-
   function bringToFront(widgetId) {
     topZIndex = Math.min(topZIndex + 1, MAX_WIDGET_Z_INDEX);
     widgets = widgets.map(w =>
       w.id === widgetId ? { ...w, zIndex: topZIndex } : w
     );
+  }
+
+  async function focusWidget(widgetId) {
+    await tick();
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+    const element = [...(canvasElement?.querySelectorAll('.widget-container') ?? [])]
+      .find(candidate => candidate.dataset.widgetId === widgetId);
+    const canvasRect = canvasElement?.getBoundingClientRect();
+    if (!element || !canvasRect) return;
+
+    const widgetWidth = element.offsetWidth;
+    const widgetHeight = element.offsetHeight;
+    if (!widgetWidth || !widgetHeight) return;
+
+    const margin = 32;
+    const availableWidth = Math.max(1, canvasRect.width - margin * 2);
+    const availableHeight = Math.max(1, canvasRect.height - margin * 2);
+    const scale = Math.max(
+      MIN_CANVAS_SCALE,
+      Math.min(MAX_CANVAS_SCALE, availableWidth / widgetWidth, availableHeight / widgetHeight)
+    );
+    const widget = widgets.find(candidate => candidate.id === widgetId);
+    if (!widget) return;
+
+    camera = {
+      scale,
+      x: canvasRect.width / 2 - (widget.position.x + widgetWidth / 2) * scale,
+      y: canvasRect.height / 2 - (widget.position.y + widgetHeight / 2) * scale
+    };
   }
 
   function entityOpenKey(entityIri) {
@@ -220,45 +176,14 @@
     }
   }
 
-  function startResize(event, widget) {
-    resizingWidget = widget;
-    resizeStart = {
-      mouseX: event.clientX,
-      mouseY: event.clientY,
-      width: widget.size.width,
-      height: widget.size.height
-    };
-    bringToFront(widget.id);
-    event.preventDefault();
-    event.stopPropagation();
-  }
-
-  function onResize(event) {
-    if (!resizingWidget) return;
-    const dx = event.clientX - resizeStart.mouseX;
-    const dy = event.clientY - resizeStart.mouseY;
-    const newWidth = Math.max(MIN_WIDGET_WIDTH, resizeStart.width + dx);
-    const newHeight = Math.max(MIN_WIDGET_HEIGHT, resizeStart.height + dy);
-    widgets = widgets.map(w =>
-      w.id === resizingWidget.id ? { ...w, size: { width: newWidth, height: newHeight } } : w
-    );
-  }
-
-  function stopResize() {
-    if (!resizingWidget) return;
-    const widget = widgets.find(w => w.id === resizingWidget.id);
-    resizingWidget = null;
-    if (widget) resizeWidget(widget.id, widget.size.width, widget.size.height);
-  }
-
   function startDrag(event, widget) {
-    if (!event.target.closest('.widget-header')) return;
-    if (event.target.closest('button')) return;
+    if (event.button !== 0 || !event.target.closest('.widget-header')) return;
+    if (event.target.closest('button, a, input, textarea, select, [contenteditable="true"], [role="button"], .header-actions')) return;
 
     draggedWidget = widget;
     dragOffset = {
-      x: event.clientX - widget.position.x,
-      y: event.clientY - widget.position.y
+      x: (event.clientX - camera.x) / camera.scale - widget.position.x,
+      y: (event.clientY - camera.y) / camera.scale - widget.position.y
     };
     bringToFront(widget.id);
 
@@ -266,21 +191,31 @@
   }
 
   function onDrag(event) {
-    if (resizingWidget) { onResize(event); return; }
+    if (panningCanvas) {
+      camera = {
+        ...camera,
+        x: panStart.cameraX + event.clientX - panStart.mouseX,
+        y: panStart.cameraY + event.clientY - panStart.mouseY
+      };
+      return;
+    }
     if (!draggedWidget) return;
 
-    const newX = event.clientX - dragOffset.x;
-    const newY = event.clientY - dragOffset.y;
+    const newX = (event.clientX - camera.x) / camera.scale - dragOffset.x;
+    const newY = (event.clientY - camera.y) / camera.scale - dragOffset.y;
 
     widgets = widgets.map(w =>
       w.id === draggedWidget.id
-        ? { ...w, position: constrainToBounds({ x: newX, y: newY }, w.size, w.size.height) }
+        ? { ...w, position: { x: newX, y: newY } }
         : w
     );
   }
 
   function stopDrag() {
-    if (resizingWidget) { stopResize(); return; }
+    if (panningCanvas) {
+      panningCanvas = false;
+      return;
+    }
     if (!draggedWidget) return;
 
     const widget = widgets.find(w => w.id === draggedWidget.id);
@@ -296,18 +231,6 @@
     }
   }
 
-  function resizeWidget(widgetId, width, height) {
-    widgets = widgets.map(w =>
-      w.id === widgetId ? { ...w, size: { width, height } } : w
-    );
-    invoke('widget_blackboard__update_widget_size', {
-      widgetId,
-      size: { width, height }
-    }).catch(error => {
-      console.error('Failed to update widget size:', error);
-    });
-  }
-
   function moveWidget(widgetId, position) {
     widgets = widgets.map(w =>
       w.id === widgetId ? { ...w, position } : w
@@ -318,6 +241,74 @@
     }).catch(error => {
       console.error('Failed to update widget position:', error);
     });
+  }
+
+  function startCanvasPan(event) {
+    if (event.button === 0 && event.target.closest('.canvas-controls')) return;
+    if (event.button === 0 && event.target.closest('.widget-container')) return;
+    if (event.button !== 0 && event.button !== 1) return;
+    panningCanvas = true;
+    panStart = { mouseX: event.clientX, mouseY: event.clientY, cameraX: camera.x, cameraY: camera.y };
+    event.preventDefault();
+  }
+
+  function zoomAt(clientX, clientY, nextScale) {
+    const rect = canvasElement?.getBoundingClientRect();
+    if (!rect) return;
+    const anchorX = clientX - rect.left;
+    const anchorY = clientY - rect.top;
+    const scale = Math.max(MIN_CANVAS_SCALE, Math.min(MAX_CANVAS_SCALE, nextScale));
+    const worldX = (anchorX - camera.x) / camera.scale;
+    const worldY = (anchorY - camera.y) / camera.scale;
+    camera = { x: anchorX - worldX * scale, y: anchorY - worldY * scale, scale };
+  }
+
+  function changeZoom(direction) {
+    const rect = canvasElement?.getBoundingClientRect();
+    if (!rect) return;
+    zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, camera.scale + direction * CANVAS_SCALE_STEP);
+  }
+
+  function onCanvasWheel(event) {
+    event.preventDefault();
+    if (event.ctrlKey || event.metaKey) {
+      zoomAt(event.clientX, event.clientY, camera.scale * Math.exp(-event.deltaY * 0.002));
+      return;
+    }
+    camera = { ...camera, x: camera.x - event.deltaX, y: camera.y - event.deltaY };
+  }
+
+  function onCanvasKeydown(event) {
+    if (event.target !== event.currentTarget) return;
+    const panStep = event.shiftKey ? 48 : 16;
+    const movement = {
+      ArrowLeft: { x: panStep, y: 0 }, ArrowRight: { x: -panStep, y: 0 },
+      ArrowUp: { x: 0, y: panStep }, ArrowDown: { x: 0, y: -panStep }
+    }[event.key];
+    if (movement) {
+      camera = { ...camera, x: camera.x + movement.x, y: camera.y + movement.y };
+      event.preventDefault();
+    } else if (event.key === '+' || event.key === '=') {
+      changeZoom(1);
+      event.preventDefault();
+    } else if (event.key === '-') {
+      changeZoom(-1);
+      event.preventDefault();
+    }
+  }
+
+  function moveWidgetByKeyboard(event, widget) {
+    if (event.target !== event.currentTarget || !event.altKey) return;
+    const step = event.shiftKey ? 40 : 10;
+    const movement = {
+      ArrowLeft: { x: -step, y: 0 }, ArrowRight: { x: step, y: 0 },
+      ArrowUp: { x: 0, y: -step }, ArrowDown: { x: 0, y: step }
+    }[event.key];
+    if (!movement) return;
+    event.preventDefault();
+    const position = { x: widget.position.x + movement.x, y: widget.position.y + movement.y };
+    moveWidget(widget.id, position);
+    bringToFront(widget.id);
   }
 
   export function minimizeAll() {
@@ -334,25 +325,7 @@
 
   function updateWidgetWindowState(widgetId, windowState) {
     const widget = widgets.find(w => w.id === widgetId);
-    const prevState = widget?.window_state;
-
-    if (windowState === 'maximized' && widget) {
-      premaximizePosition.set(widgetId, { ...widget.position });
-      resizeWidget(widgetId, viewportWidth, viewportHeight);
-      moveWidget(widgetId, { x: 0, y: 0 });
-    } else if (windowState === 'minimized' && widget) {
-      preminimizeState.set(widgetId, { position: { ...widget.position }, size: { ...widget.size } });
-    } else if (windowState === 'normal' && prevState === 'maximized' && widget) {
-      const defaultSize = widgetDefaultSize.get(widget.widget_type);
-      const savedPos = premaximizePosition.get(widgetId);
-      if (defaultSize) {
-        resizeWidget(widgetId, defaultSize.width, defaultSize.height);
-      }
-      if (savedPos) {
-        moveWidget(widgetId, savedPos);
-        premaximizePosition.delete(widgetId);
-      }
-    } else if (windowState === 'normal' && prevState === 'minimized' && widget) {
+    if (windowState === 'normal' && widget?.window_state === 'minimized') {
       restoreFromMinimized(widgetId);
       return;
     }
@@ -372,16 +345,6 @@
     const widget = widgets.find(w => w.id === widgetId);
     if (!widget) return;
 
-    const saved = preminimizeState.get(widgetId);
-    if (saved) {
-      resizeWidget(widgetId, saved.size.width, saved.size.height);
-      moveWidget(widgetId, saved.position);
-      preminimizeState.delete(widgetId);
-    } else {
-      const defaultSize = widgetDefaultSize.get(widget.widget_type);
-      if (defaultSize) resizeWidget(widgetId, defaultSize.width, defaultSize.height);
-    }
-
     widgets = widgets.map(w =>
       w.id === widgetId ? { ...w, window_state: 'normal' } : w
     );
@@ -392,6 +355,7 @@
       console.error('Failed to update widget window state:', error);
     });
     bringToFront(widgetId);
+    focusWidget(widgetId);
   }
 
   function onSidebarSelect(widgetId) {
@@ -401,6 +365,7 @@
       restoreFromMinimized(widgetId);
     } else {
       bringToFront(widgetId);
+      focusWidget(widgetId);
     }
   }
 
@@ -418,14 +383,17 @@
     if (existingIdx >= 0) {
       const existing = widgets[existingIdx];
       if (existing.window_state === 'minimized') restoreFromMinimized(w.id);
-      else bringToFront(w.id);
+      else {
+        bringToFront(w.id);
+        focusWidget(w.id);
+      }
       return;
     }
 
     topZIndex = Math.min(topZIndex + 1, MAX_WIDGET_Z_INDEX);
     const newWidget = { ...w, zIndex: topZIndex };
-    newWidget.position = constrainToBounds(newWidget.position, newWidget.size, newWidget.size.height);
     widgets = [...widgets, newWidget];
+    focusWidget(w.id);
   }
 
   function handleWidgetRemoved(event) {
@@ -448,7 +416,6 @@
   }
 
   async function initializeWidgetManager() {
-    updateViewportSize();
     motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
     updateMotionPreference();
     motionPreference.addEventListener('change', updateMotionPreference);
@@ -467,7 +434,6 @@
     try {
       const defs = await invoke('widget_blackboard__list_widget_definitions', { classIri: null });
       for (const definition of defs) {
-        widgetDefaultSize.set(definition.widget_type, definition.default_size);
         widgetTypeInfo.set(definition.widget_type, {
           description: definition.description,
           icon: definition.icon,
@@ -481,6 +447,7 @@
 
     document.addEventListener('mousemove', onDrag);
     document.addEventListener('mouseup', stopDrag);
+    canvasElement?.addEventListener('wheel', onCanvasWheel, { passive: false });
   }
 
   function cleanupWidgetManager() {
@@ -489,6 +456,7 @@
     removeListeners(unlisteners);
     document.removeEventListener('mousemove', onDrag);
     document.removeEventListener('mouseup', stopDrag);
+    canvasElement?.removeEventListener('wheel', onCanvasWheel);
   }
 
   onMount(initializeWidgetManager);
@@ -506,37 +474,53 @@
       {hasMinimizedWidgets}
     />
   {/if}
-  <div class="widget-canvas" bind:clientWidth={viewportWidth} bind:clientHeight={viewportHeight}>
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <div
+    class="widget-canvas"
+    class:panning={panningCanvas}
+    bind:this={canvasElement}
+    bind:clientWidth={viewportWidth}
+    onmousedown={startCanvasPan}
+    onkeydown={onCanvasKeydown}
+    style="--canvas-scale: {camera.scale}; --canvas-pan-x: {camera.x}px; --canvas-pan-y: {camera.y}px;"
+    role="application"
+    tabindex="0"
+    aria-label="Lousa. Use as setas para mover e mais ou menos para ajustar o zoom."
+  >
     <div class="sr-only" aria-live="polite" aria-atomic="true">{widgetAnnouncement}</div>
+    <div class="canvas-controls" aria-label="Controles da lousa">
+      <Button variant="ghost" size="icon-touch" class="canvas-control" aria-label="Diminuir zoom" title="Diminuir zoom" disabled={camera.scale <= MIN_CANVAS_SCALE} onclick={() => changeZoom(-1)}>
+        <span class="material-symbols-outlined">remove</span>
+      </Button>
+      <span class="canvas-scale" aria-live="polite">{Math.round(camera.scale * 100)}%</span>
+      <Button variant="ghost" size="icon-touch" class="canvas-control" aria-label="Aumentar zoom" title="Aumentar zoom" disabled={camera.scale >= MAX_CANVAS_SCALE} onclick={() => changeZoom(1)}>
+        <span class="material-symbols-outlined">add</span>
+      </Button>
+      <Button variant="ghost" size="icon-touch" class="canvas-control" aria-label="Restaurar zoom" title="Restaurar zoom" onclick={() => { camera = { ...camera, x: 0, y: 0, scale: 1 }; }}>
+        <span class="material-symbols-outlined">center_focus_strong</span>
+      </Button>
+    </div>
+    <div class="widget-world" style="transform: translate({camera.x}px, {camera.y}px) scale({camera.scale});">
 {#each widgets.filter(w => w.window_state !== 'minimized') as widget (widget.id)}
   <div
     class="widget-container"
+    data-widget-id={widget.id}
     class:dragging={draggedWidget?.id === widget.id}
-    class:resizing={resizingWidget?.id === widget.id}
     class:is-front={widget.zIndex === topZIndex}
     style:left="{widget.position.x}px"
     style:top="{widget.position.y}px"
-    style:width="{widget.size.width}px"
-    style:height="{widget.size.height}px"
+    style:width="{widget.width}px"
     style:z-index={widget.zIndex}
-    style:--widget-background-darkness={widgetBackgroundDarkness(widget.position.y)}
-    style:--widget-depth-scale={widgetDepthScale(widget)}
     onmousedown={(e) => startDrag(e, widget)}
     onclick={() => bringToFront(widget.id)}
-    onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && bringToFront(widget.id)}
+    onkeydown={(e) => { moveWidgetByKeyboard(e, widget); if (e.key === 'Enter' || e.key === ' ') bringToFront(widget.id); }}
     role="dialog"
     tabindex="0"
     aria-label="Widget"
     in:fly={{ x: -viewportWidth, duration: reducedMotion ? 0 : WIDGET_FLY_DURATION, opacity: 1, easing: cubicOut }}
     out:fly={{ x: -viewportWidth, duration: reducedMotion ? 0 : WIDGET_FLY_DURATION, opacity: 1, easing: cubicIn }}
   >
-    <div
-      class="resize-handle"
-      role="button"
-      tabindex="0"
-      onmousedown={(e) => startResize(e, widget)}
-      onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && startResize(e, widget)}
-    ></div>
     {#if widget.widget_type === 'inspector'}
       <InspectorWidget entityId={widget.entity_id} widgetId={widget.id} refreshKey={widget.refreshKey ?? 0} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} onOpenEntityInspector={openReferencedEntity} conversationIri={activeConversationIri} />
     {:else if widget.widget_type === 'mermaid'}
@@ -567,9 +551,12 @@
       <EmailViewerWidget widgetId={widget.id} entityId={widget.entity_id} conversationIri={activeConversationIri} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {:else if widget.widget_type === 'json_render'}
       <JsonRenderWidget widgetId={widget.id} entityId={widget.entity_id} conversationIri={activeConversationIri} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
+    {:else if widget.widget_type === 'semantic_json_render'}
+      <SemanticJsonRenderWidget widgetId={widget.id} entityId={widget.entity_id} specTemplateIri={widget.spec_template_iri ?? null} conversationIri={activeConversationIri} windowState={widget.window_state ?? 'normal'} onWindowStateChange={(state) => updateWidgetWindowState(widget.id, state)} />
     {/if}
   </div>
 {/each}
+    </div>
   </div>
 </div>
 
@@ -603,19 +590,68 @@
     min-width: 0;
     background-image: radial-gradient(var(--color-hud-grid-dot) var(--size-hud-grid-dot), transparent var(--size-hud-grid-dot));
     background-size: var(--size-hud-grid) var(--size-hud-grid);
+    background-position: var(--canvas-pan-x) var(--canvas-pan-y);
+    overflow: hidden;
+    cursor: grab;
+    touch-action: none;
+  }
+
+  .widget-canvas:focus-visible {
+    outline: var(--size-hud-frame-line) solid var(--color-selection);
+    outline-offset: calc(-1 * var(--size-hud-frame-line));
+  }
+
+  .widget-canvas.panning {
+    cursor: grabbing;
+  }
+
+  .canvas-controls {
+    position: absolute;
+    z-index: 10000;
+    top: var(--spacing-widget-inset);
+    right: var(--spacing-widget-inset);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-inline-tight);
+    padding: var(--spacing-inline-tight);
+    background: color-mix(in srgb, var(--color-surface-1) 92%, transparent);
+    backdrop-filter: blur(var(--blur-widget-surface));
+  }
+
+  .canvas-scale {
+    min-width: 4ch;
+    color: var(--text-metadata);
+    font-family: var(--font-mono);
+    font-size: var(--type-caption-compact);
+    text-align: center;
+  }
+
+  :global([data-slot="button"].canvas-control) {
+    color: var(--color-interactive);
+  }
+
+  :global([data-slot="button"].canvas-control:disabled) {
+    color: var(--color-interactive-disabled);
+  }
+
+  .widget-world {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    min-height: 100%;
+    transform-origin: 0 0;
+    will-change: transform;
+    pointer-events: none;
   }
 
   .widget-container {
     position: absolute;
-    transform: scale(var(--widget-depth-scale));
-    transform-origin: center center;
     transition:
-      height 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-      transform 560ms cubic-bezier(0.16, 1, 0.3, 1),
-      opacity 560ms cubic-bezier(0.16, 1, 0.3, 1),
       box-shadow 560ms cubic-bezier(0.16, 1, 0.3, 1);
-    opacity: var(--widget-depth-scale);
     box-shadow: 0px 0px 10px var(--background);
+    pointer-events: auto;
+    height: max-content;
+    min-height: max-content;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -627,45 +663,16 @@
   .widget-container.is-front {
     --widget-selection-accent: var(--color-selection);
     --widget-selection-glow: var(--color-selection-glow);
-    transform: translateY(-10px) scale(1);
     box-shadow: 0 16px 40px color-mix(in srgb, var(--color-black) 58%, transparent);
   }
 
-  .widget-container.dragging,
-  .widget-container.resizing {
+  .widget-container.dragging {
     transition: none;
   }
 
   .widget-container.dragging {
     cursor: grabbing;
     box-shadow: 0 12px 48px color-mix(in srgb, var(--color-black) 60%, transparent);
-  }
-
-  .resize-handle {
-    position: absolute;
-    bottom: 0;
-    right: 0;
-    width: 18px;
-    height: 18px;
-    cursor: nwse-resize;
-    z-index: 10;
-  }
-
-  .resize-handle::after {
-    content: '';
-    position: absolute;
-    bottom: 4px;
-    right: 4px;
-    width: 0;
-    height: 0;
-    border-style: solid;
-    border-width: 0 0 9px 9px;
-    border-color: transparent transparent color-mix(in srgb, var(--color-white) 25%, transparent) transparent;
-    transition: border-color 0.15s;
-  }
-
-  .resize-handle:hover::after {
-    border-color: transparent transparent color-mix(in srgb, var(--color-interactive) 70%, transparent) transparent;
   }
 
   .widget-container :global(.widget-header) {

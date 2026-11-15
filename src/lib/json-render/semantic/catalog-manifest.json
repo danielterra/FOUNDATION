@@ -1,0 +1,1149 @@
+{
+  "version": 2,
+  "source": "src/lib/json-render/semantic/catalog.ts",
+  "componentIds": [
+    "Decision",
+    "ValueEntry",
+    "Action",
+    "Information",
+    "Details",
+    "Confirmation",
+    "Comparison",
+    "Distribution"
+  ],
+  "actionIds": [
+    "announce",
+    "perform",
+    "setState",
+    "pushState",
+    "removeState",
+    "validateForm"
+  ],
+  "components": [
+    {
+      "id": "Decision",
+      "contractVersion": 1,
+      "description": "Ajuda a escolher uma ou mais alternativas pelo domínio, volume, complexidade e fatores de comparação.",
+      "propsSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "selectionMode": {
+            "type": "string",
+            "enum": [
+              "single",
+              "multiple"
+            ]
+          },
+          "complexity": {
+            "type": "string",
+            "enum": [
+              "simple",
+              "complex"
+            ]
+          },
+          "groupName": {
+            "type": "string"
+          },
+          "candidates": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "disabled": {
+                  "type": "boolean"
+                },
+                "comparison": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "value",
+                "title"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "selected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "comparisonFactors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "consequence": {
+            "type": "string"
+          },
+          "reversibility": {
+            "type": "string",
+            "enum": [
+              "reversible",
+              "hard_to_reverse",
+              "irreversible"
+            ]
+          }
+        },
+        "required": [
+          "title",
+          "selectionMode",
+          "complexity",
+          "candidates"
+        ],
+        "additionalProperties": false
+      },
+      "slots": []
+    },
+    {
+      "id": "ValueEntry",
+      "contractVersion": 2,
+      "description": "Apresenta ou coleta um valor respeitando tipo, unidade, validação, sensibilidade e editabilidade.",
+      "propsSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "labelVisible": {
+            "type": "boolean"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "cardinality": {
+            "type": "string",
+            "enum": [
+              "single",
+              "multiple"
+            ]
+          },
+          "valueType": {
+            "type": "string",
+            "enum": [
+              "text",
+              "email",
+              "number",
+              "boolean",
+              "date",
+              "date_time",
+              "currency",
+              "percentage",
+              "url",
+              "code",
+              "markdown",
+              "html",
+              "query_config",
+              "recurrence_rule"
+            ]
+          },
+          "language": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "placeholder": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          },
+          "validationMessage": {
+            "type": "string"
+          },
+          "valid": {
+            "type": "boolean"
+          },
+          "sensitive": {
+            "type": "boolean"
+          },
+          "editable": {
+            "default": true,
+            "type": "boolean"
+          },
+          "required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "label",
+          "valueType",
+          "editable"
+        ],
+        "additionalProperties": false,
+        "x-foundation-element-bindings": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "value": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "const": "entity",
+                  "description": "Lê da entidade declarada em foundation:rendersEntity."
+                },
+                "propertyIri": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "IRI da propriedade da ontologia lida no runtime."
+                }
+              },
+              "required": [
+                "source",
+                "propertyIri"
+              ]
+            }
+          },
+          "description": "Bindings declarados no elemento JSON, ao lado de type/props. O valor é lido da entidade em foundation:rendersEntity e nunca copiado para specSource."
+        }
+      },
+      "slots": []
+    },
+    {
+      "id": "Action",
+      "contractVersion": 1,
+      "description": "Expõe uma ação de acordo com sua prioridade, frequência, impacto, disponibilidade e resultado.",
+      "propsSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "icon": {
+            "type": "string"
+          },
+          "objective": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "primary",
+              "supporting",
+              "destructive"
+            ]
+          },
+          "frequency": {
+            "type": "string",
+            "enum": [
+              "routine",
+              "occasional",
+              "rare"
+            ]
+          },
+          "impact": {
+            "type": "string"
+          },
+          "reversibility": {
+            "type": "string",
+            "enum": [
+              "reversible",
+              "hard_to_reverse",
+              "irreversible"
+            ]
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "progress": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "icon"
+        ],
+        "additionalProperties": false
+      },
+      "slots": []
+    },
+    {
+      "id": "Information",
+      "contractVersion": 0,
+      "description": "Organiza informação relacionada em linhas e colunas deliberadas. O primeiro filho recebe hierarquia visual primária, os grupos usam uma superfície semântica compartilhada, descrições ficam subordinadas e um único valor ligado usa o título como rótulo.",
+      "propsSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "primary",
+              "supporting",
+              "supplemental"
+            ]
+          },
+          "urgency": {
+            "type": "string",
+            "enum": [
+              "routine",
+              "attention",
+              "urgent"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "layout": {
+            "type": "object",
+            "properties": {
+              "columns": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 6
+              }
+            },
+            "required": [
+              "columns"
+            ],
+            "additionalProperties": false
+          },
+          "facts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "unit": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "label",
+                "value"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "relationships": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "label",
+                "value"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "title",
+          "layout"
+        ],
+        "additionalProperties": false,
+        "x-foundation-element-bindings": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "facts": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "const": "entity",
+                  "description": "Lê da entidade declarada em foundation:rendersEntity."
+                },
+                "propertyIri": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "IRI da propriedade da ontologia lida no runtime."
+                }
+              },
+              "required": [
+                "source",
+                "propertyIri"
+              ]
+            },
+            "relationships": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "const": "entity",
+                  "description": "Lê da entidade declarada em foundation:rendersEntity."
+                },
+                "propertyIri": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "IRI da propriedade da ontologia lida no runtime."
+                }
+              },
+              "required": [
+                "source",
+                "propertyIri"
+              ]
+            }
+          },
+          "description": "Bindings declarados no elemento JSON, ao lado de type/props. O valor é lido da entidade em foundation:rendersEntity e nunca copiado para specSource."
+        }
+      },
+      "slots": [
+        "default"
+      ]
+    },
+    {
+      "id": "Details",
+      "contractVersion": 2,
+      "description": "Revela informação complementar sob demanda sem perder o resumo e o contexto.",
+      "propsSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "relevance": {
+            "type": "string"
+          },
+          "details": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "label",
+                "value"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "initiallyExpanded": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "additionalProperties": false,
+        "x-foundation-element-bindings": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "details": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "const": "entity",
+                  "description": "Lê da entidade declarada em foundation:rendersEntity."
+                },
+                "propertyIri": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "IRI da propriedade da ontologia lida no runtime."
+                }
+              },
+              "required": [
+                "source",
+                "propertyIri"
+              ]
+            }
+          },
+          "description": "Bindings declarados no elemento JSON, ao lado de type/props. O valor é lido da entidade em foundation:rendersEntity e nunca copiado para specSource."
+        }
+      },
+      "slots": []
+    },
+    {
+      "id": "Confirmation",
+      "contractVersion": 1,
+      "description": "Torna explícita a consequência antes de confirmar ou cancelar uma ação.",
+      "propsSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "consequence": {
+            "type": "string"
+          },
+          "impact": {
+            "type": "string"
+          },
+          "reversibility": {
+            "type": "string",
+            "enum": [
+              "reversible",
+              "hard_to_reverse",
+              "irreversible"
+            ]
+          },
+          "confirmLabel": {
+            "type": "string"
+          },
+          "cancelLabel": {
+            "type": "string"
+          },
+          "requiresConfirmation": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "action",
+          "consequence",
+          "reversibility",
+          "requiresConfirmation"
+        ],
+        "additionalProperties": false
+      },
+      "slots": []
+    },
+    {
+      "id": "Comparison",
+      "contractVersion": 2,
+      "description": "Compara valores de períodos equivalentes com barras pareadas em escala comum, valores, variação e interpretação favorável, desfavorável ou neutra; omite comparação quando período, unidade ou baseline não permitem uma leitura válida.",
+      "propsSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "metric": {
+            "type": "string"
+          },
+          "currentPeriod": {
+            "type": "string"
+          },
+          "referencePeriod": {
+            "type": "string"
+          },
+          "favorableDirection": {
+            "type": "string",
+            "enum": [
+              "higher",
+              "lower",
+              "neutral"
+            ]
+          },
+          "unavailableBaselineMessage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "metric",
+          "currentPeriod",
+          "referencePeriod",
+          "favorableDirection"
+        ],
+        "additionalProperties": false,
+        "x-foundation-element-bindings": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "current": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "const": "entity",
+                  "description": "Lê da entidade declarada em foundation:rendersEntity."
+                },
+                "propertyIri": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "IRI da propriedade da ontologia lida no runtime."
+                }
+              },
+              "required": [
+                "source",
+                "propertyIri"
+              ]
+            },
+            "reference": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "const": "entity",
+                  "description": "Lê da entidade declarada em foundation:rendersEntity."
+                },
+                "propertyIri": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "IRI da propriedade da ontologia lida no runtime."
+                }
+              },
+              "required": [
+                "source",
+                "propertyIri"
+              ]
+            },
+            "periodStart": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "const": "entity",
+                  "description": "Lê da entidade declarada em foundation:rendersEntity."
+                },
+                "propertyIri": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "IRI da propriedade da ontologia lida no runtime."
+                }
+              },
+              "required": [
+                "source",
+                "propertyIri"
+              ]
+            },
+            "periodEnd": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "const": "entity",
+                  "description": "Lê da entidade declarada em foundation:rendersEntity."
+                },
+                "propertyIri": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "IRI da propriedade da ontologia lida no runtime."
+                }
+              },
+              "required": [
+                "source",
+                "propertyIri"
+              ]
+            }
+          },
+          "description": "Bindings declarados no elemento JSON, ao lado de type/props. O valor é lido da entidade em foundation:rendersEntity e nunca copiado para specSource."
+        }
+      },
+      "slots": []
+    },
+    {
+      "id": "Distribution",
+      "contractVersion": 2,
+      "description": "Agrupa valores numéricos projetados de uma coleção por valores literais ou referências projetadas, contabiliza itens sem agrupamento e informa total e cobertura da coleção paginada.",
+      "propsSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "emptyMessage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "additionalProperties": false,
+        "x-foundation-element-bindings": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "collection": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "object",
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "const": "entity"
+                },
+                "propertyIri": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "projections": {
+                  "type": "object",
+                  "properties": {
+                    "measure": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "groupBy": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "measure",
+                    "groupBy"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "source",
+                "propertyIri",
+                "projections"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "description": "Bindings declarados no elemento JSON, ao lado de type/props. O valor é lido da entidade em foundation:rendersEntity e nunca copiado para specSource."
+        }
+      },
+      "slots": []
+    }
+  ],
+  "actions": [
+    {
+      "id": "announce",
+      "description": "Apresenta uma mensagem local no widget.",
+      "paramsSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "perform",
+      "description": "Executa uma ação local explicitamente conectada pelo widget.",
+      "paramsSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "setState",
+      "description": "Atualiza estado local do widget.",
+      "paramsSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "statePath": {
+            "type": "string"
+          },
+          "value": {}
+        },
+        "required": [
+          "statePath",
+          "value"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "pushState",
+      "description": "Adiciona valor ao estado local do widget.",
+      "paramsSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "statePath": {
+            "type": "string"
+          },
+          "value": {}
+        },
+        "required": [
+          "statePath",
+          "value"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "removeState",
+      "description": "Remove valor do estado local do widget.",
+      "paramsSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "statePath": {
+            "type": "string"
+          },
+          "index": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "statePath",
+          "index"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "validateForm",
+      "description": "Valida formulário local.",
+      "paramsSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "formPath": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "formPath"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "examples": {
+    "Decision": {
+      "root": "model-choice",
+      "elements": {
+        "model-choice": {
+          "type": "Decision",
+          "children": [],
+          "props": {
+            "title": "Modelo de IA",
+            "description": "Escolha pelo uso e pelos fatores de comparação.",
+            "selectionMode": "single",
+            "complexity": "complex",
+            "candidates": [
+              {
+                "value": "fast",
+                "title": "Rápido",
+                "description": "Responde depressa",
+                "comparison": {
+                  "Preço": "Baixo",
+                  "Contexto": "Médio"
+                }
+              },
+              {
+                "value": "capable",
+                "title": "Mais capaz",
+                "description": "Bom para análise",
+                "comparison": {
+                  "Preço": "Médio",
+                  "Contexto": "Alto"
+                }
+              }
+            ],
+            "selected": {
+              "$bindState": "/selectedModel"
+            },
+            "comparisonFactors": [
+              "Preço",
+              "Contexto"
+            ],
+            "consequence": "Usado nas próximas conversas."
+          }
+        }
+      },
+      "state": {
+        "selectedModel": "capable"
+      }
+    },
+    "ValueEntry": {
+      "root": "amount",
+      "elements": {
+        "amount": {
+          "type": "ValueEntry",
+          "children": [],
+          "props": {
+            "label": "Valor mensal",
+            "value": {
+              "$bindState": "/monthlyAmount"
+            },
+            "valueType": "currency",
+            "unit": "BRL",
+            "valid": true,
+            "editable": true
+          }
+        }
+      },
+      "state": {
+        "monthlyAmount": "1200"
+      }
+    },
+    "Action": {
+      "root": "sync",
+      "elements": {
+        "sync": {
+          "type": "Action",
+          "children": [],
+          "props": {
+            "label": "Sincronizar agora",
+            "icon": "sync",
+            "objective": "Buscar novos dados da conta.",
+            "priority": "primary",
+            "frequency": "occasional",
+            "available": true
+          },
+          "on": {
+            "press": {
+              "action": "announce",
+              "params": {
+                "message": "A sincronização foi solicitada."
+              }
+            }
+          }
+        }
+      }
+    },
+    "Information": {
+      "root": "account-overview",
+      "elements": {
+        "account-overview": {
+          "type": "Information",
+          "children": [
+            "account-balance",
+            "account-status"
+          ],
+          "props": {
+            "title": "Conta principal",
+            "summary": "Visão organizada em duas colunas.",
+            "layout": {
+              "columns": 2
+            }
+          }
+        },
+        "account-balance": {
+          "type": "Information",
+          "children": [],
+          "props": {
+            "title": "Saldo atual",
+            "layout": {
+              "columns": 1
+            },
+            "facts": [
+              {
+                "label": "Disponível",
+                "value": "R$ 4.250,00"
+              }
+            ]
+          }
+        },
+        "account-status": {
+          "type": "Information",
+          "children": [],
+          "props": {
+            "title": "Estado da conta",
+            "layout": {
+              "columns": 1
+            },
+            "facts": [
+              {
+                "label": "Última sincronização",
+                "value": "Hoje, 10:30"
+              },
+              {
+                "label": "Instituição",
+                "value": "Banco local"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "Details": {
+      "root": "transaction",
+      "elements": {
+        "transaction": {
+          "type": "Details",
+          "children": [],
+          "props": {
+            "title": "Transação",
+            "summary": "Compra no mercado",
+            "relevance": "Detalhes para conferência",
+            "details": [
+              {
+                "label": "Data",
+                "value": "05/11/2026"
+              },
+              {
+                "label": "Valor",
+                "value": "R$ 82,40"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "Confirmation": {
+      "root": "delete",
+      "elements": {
+        "delete": {
+          "type": "Confirmation",
+          "children": [],
+          "props": {
+            "action": "Excluir esta entidade",
+            "consequence": "Os dados vinculados serão removidos.",
+            "impact": "A ação não pode ser desfeita.",
+            "reversibility": "irreversible"
+          },
+          "on": {
+            "confirm": {
+              "action": "announce",
+              "params": {
+                "message": "Consequência confirmada no preview local."
+              }
+            },
+            "cancel": {
+              "action": "announce",
+              "params": {
+                "message": "Confirmação cancelada sem alterar dados."
+              }
+            }
+          }
+        }
+      }
+    },
+    "Comparison": {
+      "root": "monthly-income-comparison",
+      "elements": {
+        "monthly-income-comparison": {
+          "type": "Comparison",
+          "children": [],
+          "props": {
+            "title": "Receita realizada",
+            "metric": "Receita",
+            "currentPeriod": "Mês atual até hoje",
+            "referencePeriod": "Mesmo intervalo do mês anterior",
+            "favorableDirection": "higher"
+          },
+          "bindings": {
+            "current": {
+              "source": "entity",
+              "propertyIri": "foundation:totalActualIncome"
+            },
+            "reference": {
+              "source": "entity",
+              "propertyIri": "foundation:previousMonthActualIncome"
+            },
+            "periodStart": {
+              "source": "entity",
+              "propertyIri": "foundation:budgetStartDate"
+            },
+            "periodEnd": {
+              "source": "entity",
+              "propertyIri": "foundation:budgetEndDate"
+            }
+          }
+        }
+      }
+    },
+    "Distribution": {
+      "root": "distribution",
+      "elements": {
+        "distribution": {
+          "type": "Distribution",
+          "children": [],
+          "props": {
+            "title": "Valores por grupo",
+            "description": "Distribuição da medida por agrupamento."
+          },
+          "bindings": {
+            "collection": {
+              "source": "entity",
+              "propertyIri": "foundation:exampleCollection",
+              "projections": {
+                "measure": "foundation:exampleMeasure",
+                "groupBy": "foundation:exampleGroup"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

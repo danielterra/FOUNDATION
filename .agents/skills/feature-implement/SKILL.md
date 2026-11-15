@@ -110,6 +110,8 @@ Não faça commit nem push automático — `$code-commit` é skill separada.
 
 ## Regras
 
+- **NEVER** implement a Feature that tracks an application configured on Foundation; verify that every in-scope UserStory changes reusable Foundation behavior before starting implementation.
+- **ALWAYS** direct application-only behavior to that application's ontology, automations, or widget specs without creating Foundation work items.
 - **NEVER** invente IRIs de status — use `foundation:InProgress` (Em Progresso) e `foundation:Status_1772600993751` (Testando).
 - **NEVER** continue implementando US se uma US falhou — pare e reporte para o usuário decidir.
 - **NEVER** mova a Feature direto para `Concluído` com base apenas na implementação; o usuário/PO confirma os `successCriteria` depois do QA de todas as US em escopo.

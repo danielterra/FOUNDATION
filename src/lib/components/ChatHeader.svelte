@@ -56,10 +56,9 @@
 			<Button variant="ghost" class="agent-name-btn" onclick={onOpenAgentInspector} title="Open in inspector">
 				<span class="agent-name">{conversationAgent?.label || 'AI Assistant'}</span>
 				{#if activeModelInfo?.modelLabel}
-					<span class="agent-model">{activeModelInfo.modelLabel}</span>
+					<span class="agent-model semantic-metadata">{activeModelInfo.modelLabel}</span>
 				{/if}
 			</Button>
-
 			{#if pickerOpen}
 				<AgentPicker
 					{agents}
@@ -177,8 +176,6 @@
 	}
 
 	.agent-model {
-		font-size: var(--type-micro);
-		color: var(--color-neutral-secondary);
 		white-space: nowrap;
 	}
 

@@ -9,6 +9,7 @@
     fieldLabel = 'Código',
     readonly = false,
     onblur = null,
+    oninput = null,
     onkeydown = null,
   } = $props();
 
@@ -193,6 +194,14 @@
     if (!readonly && inputElement) inputElement.focus();
   });
 
+  $effect(() => {
+    value;
+    if (!readonly && inputElement) {
+      inputElement.style.height = 'auto';
+      inputElement.style.height = `${inputElement.scrollHeight}px`;
+    }
+  });
+
   function syncScroll() {
     if (inputElement && highlightElement) {
       highlightElement.scrollTop = inputElement.scrollTop;
@@ -242,6 +251,7 @@
           spellcheck="false"
           wrap="soft"
           onscroll={syncScroll}
+          oninput={(event) => oninput?.(event)}
           onkeydown={editorKeydown}
           onblur={onblur}
         ></textarea>
@@ -296,9 +306,9 @@
   .code-frame {
     display: flex;
     min-width: 0;
-    max-height: var(--size-code-editor-max-height);
+    max-height: none;
     overflow-x: hidden;
-    overflow-y: auto;
+    overflow-y: visible;
     background: var(--color-surface-1);
     font-family: var(--font-mono);
     font-size: var(--type-body-compact);
@@ -366,8 +376,10 @@
   .code-input {
     position: relative;
     display: block;
-    resize: vertical;
-    overflow: auto;
+    resize: none;
+    overflow: hidden;
+    field-sizing: content;
+    min-height: var(--size-code-editor-min-height);
     background: transparent;
     color: transparent;
     caret-color: var(--color-interactive);

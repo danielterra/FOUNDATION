@@ -1,11 +1,10 @@
 <script>
-  import { inspectorIconSource, inspectorIconSymbol } from './iconSource';
   import ClassPropertyForm from './ClassPropertyForm.svelte';
   import DisjointSelect from './DisjointSelect.svelte';
   import ProcessSelect from './ProcessSelect.svelte';
+  import OntologyEntityReferenceChip from './OntologyEntityReferenceChip.svelte';
   import * as AlertDialog from '$lib/components/ui/alert-dialog';
   import { Button } from '$lib/components/ui/button';
-  import { sticky } from '$lib/utils/actions';
 
   let {
     entityData,
@@ -48,48 +47,23 @@
     return [...ids];
   });
 
-  function handleEntityReferenceClick(event) {
-    const entityIri = event.currentTarget.dataset.entityIri;
+  function openEntityReference(entityIri) {
     if (entityIri) openEntityInspector(entityIri);
-  }
-
-  function handleEntityReferenceKeydown(event) {
-    if (event.key !== 'Enter' && event.key !== ' ') return;
-    event.preventDefault();
-    handleEntityReferenceClick(event);
-  }
-
-  function isIconUrl(icon) {
-    return inspectorIconSource(icon) !== null;
-  }
-
-  function getIconUrl(icon) {
-    return inspectorIconSource(icon) ?? '';
   }
 </script>
 
 {#if entityData.superClasses?.length > 0}
   <div class="section-group">
-    <div class="section-label" use:sticky={{ top: 0 }}>Parent Classes</div>
+    <div class="semantic-label">Parent Classes</div>
     <div class="item-list">
       {#each entityData.superClasses as superClass}
-        <div
-          class="item clickable"
-          role="button"
-          tabindex="0"
-          data-entity-iri={superClass.iri}
-          onclick={handleEntityReferenceClick}
-          onkeydown={handleEntityReferenceKeydown}
-        >
-          {#if superClass.icon}
-            {#if isIconUrl(superClass.icon)}
-              <img src={getIconUrl(superClass.icon)} alt="" class="item-icon-image" />
-            {:else}
-              <span class="material-symbols-outlined">{inspectorIconSymbol(superClass.icon)}</span>
-            {/if}
-          {/if}
-          <span class="item-label">{superClass.label}</span>
-        </div>
+        <OntologyEntityReferenceChip
+          kind="class"
+          label={superClass.label}
+          icon={superClass.icon}
+          entityIri={superClass.iri}
+          onopen={openEntityReference}
+        />
       {/each}
     </div>
   </div>
@@ -97,26 +71,16 @@
 
 {#if entityData.subClasses?.length > 0}
   <div class="section-group">
-    <div class="section-label" use:sticky={{ top: 0 }}>Child Classes</div>
+    <div class="semantic-label">Child Classes</div>
     <div class="item-list">
       {#each entityData.subClasses as subClass}
-        <div
-          class="item clickable"
-          role="button"
-          tabindex="0"
-          data-entity-iri={subClass.iri}
-          onclick={handleEntityReferenceClick}
-          onkeydown={handleEntityReferenceKeydown}
-        >
-          {#if subClass.icon}
-            {#if isIconUrl(subClass.icon)}
-              <img src={getIconUrl(subClass.icon)} alt="" class="item-icon-image" />
-            {:else}
-              <span class="material-symbols-outlined">{inspectorIconSymbol(subClass.icon)}</span>
-            {/if}
-          {/if}
-          <span class="item-label">{subClass.label}</span>
-        </div>
+        <OntologyEntityReferenceChip
+          kind="class"
+          label={subClass.label}
+          icon={subClass.icon}
+          entityIri={subClass.iri}
+          onopen={openEntityReference}
+        />
       {/each}
     </div>
   </div>
@@ -124,7 +88,7 @@
 
 {#if entityData.isClass && ((entityData.relatedProcesses?.length ?? 0) > 0 || (!isLocked && onAddRelatedProcess))}
   <div class="section-group">
-    <div class="section-label section-label-row" use:sticky={{ top: 0 }}>
+    <div class="semantic-label section-label-row">
       <span>Processos Relacionados</span>
       {#if !isLocked && onAddRelatedProcess}
         <Button
@@ -149,19 +113,13 @@
     <div class="item-list">
       {#each (entityData.relatedProcesses ?? []) as proc (proc.iri)}
         <div class="item disjoint-item">
-          <div
-            class="item-body clickable"
-            role="button"
-            tabindex="0"
-            data-entity-iri={proc.iri}
-            onclick={handleEntityReferenceClick}
-            onkeydown={handleEntityReferenceKeydown}
-          >
-            <span class="material-symbols-outlined">
-              {proc.type === 'foundation:Automation' ? 'bolt' : 'schema'}
-            </span>
-            <span class="item-label">{proc.label}</span>
-          </div>
+          <OntologyEntityReferenceChip
+            kind="individual"
+            label={proc.label}
+            icon={proc.type === 'foundation:Automation' ? 'bolt' : 'schema'}
+            entityIri={proc.iri}
+            onopen={openEntityReference}
+          />
           {#if !isLocked && onRemoveRelatedProcess}
             <Button variant="ghost" size="icon-sm" class="disjoint-remove" onclick={() => onRemoveRelatedProcess(proc.iri)} title="Desvincular">
               <span class="material-symbols-outlined">close</span>
@@ -175,7 +133,7 @@
 
 {#if entityData.isClass && ((entityData.applicableAutomations?.length ?? 0) > 0 || (!isLocked && onAddInputAutomation))}
   <div class="section-group">
-    <div class="section-label section-label-row" use:sticky={{ top: 0 }}>
+    <div class="semantic-label section-label-row">
       <span>Automações de Entrada</span>
       {#if !isLocked && onAddInputAutomation}
         <Button
@@ -201,17 +159,13 @@
     <div class="item-list">
       {#each (entityData.applicableAutomations ?? []) as auto (auto.iri)}
         <div class="item disjoint-item">
-          <div
-            class="item-body clickable"
-            role="button"
-            tabindex="0"
-            data-entity-iri={auto.iri}
-            onclick={handleEntityReferenceClick}
-            onkeydown={handleEntityReferenceKeydown}
-          >
-            <span class="material-symbols-outlined">bolt</span>
-            <span class="item-label">{auto.label}</span>
-          </div>
+          <OntologyEntityReferenceChip
+            kind="individual"
+            label={auto.label}
+            icon="bolt"
+            entityIri={auto.iri}
+            onopen={openEntityReference}
+          />
           {#if !isLocked && onRemoveInputAutomation}
             <Button variant="ghost" size="icon-sm" class="disjoint-remove" onclick={() => onRemoveInputAutomation(auto.iri)} title="Desvincular">
               <span class="material-symbols-outlined">close</span>
@@ -225,7 +179,7 @@
 
 {#if entityData.isClass && (disjointGroups.length > 0 || (!isLocked && onAddDisjoint))}
   <div class="section-group">
-    <div class="section-label section-label-row" use:sticky={{ top: 0 }}>
+    <div class="semantic-label section-label-row">
       <span>Classes Disjuntas</span>
       {#if !isLocked && onAddDisjoint}
         <Button
@@ -296,23 +250,13 @@
         {#if group.kind === 'pair'}
           {@const m = group.members[0]}
           <div class="item disjoint-item">
-            <div
-              class="item-body clickable"
-              role="button"
-              tabindex="0"
-              data-entity-iri={m.iri}
-              onclick={handleEntityReferenceClick}
-              onkeydown={handleEntityReferenceKeydown}
-            >
-              {#if m.icon}
-                {#if isIconUrl(m.icon)}
-                  <img src={getIconUrl(m.icon)} alt="" class="item-icon-image" />
-                {:else}
-                  <span class="material-symbols-outlined">{inspectorIconSymbol(m.icon)}</span>
-                {/if}
-              {/if}
-              <span class="item-label">{m.label ?? m.iri}</span>
-            </div>
+            <OntologyEntityReferenceChip
+              kind="class"
+              label={m.label ?? m.iri}
+              icon={m.icon}
+              entityIri={m.iri}
+              onopen={openEntityReference}
+            />
             {#if !isLocked && onRequestRemoveDisjoint}
               <Button variant="ghost" size="icon-sm" class="disjoint-remove" onclick={() => onRequestRemoveDisjoint(group)} title="Remover">
                 <span class="material-symbols-outlined">close</span>
@@ -323,7 +267,7 @@
           <div class="disjoint-set">
             <div class="disjoint-set-header">
               <span class="material-symbols-outlined">hub</span>
-              <span class="disjoint-set-label">Conjunto disjunto</span>
+              <span class="semantic-label disjoint-set-label">Conjunto disjunto</span>
               {#if !isLocked && onRequestRemoveDisjoint}
                 <Button variant="ghost" size="icon-sm" class="disjoint-remove" onclick={() => onRequestRemoveDisjoint(group)} title="Remover conjunto">
                   <span class="material-symbols-outlined">close</span>
@@ -332,23 +276,13 @@
             </div>
             <div class="disjoint-set-members">
               {#each group.members as m (m.iri)}
-                <div
-                  class="item clickable disjoint-member"
-                  role="button"
-                  tabindex="0"
-                  data-entity-iri={m.iri}
-                  onclick={handleEntityReferenceClick}
-                  onkeydown={handleEntityReferenceKeydown}
-                >
-                  {#if m.icon}
-                    {#if isIconUrl(m.icon)}
-                      <img src={getIconUrl(m.icon)} alt="" class="item-icon-image" />
-                    {:else}
-                      <span class="material-symbols-outlined">{inspectorIconSymbol(m.icon)}</span>
-                    {/if}
-                  {/if}
-                  <span class="item-label">{m.label ?? m.iri}</span>
-                </div>
+                <OntologyEntityReferenceChip
+                  kind="class"
+                  label={m.label ?? m.iri}
+                  icon={m.icon}
+                  entityIri={m.iri}
+                  onopen={openEntityReference}
+                />
               {/each}
             </div>
           </div>
@@ -360,29 +294,17 @@
 
 {#if entityData.isClass && entityData.allowedStatuses?.length > 0}
   <div class="section-group">
-    <div class="section-label" use:sticky={{ top: 0 }}>Allowed Statuses</div>
+    <div class="semantic-label">Allowed Statuses</div>
     <div class="item-list">
       {#each entityData.allowedStatuses as status}
-        <div
-          class="item clickable status-item"
-          style="--status-color: {status.color || 'var(--color-neutral)'}"
-          role="button"
-          tabindex="0"
-          data-entity-iri={status.iri}
-          onclick={handleEntityReferenceClick}
-          onkeydown={handleEntityReferenceKeydown}
-        >
-          {#if status.icon}
-            {#if isIconUrl(status.icon)}
-              <img src={getIconUrl(status.icon)} alt="" class="item-icon-image" />
-            {:else}
-              <span class="material-symbols-outlined status-dot">{inspectorIconSymbol(status.icon)}</span>
-            {/if}
-          {:else}
-            <span class="material-symbols-outlined status-dot">radio_button_checked</span>
-          {/if}
-          <span class="item-label">{status.label}</span>
-        </div>
+          <OntologyEntityReferenceChip
+            kind="individual"
+            label={status.label}
+            icon={status.icon || 'radio_button_checked'}
+            entityIri={status.iri}
+            onopen={openEntityReference}
+            statusColor={status.color || 'var(--color-neutral)'}
+          />
       {/each}
     </div>
   </div>
@@ -390,7 +312,7 @@
 
 {#if entityData.isClass}
   <div class="class-props-header">
-    <span class="class-props-title">Properties</span>
+    <span class="semantic-label">Properties</span>
     {#if !isLocked}
       <Button
         variant="ghost"
@@ -449,23 +371,13 @@
 {#if entityData.instances?.length > 0}
   <div class="item-list">
     {#each entityData.instances as instance}
-      <div
-        class="item instance clickable"
-        role="button"
-        tabindex="0"
-        data-entity-iri={instance.iri}
-        onclick={handleEntityReferenceClick}
-        onkeydown={handleEntityReferenceKeydown}
-      >
-        {#if instance.icon}
-          {#if isIconUrl(instance.icon)}
-            <img src={getIconUrl(instance.icon)} alt="" class="item-icon-image" />
-          {:else}
-            <span class="material-symbols-outlined">{inspectorIconSymbol(instance.icon)}</span>
-          {/if}
-        {/if}
-        <span class="item-label">{instance.label}</span>
-      </div>
+      <OntologyEntityReferenceChip
+        kind="individual"
+        label={instance.label}
+        icon={instance.icon}
+        entityIri={instance.iri}
+        onopen={openEntityReference}
+      />
     {/each}
   </div>
 {/if}
@@ -474,93 +386,34 @@
   .section-group {
     display: flex;
     flex-direction: column;
-  }
-
-  .section-label {
-    font-family: var(--font-body);
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    color: color-mix(in srgb, var(--color-neutral) 60%, transparent);
-    margin-bottom: 6px;
-    z-index: 2;
-    padding: 6px 0 4px;
-    background: var(--color-surface-1);
+    gap: var(--spacing-label-to-value);
   }
 
   .item-list {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    margin-bottom: 16px;
+    gap: var(--spacing-inline-tight);
+    margin-bottom: var(--spacing-section);
   }
 
   .item {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    background: color-mix(in srgb, var(--color-white) 5%, transparent);
-    transition: all 0.2s;
-  }
-
-  .item:hover {
-    background: color-mix(in srgb, var(--color-white) 8%, transparent);
-  }
-
-  .clickable {
-    cursor: pointer;
-    user-select: none;
-  }
-
-  .clickable:hover {
-    background: color-mix(in srgb, var(--color-interactive) 20%, transparent) !important;
-  }
-
-  .clickable:active {
-    transform: translateX(1px);
-  }
-
-
-  .status-dot {
-    font-size: 16px;
-    color: var(--status-color);
-    flex-shrink: 0;
+    gap: var(--spacing-inline-related);
+    padding: var(--spacing-control-internal) var(--spacing-widget-inset);
   }
 
   .item .material-symbols-outlined {
-    font-size: 18px;
+    font-size: var(--type-icon-medium);
     color: var(--color-interactive);
-  }
-
-  .item-icon-image {
-    width: 28px;
-    height: 28px;
-    object-fit: cover;
-  }
-
-  .item-label {
-    font-family: var(--font-body);
-    font-size: 14px;
-    color: var(--color-neutral-active);
   }
 
   .class-props-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 4px 0 8px;
-    margin-top: 4px;
-  }
-
-  .class-props-title {
-    font-family: var(--font-body);
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    color: color-mix(in srgb, var(--color-neutral) 60%, transparent);
+    padding-block: var(--spacing-inline-tight) var(--spacing-control-internal);
+    margin-top: var(--spacing-control-internal);
   }
 
   .adlg-icon-row {
@@ -569,13 +422,13 @@
   }
 
   .adlg-warning-icon {
-    font-size: 28px;
+    font-size: var(--type-display);
     color: var(--color-warning);
   }
 
   :global([data-slot="alert-dialog-content"] .adlg-title) {
     font-family: var(--font-body);
-    font-size: 15px;
+    font-size: var(--type-body-compact);
     font-weight: 700;
     color: var(--color-neutral-active);
     text-align: center;
@@ -584,7 +437,7 @@
 
   :global([data-slot="alert-dialog-content"] .adlg-description) {
     font-family: var(--font-body);
-    font-size: 13px;
+    font-size: var(--type-body-compact);
     color: var(--color-neutral);
     line-height: 1.5;
     margin: 0;
@@ -593,7 +446,7 @@
 
   .adlg-examples {
     font-family: var(--font-body);
-    font-size: 11px;
+    font-size: var(--type-caption-compact);
     color: var(--color-neutral);
     margin: 0;
     font-style: italic;
@@ -602,22 +455,22 @@
 
   .adlg-actions {
     display: flex;
-    gap: 8px;
+    gap: var(--spacing-control-internal);
     justify-content: center;
-    margin-top: 4px;
+    margin-top: var(--spacing-inline-tight);
   }
 
   :global([data-slot="alert-dialog-content"] .adlg-proceed) {
-    padding: 6px 14px;
+    padding: var(--spacing-inline-tight) var(--spacing-control-internal);
     background: color-mix(in srgb, var(--color-danger) 20%, transparent);
     border: none;
     color: var(--color-danger);
     font-family: var(--font-body);
-    font-size: 13px;
+    font-size: var(--type-body-compact);
     font-weight: 600;
     cursor: pointer;
     border-radius: var(--radius);
-    transition: background 0.15s;
+    transition: background-color var(--duration-setup-transition) ease;
   }
 
   :global([data-slot="alert-dialog-content"] .adlg-proceed:hover) {
@@ -625,16 +478,16 @@
   }
 
   :global([data-slot="alert-dialog-content"] .adlg-cancel) {
-    padding: 6px 14px;
+    padding: var(--spacing-inline-tight) var(--spacing-control-internal);
     background: color-mix(in srgb, var(--color-neutral) 12%, transparent);
     border: none;
     color: var(--color-neutral);
     font-family: var(--font-body);
-    font-size: 13px;
+    font-size: var(--type-body-compact);
     font-weight: 600;
     cursor: pointer;
     border-radius: var(--radius);
-    transition: background 0.15s;
+    transition: background-color var(--duration-setup-transition) ease;
   }
 
   :global([data-slot="alert-dialog-content"] .adlg-cancel:hover) {
@@ -643,7 +496,7 @@
 
   .section-label-row {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     justify-content: space-between;
   }
 
@@ -652,87 +505,68 @@
     padding: 0;
   }
 
-  .disjoint-item .item-body {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex: 1;
-    padding: 8px 12px;
-  }
-
   :global([data-slot="button"].disjoint-remove) {
     color: color-mix(in srgb, var(--color-neutral) 60%, transparent);
   }
 
   :global([data-slot="button"].disjoint-remove:hover) {
-    color: var(--color-error, #ef4444);
-    background: color-mix(in srgb, var(--color-error, #ef4444) 12%, transparent);
+    color: var(--color-error);
+    background: color-mix(in srgb, var(--color-error) 12%, transparent);
   }
 
   .disjoint-set {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 8px 12px;
-    background: color-mix(in srgb, var(--color-interactive) 6%, transparent);
-    border-left: 3px solid color-mix(in srgb, var(--color-interactive) 50%, transparent);
-    margin-bottom: 6px;
+    gap: var(--spacing-inline-tight);
+    padding: var(--spacing-control-internal) var(--spacing-widget-inset);
+    background: var(--color-surface-2);
+    margin-bottom: var(--spacing-control-internal);
   }
 
   .disjoint-set-header {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--spacing-inline-related);
   }
 
   .disjoint-set-header .material-symbols-outlined {
-    font-size: 14px;
-    color: var(--color-interactive);
+    font-size: var(--type-icon-small);
+    color: var(--color-neutral-active);
   }
 
   .disjoint-set-label {
     flex: 1;
-    font-family: var(--font-body);
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: color-mix(in srgb, var(--color-interactive) 80%, var(--color-neutral));
   }
 
   .disjoint-set-members {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding-left: 4px;
-  }
-
-  .disjoint-member {
-    margin-bottom: 0;
+    gap: var(--spacing-inline-tight);
+    padding-left: var(--spacing-inline-tight);
   }
 
   .disjoint-error {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
-    padding: 8px 10px;
-    background: color-mix(in srgb, var(--color-error, #ef4444) 10%, transparent);
-    border-left: 3px solid var(--color-error, #ef4444);
-    margin-bottom: 8px;
+    gap: var(--spacing-inline-related);
+    padding: var(--spacing-control-internal);
+    background: color-mix(in srgb, var(--color-error) 10%, transparent);
+    border-left: var(--space-1) solid var(--color-error);
+    margin-bottom: var(--spacing-control-internal);
   }
 
   .disjoint-error .material-symbols-outlined {
-    font-size: 16px;
-    color: var(--color-error, #ef4444);
+    font-size: var(--type-icon-medium);
+    color: var(--color-error);
     flex-shrink: 0;
   }
 
   .disjoint-error-msg {
     flex: 1;
     font-family: var(--font-body);
-    font-size: 12px;
+    font-size: var(--type-label);
     color: var(--color-neutral-active);
-    line-height: 1.4;
+    line-height: var(--line-height-hud-compact);
   }
 
 </style>

@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+pub mod chatgpt_auth;
 pub mod functions;
 pub mod local;
+pub mod openai_responses;
 pub mod providers;
 
 use providers::{ContentBlock, MessageContent};
@@ -29,6 +31,7 @@ pub enum AiProvider {
     Claude(providers::ClaudeProvider),
     Local(local::LocalProvider),
     OpenRouter(providers::OpenRouterProvider),
+    OpenAIResponses(openai_responses::OpenAIResponsesProvider),
 }
 
 impl AiProvider {
@@ -42,6 +45,9 @@ impl AiProvider {
             AiProvider::Claude(p) => p.generate_stream(request, app, conversation_id).await,
             AiProvider::Local(p) => p.generate_stream(request, app, conversation_id).await,
             AiProvider::OpenRouter(p) => p.generate_stream(request, app, conversation_id).await,
+            AiProvider::OpenAIResponses(p) => {
+                p.generate_stream(request, app, conversation_id).await
+            }
         }
     }
 
@@ -52,6 +58,7 @@ impl AiProvider {
                 Err("Local provider does not support non-streaming generate".to_string())
             }
             AiProvider::OpenRouter(p) => p.generate(request).await,
+            AiProvider::OpenAIResponses(p) => p.generate(request).await,
         }
     }
 }

@@ -149,7 +149,9 @@ pub(super) fn get_individual_data(
         }
     }
     let thing_iris_vec: Vec<String> = thing_iris.into_iter().collect();
+    let thing_cache_started = std::time::Instant::now();
     let thing_cache = crate::owl::Thing::get_batch(conn, &thing_iris_vec);
+    let thing_cache_finished = std::time::Instant::now();
 
     // Pre-fetch hasStatus for all forward IRI-valued properties in one batch,
     // replacing per-property resolve_status_for_entity calls that each load the
@@ -161,17 +163,29 @@ pub(super) fn get_individual_data(
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
+    let fwd_status_started = std::time::Instant::now();
     let fwd_status_iris =
         crate::owl::get_first_iri_property_batch(conn, &object_value_iris, "foundation:hasStatus")
             .unwrap_or_default();
-    let t_d = std::time::Instant::now();
+    let fwd_status_finished = std::time::Instant::now();
+    let entity_kinds_started = std::time::Instant::now();
+    let object_value_kinds =
+        crate::core_ontology::entity_kind::resolve_entity_kinds(conn, &object_value_iris)
+            .map_err(|e| e.to_string())?;
+    let entity_kinds_finished = std::time::Instant::now();
     crate::commands::logging::log_backend(
         "debug",
         &format!(
-            "[INSPECTOR] {individual_id}: thing_cache+fwd_status_batch {}ms",
-            t_d.duration_since(t_c).as_millis()
+            "[INSPECTOR] {individual_id}: reference metadata thing_iris={} thing_cache={}ms status_iris={} status_batch={}ms entity_kinds={} kind_resolution={}ms",
+            thing_iris_vec.len(),
+            thing_cache_finished.duration_since(thing_cache_started).as_millis(),
+            object_value_iris.len(),
+            fwd_status_finished.duration_since(fwd_status_started).as_millis(),
+            object_value_kinds.len(),
+            entity_kinds_finished.duration_since(entity_kinds_started).as_millis(),
         ),
     );
+    let t_d = std::time::Instant::now();
 
     let unique_fwd_status: Vec<String> = fwd_status_iris
         .values()
@@ -408,6 +422,11 @@ pub(super) fn get_individual_data(
         let formula_error: Option<String> = None;
 
         let property_next_cursor = fwd_cursors.remove(property_iri.as_str()).flatten();
+        let value_entity_kind = if is_object_property {
+            object_value_kinds.get(&value).copied()
+        } else {
+            None
+        };
 
         properties.push(PropertyValue {
             presentation: None,
@@ -416,6 +435,7 @@ pub(super) fn get_individual_data(
             property_label,
             property_comment,
             value,
+            value_entity_kind,
             value_label,
             value_icon,
             is_object_property,
@@ -547,6 +567,7 @@ pub(super) fn get_individual_data(
                         property_label,
                         property_comment,
                         value: String::new(),
+                        value_entity_kind: None,
                         value_label: None,
                         value_icon: None,
                         is_object_property,
@@ -748,6 +769,9 @@ pub(super) fn get_individual_data(
     };
 
     let source_things = crate::owl::Thing::get_batch(conn, &backlink_source_iris);
+    let backlink_entity_kinds =
+        crate::core_ontology::entity_kind::resolve_entity_kinds(conn, &backlink_source_iris)
+            .map_err(|e| e.to_string())?;
 
     let unique_class_iris: Vec<String> = individual
         .backlinks
@@ -959,6 +983,7 @@ pub(super) fn get_individual_data(
             property_label,
             property_comment,
             value: b.subject.clone(),
+            value_entity_kind: backlink_entity_kinds.get(&b.subject).copied(),
             value_label: Some(source_thing.label),
             value_icon: source_thing.icon,
             is_object_property: true,
@@ -1060,6 +1085,8 @@ pub(super) fn get_individual_data(
         disjoint_groups: vec![],
         instances: vec![],
         properties,
+        inspector_property_order: None,
+        property_order_fingerprint: None,
         backlinks,
         status,
         required_fields,

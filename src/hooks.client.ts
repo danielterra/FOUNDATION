@@ -9,7 +9,7 @@ export async function init(): Promise<void> {
 
 	const { setupDevInvoke } = await import('tauri-plugin-dev-invoke-api');
 	await setupDevInvoke({
-		url: 'http://127.0.0.1:3030',
+		url: `${window.location.origin}/__dev-invoke`,
 		window: 'main',
 		debug: false
 	});

@@ -4,7 +4,7 @@
   import * as Select from '$lib/components/ui/select';
   import { Button } from '$lib/components/ui/button';
 
-  let { value = '', onconfirm, oncancel } = $props();
+  let { value = '', onconfirm, oncancel, draftOnly = false, onDraftChange = null } = $props();
 
   function parseConfig(json) {
     const empty = { targetClass: '', filters: [] };
@@ -38,10 +38,17 @@
 
   function addFilter() {
     filters = [...filters, { propertyIri: '', operator: 'eq', value: '', valueFrom: '', valueTo: '' }];
+    updateDraft();
   }
 
   function removeFilter(i) {
     filters = filters.filter((_, idx) => idx !== i);
+    updateDraft();
+  }
+
+  function updateFilter(i, key, nextValue) {
+    filters = filters.map((filter, index) => index === i ? { ...filter, [key]: nextValue } : filter);
+    updateDraft();
   }
 
   function buildJson() {
@@ -61,6 +68,10 @@
     return JSON.stringify(config);
   }
 
+  function updateDraft() {
+    if (draftOnly) onDraftChange?.(buildJson());
+  }
+
   function confirm() { onconfirm(buildJson()); }
 </script>
 
@@ -71,7 +82,8 @@
       id="qc-target-class-input"
       class="qc-input"
       type="text"
-      bind:value={targetClass}
+      value={targetClass}
+      oninput={(event) => { targetClass = event.currentTarget.value; updateDraft(); }}
       placeholder="foundation:MinhaClasse"
     />
   </div>
@@ -94,13 +106,14 @@
             <Input
               class="qc-input prop-input"
               type="text"
-              bind:value={filter.propertyIri}
+              value={filter.propertyIri}
+              oninput={(event) => updateFilter(i, 'propertyIri', event.currentTarget.value)}
               placeholder="foundation:propriedade"
             />
             <Select.Root
               type="single"
               value={filter.operator}
-              onValueChange={(v) => { if (v) filter.operator = v; }}
+              onValueChange={(v) => { if (v) updateFilter(i, 'operator', v); }}
             >
               <Select.Trigger class="qc-select-trigger">
                 <Select.Value />
@@ -115,21 +128,24 @@
               <Input
                 class="qc-input val-input"
                 type="text"
-                bind:value={filter.valueFrom}
+                value={filter.valueFrom}
+                oninput={(event) => updateFilter(i, 'valueFrom', event.currentTarget.value)}
                 placeholder="de"
               />
               <span class="between-sep">e</span>
               <Input
                 class="qc-input val-input"
                 type="text"
-                bind:value={filter.valueTo}
+                value={filter.valueTo}
+                oninput={(event) => updateFilter(i, 'valueTo', event.currentTarget.value)}
                 placeholder="até"
               />
             {:else if !isUnary(filter.operator)}
               <Input
                 class="qc-input val-input"
                 type="text"
-                bind:value={filter.value}
+                value={filter.value}
+                oninput={(event) => updateFilter(i, 'value', event.currentTarget.value)}
                 placeholder={"valor ou {{self.prop}}"}
               />
             {/if}
@@ -142,10 +158,12 @@
     {/if}
   </div>
 
-  <div class="btn-row">
-    <Button type="button" variant="ghost" size="sm" onclick={oncancel}>Cancelar</Button>
-    <Button type="button" variant="default" size="sm" onclick={confirm}>OK</Button>
-  </div>
+  {#if !draftOnly}
+    <div class="btn-row">
+      <Button type="button" variant="ghost" size="sm" onclick={oncancel}>Cancelar</Button>
+      <Button type="button" variant="default" size="sm" onclick={confirm}>OK</Button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -183,7 +201,7 @@
     background: color-mix(in srgb, var(--color-black) 50%, transparent);
     border: none;
     color: var(--color-neutral-active);
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
     font-size: 12px;
     padding: 5px 8px;
     height: auto;

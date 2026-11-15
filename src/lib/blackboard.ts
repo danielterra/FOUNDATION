@@ -5,7 +5,6 @@ export async function openEntity(entityIri: string, conversationId?: string | nu
     widgetType: '',
     entityId: entityIri,
     position: null,
-    size: null,
     conversationId: conversationId ?? null,
   });
 }

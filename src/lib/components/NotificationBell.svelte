@@ -26,7 +26,6 @@
       widgetType: 'notification_center',
       entityId: 'foundation:NotificationCenter',
       position: null,
-      size: null,
       conversationId: appState.activeConversationIri,
     }).catch(e => console.error('[NotificationBell] Failed to open widget:', e));
   }

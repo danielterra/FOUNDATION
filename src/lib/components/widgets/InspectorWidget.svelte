@@ -1,4 +1,6 @@
 <script>
+  import SemanticInspectorAction from './inspector/SemanticInspectorAction.svelte';
+  import InspectorConfirmation from './inspector/InspectorConfirmation.svelte';
   import { onDestroy, untrack } from 'svelte';
 
   import { invoke } from '@tauri-apps/api/core';
@@ -7,6 +9,8 @@
   import FilePreview from './inspector/FilePreview.svelte';
   import MetaFields from './inspector/MetaFields.svelte';
   import PropertyList from './inspector/PropertyList.svelte';
+  import OntologyEntityIdentity from './inspector/OntologyEntityIdentity.svelte';
+  import OntologyEntityReferenceChip from './inspector/OntologyEntityReferenceChip.svelte';
   import InspectorClassView from './inspector/InspectorClassView.svelte';
   import CriterionEvidencePanel from './inspector/CriterionEvidencePanel.svelte';
   import WidgetContainer from './WidgetContainer.svelte';
@@ -35,6 +39,7 @@
     const { type, entityId: updatedId } = event;
     if (type === 'updated') {
       if (updatedId === entityId) { scheduleLoad(); return; }
+      if (entityData?.types?.some(t => t.iri === updatedId)) { scheduleLoad(); return; }
       if (entityData?.properties?.some(p => p.value === updatedId)) scheduleLoad();
       return;
     }
@@ -69,6 +74,19 @@
   let entityLabelInput = $state(null);
   let showAddPropertyForm = $state(false);
   let savingClassProperty = $state(false);
+  let editingProperties = $state(false);
+  let orderingProperties = $state(false);
+  let savingPropertyOrder = $state(false);
+  let propertyOrderDraft = $state([]);
+  let propertyOrderBaseFingerprint = $state(null);
+  let propertyOrderError = $state(null);
+  let propertyOrderAnnouncement = $state('');
+  let savingProperties = $state(false);
+  let propertyDrafts = $state({});
+  let propertyDraftDatatypes = $state({});
+  let propertyDraftKinds = $state({});
+  let propertyDraftErrors = $state({});
+  let draftOwnerEntityId = $state(null);
   let removeConfirmProp = $state(null);
   let removeConfirmCount = $state(0);
   let removeConfirmExamples = $state([]);
@@ -77,6 +95,21 @@
   let savingDisjoint = $state(false);
   let disjointError = $state(null);
   let removeDisjointConfirm = $state(null);
+
+  $effect(() => {
+    if (draftOwnerEntityId === entityId) return;
+    draftOwnerEntityId = entityId;
+    editingProperties = false;
+    orderingProperties = false;
+    propertyOrderDraft = [];
+    propertyOrderBaseFingerprint = null;
+    propertyOrderError = null;
+    propertyOrderAnnouncement = '';
+    propertyDrafts = {};
+    propertyDraftDatatypes = {};
+    propertyDraftKinds = {};
+    propertyDraftErrors = {};
+  });
 
   function requestEntityLabelEdit() {
     if (isLocked || !entityData) return;
@@ -144,6 +177,9 @@
       const resultStr = await invoke('inspector__get_entity', { entityId });
       const t1 = performance.now();
       entityData = JSON.parse(resultStr);
+      if (entityData?.isClass && !orderingProperties) {
+        propertyOrderDraft = [...(entityData.inspectorPropertyOrder ?? [])];
+      }
 
       // Declare the flat set: anchor + IRI-valued properties + backlink sources.
       const objectIris = (entityData?.properties ?? [])
@@ -151,15 +187,14 @@
         .map(p => p.value)
         .filter(Boolean);
       const backlinkIris = (entityData?.backlinks ?? []).flatMap(b => b.values?.map(v => v.value) ?? []);
-      const flatSet = [entityId, ...objectIris, ...backlinkIris].filter(Boolean);
+      const typeIris = (entityData?.types ?? []).map(t => t.iri).filter(Boolean);
+      const flatSet = [entityId, ...typeIris, ...objectIris, ...backlinkIris].filter(Boolean);
       snapshotTx = entityData.snapshotTx ?? 0;
       entitySub.setIris(flatSet);
       entitySub.setSinceTx(snapshotTx);
       entitySub.replayMissed();
 
       const classIri = entityData?.types?.[0]?.iri ?? null;
-      const typeIris = (entityData?.types ?? []).map(t => t.iri).filter(Boolean);
-
       console.debug(`[INSPECTOR] ${entityId} get_entity=${Math.round(t1 - t0)}ms`);
       {
         const watchProps = ['foundation:result', 'foundation:startedAt'];
@@ -295,6 +330,150 @@
       });
     } catch (err) {
       console.error('Failed to update property:', err);
+    }
+  }
+
+  function beginPropertyEdit() {
+    if (isLocked || entityData?.isClass || orderingProperties) return;
+    propertyDrafts = {};
+    propertyDraftDatatypes = {};
+    propertyDraftErrors = {};
+    editingProperties = true;
+  }
+
+  function updatePropertyDraft(propertyIri, value, datatype = null, kind = 'literal') {
+    propertyDrafts = { ...propertyDrafts, [propertyIri]: value };
+    propertyDraftDatatypes = { ...propertyDraftDatatypes, [propertyIri]: datatype };
+    propertyDraftKinds = { ...propertyDraftKinds, [propertyIri]: kind };
+    if (propertyDraftErrors[propertyIri]) {
+      const { [propertyIri]: _removed, ...remaining } = propertyDraftErrors;
+      propertyDraftErrors = remaining;
+    }
+  }
+
+  function cancelPropertyEdit() {
+    propertyDrafts = {};
+    propertyDraftDatatypes = {};
+    propertyDraftKinds = {};
+    propertyDraftErrors = {};
+    editingProperties = false;
+  }
+
+  function beginPropertyOrdering() {
+    if (isLocked || !entityData?.isClass || editingProperties) return;
+    propertyOrderDraft = [...(entityData.inspectorPropertyOrder ?? [])];
+    propertyOrderBaseFingerprint = entityData.propertyOrderFingerprint ?? null;
+    propertyOrderError = null;
+    propertyOrderAnnouncement = '';
+    orderingProperties = true;
+  }
+
+  function cancelPropertyOrdering() {
+    if (savingPropertyOrder) return;
+    propertyOrderDraft = [...(entityData?.inspectorPropertyOrder ?? [])];
+    propertyOrderBaseFingerprint = entityData?.propertyOrderFingerprint ?? null;
+    propertyOrderError = null;
+    propertyOrderAnnouncement = 'Organização cancelada.';
+    orderingProperties = false;
+  }
+
+  function movePropertyOrder(propertyIri, targetIndex) {
+    const currentIndex = propertyOrderDraft.indexOf(propertyIri);
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= propertyOrderDraft.length || currentIndex === targetIndex) return;
+    const next = [...propertyOrderDraft];
+    next.splice(currentIndex, 1);
+    next.splice(targetIndex, 0, propertyIri);
+    propertyOrderDraft = next;
+    propertyOrderError = null;
+    propertyOrderAnnouncement = `Propriedade movida para a posição ${targetIndex + 1}.`;
+  }
+
+  async function savePropertyOrder() {
+    if (!orderingProperties || savingPropertyOrder || propertyOrderSchemaChanged) return;
+    savingPropertyOrder = true;
+    propertyOrderError = null;
+    try {
+      const resultStr = await invoke('inspector__save_property_order', {
+        classIri: entityId,
+        propertyIris: propertyOrderDraft,
+        schemaFingerprint: entityData?.propertyOrderFingerprint,
+      });
+      const result = JSON.parse(resultStr);
+      entityData = {
+        ...entityData,
+        inspectorPropertyOrder: result.propertyIris,
+        propertyOrderFingerprint: result.schemaFingerprint,
+      };
+      propertyOrderDraft = [...result.propertyIris];
+      propertyOrderAnnouncement = 'Ordem das propriedades salva.';
+      orderingProperties = false;
+    } catch (err) {
+      propertyOrderError = String(err);
+      propertyOrderAnnouncement = 'Não foi possível salvar a ordem. A organização foi mantida para tentar novamente.';
+      scheduleLoad();
+    } finally {
+      savingPropertyOrder = false;
+    }
+  }
+
+  function handlePropertyOrderMove(event) {
+    const { propertyIri, targetIndex } = event.detail;
+    movePropertyOrder(propertyIri, targetIndex);
+  }
+
+  async function savePropertyDrafts() {
+    if (!editingProperties || savingProperties || !entityData?.id) return;
+    savingProperties = true;
+    const remainingDrafts = { ...propertyDrafts };
+    const errors = { ...propertyDraftErrors };
+    for (const [propertyIri, value] of Object.entries(propertyDrafts)) {
+      const currentProperties = (entityData.properties ?? []).filter((property) => property.property === propertyIri && !property.isEmpty);
+      const current = currentProperties[0];
+      const kind = propertyDraftKinds[propertyIri] ?? 'literal';
+      const currentValue = kind === 'references' || kind === 'literal-set'
+        ? currentProperties.map((property) => String(property.value)).sort()
+        : (current?.isEmpty ? '' : String(current?.value ?? ''));
+      const nextValue = kind === 'references' || kind === 'literal-set'
+        ? [...value].map(String).sort()
+        : String(value);
+      if (JSON.stringify(nextValue) === JSON.stringify(currentValue)) {
+        delete remainingDrafts[propertyIri];
+        delete errors[propertyIri];
+        continue;
+      }
+      try {
+        if (kind === 'references') {
+          await invoke('widget_inspector__set_references', { entityId: entityData.id, propertyIri, iris: value });
+          if (!value || value.length === 0) await clearDependentsOf(propertyIri);
+        } else if (kind === 'literal-set') {
+          await invoke('widget_inspector__set_literal_values', {
+            entityId: entityData.id,
+            propertyIri,
+            values: value,
+            datatype: propertyDraftDatatypes[propertyIri] ?? current?.datatype ?? null,
+          });
+        } else {
+          await invoke('widget_inspector__update_property', {
+            entityId: entityData.id,
+            propertyIri,
+            value,
+            datatype: propertyDraftDatatypes[propertyIri] ?? current?.datatype ?? null,
+          });
+        }
+        delete remainingDrafts[propertyIri];
+        delete errors[propertyIri];
+      } catch (err) {
+        errors[propertyIri] = String(err);
+      }
+    }
+    propertyDrafts = remainingDrafts;
+    propertyDraftErrors = errors;
+    savingProperties = false;
+    if (Object.keys(remainingDrafts).length === 0) {
+      editingProperties = false;
+      propertyDraftDatatypes = {};
+      propertyDraftKinds = {};
+      scheduleLoad();
     }
   }
 
@@ -561,7 +740,6 @@
         widgetType,
         entityId,
         position: null,
-        size: null,
         conversationId: conversationIri
       });
     } catch (err) {
@@ -570,6 +748,9 @@
   }
 
   const isLocked = $derived(entityData?.isLocked === true);
+  const propertyOrderSchemaChanged = $derived(
+    orderingProperties && entityData?.propertyOrderFingerprint !== propertyOrderBaseFingerprint
+  );
 
   async function toggleSystemLock() {
     if (!entityData?.id || togglingLock) return;
@@ -633,12 +814,13 @@
   onDestroy(cleanupInspector);
 </script>
 
-<div class="inspector-wrapper">
+<div class="inspector-wrapper" class:editing={editingProperties} class:class-entity={entityData?.isClass}>
   <WidgetContainer
     icon={entityData?.icon && !isIconUrl(entityData.icon) ? entityData.icon : 'info'}
     iconSrc={entityData?.icon && isIconUrl(entityData.icon) ? getIconSrc(entityData.icon) : null}
     title={entityData?.label ?? 'Inspector'}
     showTitle={true}
+    subtitleBeforeTitle={true}
     {windowState}
     {onWindowStateChange}
     onClose={closeWidget}
@@ -675,12 +857,12 @@
               {#if idx > 0}<span class="type-separator">·</span>{/if}
               <Tooltip.Root>
                 <Tooltip.Trigger
-                  class="type-link"
+                  class="type-link semantic-label"
                   aria-label="Abrir inspetor da classe {type.label}"
                   data-class-iri={type.iri}
                   onclick={openClassInspector}
                 >
-                  {type.label}
+                  <OntologyEntityIdentity kind="class" label={type.label} icon={type.icon} compact />
                 </Tooltip.Trigger>
                 <Tooltip.Content class="type-tooltip">
                   {type.label}
@@ -702,46 +884,45 @@
             disabled={isLocked || !(entityData.allowedStatuses?.length > 0)}
           >
             {#snippet child({ props })}
-              <button
-                {...props}
-                class="status-badge"
-                class:clickable={entityData.allowedStatuses?.length > 0 && !isLocked}
-                style="--status-color: {entityData.status?.color || 'var(--color-neutral)'}"
-                title={isLocked ? 'Entity is system-locked' : (entityData.status?.iri ?? 'Definir status')}
-              >
-                {#if entityData.status}
-                  <span class="material-symbols-outlined status-badge-icon">{entityData.status.icon || 'radio_button_checked'}</span>
-                  <span class="status-badge-label">{entityData.status.label}</span>
-                {:else}
-                  <span class="material-symbols-outlined status-badge-icon">radio_button_unchecked</span>
-                  <span class="status-badge-label">Status</span>
-                {/if}
-                {#if entityData.allowedStatuses?.length > 0}
-                  <span class="material-symbols-outlined status-badge-chevron">expand_more</span>
-                {/if}
-              </button>
+              <OntologyEntityReferenceChip
+                kind="individual"
+                label={entityData.status?.label ?? 'Status'}
+                icon={entityData.status?.icon ?? 'radio_button_unchecked'}
+                entityIri={entityData.status?.iri ?? null}
+                mode="trigger"
+                statusColor={entityData.status?.color ?? 'var(--color-neutral)'}
+                triggerProps={props}
+              />
             {/snippet}
           </Popover.Trigger>
           <Popover.Content align="end" class="status-picker-content">
             <div role="listbox" class="status-picker-list">
               {#each entityData.allowedStatuses as s}
-                <Button
-                  variant="ghost"
-                  class={`status-picker-item${s.iri === entityData.status?.iri ? ' active' : ''}`}
-                  style="--status-color: {s.color || 'var(--color-neutral)'}"
-                  role="option"
-                  aria-selected={s.iri === entityData.status?.iri}
-                  onclick={() => updateStatus(s.iri)}
-                >
-                  <span class="material-symbols-outlined status-badge-icon">{s.icon || 'radio_button_checked'}</span>
-                  <span class="status-badge-label">{s.label}</span>
-                </Button>
+                <OntologyEntityReferenceChip
+                  kind="individual"
+                  label={s.label}
+                  icon={s.icon || 'radio_button_checked'}
+                  entityIri={s.iri}
+                  mode="select"
+                  statusColor={s.color || 'var(--color-neutral)'}
+                  selected={s.iri === entityData.status?.iri}
+                  onselect={updateStatus}
+                />
               {/each}
             </div>
           </Popover.Content>
         </Popover.Root>
       {/if}
       <div style="flex: 1"></div>
+      {#if entityData && !entityData.isClass && !isLocked && !editingProperties}
+        <Button
+          variant="ghost"
+          size="icon-touch"
+          title="Editar propriedades"
+          aria-label="Editar propriedades"
+          onclick={beginPropertyEdit}
+        ><span class="material-symbols-outlined">edit</span></Button>
+      {/if}
       {#each widgetDefinitions as def}
         <Button variant="ghost" size="icon-touch"
           title={def.description}
@@ -767,6 +948,11 @@
               aria-controls="inspector-delete-confirmation"
           ><span class="material-symbols-outlined">delete_forever</span></Popover.Trigger>
           <Popover.Content id="inspector-delete-confirmation" aria-labelledby="inspector-delete-title" aria-describedby="inspector-delete-description" align="end" side="bottom" class="delete-confirm-popover">
+            <InspectorConfirmation
+              action={`Excluir ${deleteConfirmation?.entityLabel ?? entityData.label ?? entityData.id}`}
+              consequence="A entidade será removida permanentemente da ontologia."
+              impact={deleteConfirmation ? `${deleteConfirmation.cascade_items.length} entidades relacionadas e ${deleteConfirmation.backlink_count} referências afetadas.` : undefined}
+            >
             <div class="delete-confirm-heading">
               <span class="material-symbols-outlined delete-confirm-icon" aria-hidden="true">delete_forever</span>
               <div>
@@ -810,6 +996,7 @@
               <Button variant="outline" size="sm" onclick={cancelDelete}>Cancelar</Button>
               <Button variant="destructive" size="sm" disabled={deleteImpactLoading || deleteInProgress || deleteConfirmation === null} onclick={confirmDelete}>{deleteInProgress ? 'Excluindo…' : 'Excluir'}</Button>
             </div>
+            </InspectorConfirmation>
           </Popover.Content>
         </Popover.Root>
       {/if}
@@ -890,9 +1077,22 @@
                 p => p.property !== 'foundation:hasStatus' && p.property !== 'rdf:type')}
           requiredFields={entityData.requiredFields ?? []}
           isClass={entityData.isClass}
+          classLabel={entityData.isClass ? entityData.label : null}
+          classIcon={entityData.isClass ? entityData.icon : null}
+          propertyOrder={entityData.inspectorPropertyOrder ?? []}
+          propertyOrderDraft={propertyOrderDraft}
+          orderingProperties={orderingProperties}
+          canOrganizeProperties={entityData.isClass && !isLocked && !editingProperties}
+          onBeginPropertyOrdering={beginPropertyOrdering}
+          onMovePropertyOrder={handlePropertyOrderMove}
+          onDropPropertyOrder={handlePropertyOrderMove}
           {entityId}
           {openEntityInspector}
           onSave={entityData.isClass || isLocked ? null : saveProperty}
+          editMode={editingProperties}
+          drafts={propertyDrafts}
+          fieldErrors={propertyDraftErrors}
+          onDraftChange={updatePropertyDraft}
           onSaveReference={entityData.isClass || isLocked ? null : saveReferences}
           onClearProperty={entityData.isClass || isLocked ? null : clearProperty}
           onRemoveProperty={entityData.isClass && !isLocked ? initiateRemoveProperty : null}
@@ -903,7 +1103,35 @@
         />
       </div>
 
-      {#if !entityData.isClass && (isAutomationWithoutInputClass || applicableAutomations.length > 0)}
+      {#if editingProperties}
+        <footer class="property-edit-footer" aria-label="Ações para concluir a edição">
+          <span class="edit-mode-announcement" role="status" aria-live="polite">Modo de edição ativo. As alterações ainda não foram salvas.</span>
+          <div class="property-edit-actions">
+            <SemanticInspectorAction label="Cancelar" icon="close" priority="supporting" available={!savingProperties} onpress={cancelPropertyEdit} />
+            <SemanticInspectorAction label={savingProperties ? 'Salvando…' : 'Salvar'} icon="check" priority="primary" available={!savingProperties} onpress={savePropertyDrafts} />
+          </div>
+        </footer>
+      {/if}
+
+      {#if orderingProperties}
+        <footer class="property-edit-footer property-order-footer" aria-label="Ações para organizar propriedades">
+          <span class="edit-mode-announcement" role="status" aria-live="polite">{propertyOrderAnnouncement}</span>
+          <div class="property-order-feedback" aria-live="polite">
+            {#if propertyOrderSchemaChanged}
+              <span class="property-order-error">O schema mudou. Cancele e reabra a organização para carregar a lista atualizada.</span>
+            {:else if propertyOrderError}
+              <span class="property-order-error">{propertyOrderError}</span>
+            {/if}
+            <span>{propertyOrderDraft.length} propriedades</span>
+          </div>
+          <div class="property-edit-actions">
+            <SemanticInspectorAction label="Cancelar" icon="close" priority="supporting" available={!savingPropertyOrder} onpress={cancelPropertyOrdering} />
+            <SemanticInspectorAction label={savingPropertyOrder ? 'Salvando…' : 'Salvar'} icon="check" priority="primary" available={!savingPropertyOrder && !propertyOrderSchemaChanged} onpress={savePropertyOrder} />
+          </div>
+        </footer>
+      {/if}
+
+      {#if !editingProperties && !entityData.isClass && (isAutomationWithoutInputClass || applicableAutomations.length > 0)}
         <div class="actions-bar">
           {#if isAutomationWithoutInputClass}
             {@const isRunning = runningAutomationIri === entityId}
@@ -958,7 +1186,8 @@
     background: transparent;
     color: var(--text-primary);
     font: inherit;
-    font-size: var(--type-body-prominent);
+    font-size: var(--type-title);
+    font-weight: var(--weight-primary-title);
     line-height: 1.25;
     text-align: left;
     overflow-wrap: anywhere;
@@ -969,7 +1198,7 @@
   }
 
   :global(.inspector-title.editable) {
-    cursor: text;
+    cursor: pointer;
   }
 
   :global(.inspector-title.editable:hover) {
@@ -984,7 +1213,8 @@
     border: 0;
     background: transparent;
     color: var(--text-primary);
-    font-size: var(--type-body-prominent);
+    font-size: var(--type-title);
+    font-weight: var(--weight-primary-title);
     line-height: 1.25;
     box-shadow: none;
   }
@@ -1057,8 +1287,8 @@
   }
 
   .impact-list {
-    max-height: 132px;
-    overflow-y: auto;
+    max-height: none;
+    overflow: visible;
     margin: 0 0 var(--spacing-control-internal) 0;
     padding-left: 16px;
     display: flex;
@@ -1104,8 +1334,41 @@
 
   .inspector-wrapper {
     width: 100%;
-    height: 100%;
+    height: max-content;
+    min-height: max-content;
     position: relative;
+  }
+
+  :global(.inspector-wrapper.class-entity .widget) {
+    --color-hud-line-subtle: var(--color-ontology-class-line);
+    --color-hud-point: var(--color-ontology-class-point);
+    --color-hud-glow: var(--color-ontology-class-glow);
+    background: transparent;
+  }
+
+  :global(.inspector-wrapper.class-entity .widget-header) {
+    background: var(--color-ontology-class-surface);
+  }
+
+  :global(.inspector-wrapper.class-entity .header-actions) {
+    background: var(--color-ontology-class-surface);
+  }
+
+  :global(.inspector-wrapper.class-entity .widget-content) {
+    background: var(--color-ontology-class-surface);
+  }
+
+  :global(.inspector-wrapper.class-entity .header-icon) {
+    color: var(--color-ontology-class);
+  }
+
+  :global(.inspector-wrapper .header-top) {
+    align-items: flex-start;
+  }
+
+  :global(.inspector-wrapper .header-left),
+  :global(.inspector-wrapper .header-controls) {
+    align-items: flex-start;
   }
 
   .header-types {
@@ -1129,13 +1392,7 @@
     white-space: normal;
     padding: 0;
     height: auto;
-    font-family: var(--font-mono);
-    font-size: var(--type-overline);
-    color: var(--text-secondary);
-    letter-spacing: var(--tracking-hud-label);
-    line-height: var(--line-height-hud-compact);
     text-align: left;
-    text-transform: uppercase;
   }
 
   :global(.type-link:hover) {
@@ -1155,62 +1412,9 @@
     font-size: var(--type-caption-compact);
   }
 
-  .status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 3px 8px 3px 5px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--status-color) 18%, transparent);
-    border: none;
-    cursor: default;
-  }
-
-  .status-badge.clickable {
-    cursor: pointer;
-  }
-
-  .status-badge-icon {
-    font-size: var(--type-icon-small);
-    color: var(--status-color);
-  }
-
-  .status-badge-label {
-    font-family: var(--font-body);
-    font-size: var(--type-caption-compact);
-    color: var(--status-color);
-    white-space: nowrap;
-  }
-
-  .status-badge-chevron {
-    font-size: var(--type-icon-small);
-    color: var(--status-color);
-    opacity: 0.7;
-  }
-
-  :global([data-slot="button"].status-picker-item) {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-control-internal);
-    padding: var(--spacing-inline-tight) var(--spacing-control-internal);
-    height: auto;
-    width: 100%;
-    justify-content: flex-start;
-    border-radius: var(--radius);
-  }
-
-  :global([data-slot="button"].status-picker-item.active) {
-    background: color-mix(in srgb, var(--status-color) 30%, transparent);
-  }
-
-  :global([data-slot="button"].status-picker-item:hover) {
-    background: color-mix(in srgb, var(--status-color) 15%, transparent);
-    color: inherit;
-  }
-
   :global(.status-picker-content) {
     padding: var(--spacing-inline-tight);
-    min-width: 160px;
+    min-width: 220px;
   }
 
   :global(.status-picker-list) {
@@ -1220,9 +1424,49 @@
   }
 
   .content-scroll {
-    flex: 1;
-    overflow-y: auto;
+    flex: none;
+    overflow: visible;
     padding: var(--spacing-widget-inset);
+  }
+
+  .property-edit-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-shrink: 0;
+    gap: var(--spacing-section);
+    padding: var(--spacing-widget-inset);
+    background: color-mix(in srgb, var(--color-surface-1) 97%, transparent);
+    backdrop-filter: blur(var(--blur-widget-surface));
+  }
+
+  .property-edit-actions { display: flex; align-items: center; gap: var(--spacing-inline-related); }
+
+  .property-order-footer { justify-content: space-between; }
+
+  .property-order-feedback { display: flex; align-items: center; gap: var(--spacing-field-group); color: var(--color-neutral); font-size: var(--type-caption); }
+
+  .property-order-error { color: var(--color-error); }
+
+  .edit-mode-announcement {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  :global(.inspector-wrapper.editing .widget) {
+    box-shadow: inset 0 0 0 var(--size-hud-frame-line) var(--color-interactive);
+  }
+
+  :global(.inspector-wrapper.editing .widget-header) {
+    background: color-mix(in srgb, var(--color-interactive) 12%, var(--color-surface-1));
+    border-bottom-color: var(--color-interactive);
   }
 
   .locked-banner {
@@ -1293,6 +1537,33 @@
     padding: 0px;
     background: color-mix(in srgb, var(--color-black) 60%, transparent);
     flex-wrap: 1;
+  }
+
+  :global(.inspector-wrapper .header-actions) {
+    margin: 0;
+    padding: var(--spacing-inline-tight) var(--spacing-widget-header-inline);
+    background: color-mix(in srgb, var(--color-interactive) 5%, var(--color-black));
+    border: 0;
+    border-radius: 0;
+  }
+
+  :global(.inspector-wrapper .header-actions [data-slot="button"]),
+  :global(.inspector-wrapper .header-actions .delete-trigger) {
+    color: var(--color-interactive);
+  }
+
+  :global(.inspector-wrapper .header-actions [data-slot="button"]:hover),
+  :global(.inspector-wrapper .header-actions .delete-trigger:hover) {
+    color: var(--color-interactive-hover);
+  }
+
+  :global(.inspector-wrapper .header-actions [data-slot="button"]:disabled) {
+    color: var(--color-interactive-disabled);
+  }
+
+  :global(.inspector-wrapper .header-actions .delete-trigger:hover) {
+    background: color-mix(in srgb, var(--color-danger) 15%, transparent);
+    color: var(--color-danger);
   }
 
   :global([data-slot="button"].action-bar-btn) {

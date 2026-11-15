@@ -605,13 +605,6 @@
     min-width: 0;
   }
 
-  .field-label {
-    color: var(--color-neutral-secondary);
-    font-size: var(--type-overline);
-    letter-spacing: var(--tracking-hud-label);
-    text-transform: uppercase;
-  }
-
   .evidence-field p,
   .state-message,
   .empty-state,

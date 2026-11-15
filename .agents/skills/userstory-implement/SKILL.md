@@ -1,6 +1,6 @@
 ---
 name: userstory-implement
-description: "Use when the user (PO) asks to implement / develop a Foundation User Story that is already in status \"Planejado\" or \"Pronto para Dev\" — orchestrates execution by (1) calling the `architect` agent in Modo Execução **Briefing** to validate state, move the US to Em Progresso and produce per-dev briefings; (2) dispatching `developer-backend` and `developer-frontend` in parallel (or sequential when the plan says so) with the briefings; (3) calling the `architect` again in Modo Execução **Costura** with the dev returns to validate builds, consolidate `## Como testar` (merging UX's \"Validação pelo usuário\" checklist when present), log changelog and move the story to \"Em Validação (QA)\". This skill runs in the primary Codex agent and explicitly orchestrates the specialist subagents. The PO never talks to devs directly; the skill mediates. Skill name follows entity-action convention."
+description: "Use when the user (PO) asks to implement / develop a Foundation User Story that is already in status \"Planejado\" or \"Pronto para Dev\", or requests a quick fix for an existing Acceptance Criterion while the User Story is in \"Mudança Pendente\" or \"Em Progresso\" and its approved plan still covers the correction. The quick-fix path validates the existing AC/plan, dispatches only the owning developer, then runs focused QA without skipping evidence or status readback. The full path orchestrates execution by (1) calling the `architect` agent in Modo Execução **Briefing** to validate state, move the US to Em Progresso and produce per-dev briefings; (2) dispatching `developer-backend` and `developer-frontend` in parallel (or sequential when the plan says so) with the briefings; (3) calling the `architect` again in Modo Execução **Costura** with the dev returns to validate builds, consolidate `## Como testar` (merging UX's \"Validação pelo usuário\" checklist when present), log changelog and move the story to \"Em Validação (QA)\". This skill runs in the primary Codex agent and explicitly orchestrates the specialist subagents. The PO never talks to devs directly; the skill mediates. Skill name follows entity-action convention."
 ---
 
 # Implement User Story
@@ -24,11 +24,23 @@ A skill recebe a IRI da User Story como argumento (ex. `foundation:UserStory_177
 
 ---
 
+## Caminho rápido — correção dentro de escopo aprovado
+
+Use este caminho quando a mudança corrige um defeito que viola um AC existente, permanece no escopo da mesma US e não altera requisitos, arquitetura, modelo de dados ou postura de segurança.
+
+1. O architect faz uma checagem curta do AC, do plano existente, do dono da fatia e das verificações necessárias. Se o plano existente cobre a correção, não repetir o planejamento completo nem criar US/AC. Se não cobre, retornar ao fluxo completo de planejamento.
+2. Pular uma etapa separada de UX somente quando a correção não alterar interação visível, linguagem visual ou acessibilidade. Mudanças que afetem qualquer uma dessas áreas ainda precisam da revisão UX adequada.
+3. O architect confirma as pré-condições e a transição de status necessária; o agente principal dispara somente o desenvolvedor dono da área.
+4. Depois dos checks do desenvolvedor, chamar o architect imediatamente para costura, registrar changelog e passos de teste, e encaminhar para QA.
+5. QA valida o AC afetado e regressões próximas, registra evidência concreta, atualiza apenas os estados confirmados e lê de volta todos os status atuais da US/ACs. ACs bloqueados por outras dependências não podem ser marcados Concluídos.
+
+O caminho rápido não elimina propriedade dos especialistas, checks, QA, evidência ou leitura de status; reduz apenas handoffs de planejamento que repetiriam um plano ainda válido. Ele pode começar com a US em `Mudança Pendente` ou `Em Progresso`, desde que o architect confirme que a correção já está coberta por um AC e pelo plano aprovado. Para `Mudança Pendente`, o architect a move para `Em Progresso` imediatamente antes da implementação. Se o plano não cobre o trabalho ou o problema revela uma lacuna de requisito, usar o fluxo completo e retornar a US para planejamento.
+
 ## Como executar
 
 ### Passo 1 — Acionar o Arquiteto em Modo 2a (Briefing)
 
-Invoque o agente `architect` como subagente customizado (agente: `architect`) com prompt auto-contido. Ele valida estado, move a US para Em Progresso, lê o `implementationPlan` e devolve **briefings prontos** por dev.
+Invoque o agente `architect` como subagente customizado (agente: `architect`) com prompt auto-contido. No fluxo completo, ele valida estado, move a US para Em Progresso, lê o `implementationPlan` e devolve **briefings prontos** por dev. No caminho rápido, use a checagem curta descrita acima; não exija um plano novo nem briefings de fatias que não serão executadas.
 
 Modelo de prompt para o `architect`:
 
@@ -38,7 +50,7 @@ Modo: Execução — 2a Briefing
 US: <IRI da User Story>
 
 Tarefa: executar o Modo 2a (Briefing) do Modo Execução conforme a sua persona:
-- Validar pré-condições (status em Planejado / Pronto para Dev; `implementationPlan` preenchido com seção "Fatia de execução").
+- Validar pré-condições: no fluxo completo, status em Planejado / Pronto para Dev e `implementationPlan` preenchido com seção "Fatia de execução"; no caminho rápido, status em Mudança Pendente / Em Progresso e AC + plano existente cobrindo a correção.
 - Ler a lista atual de ACs e status via MCP; confirmar que todos têm status, pertencem ao escopo da US e serão cobertos pelo plano. Se um AC foi criado/alterado após QA ou conclusão, encaminhar a US para Mudança Pendente e replanejar antes de iniciar.
 - Mover a US para `foundation:InProgress` via `replace_property_values`.
 - Ler `capability` / `benefit` / `acceptanceCriteria` / `implementationPlan` inteiros.
@@ -127,6 +139,8 @@ Não faça commit nem push — `$code-commit` é skill separada e o usuário dec
 
 ## Regras
 
+- **NEVER** implement a US until its scope is confirmed as reusable Foundation behavior; if it only changes one configured application, stop before dispatching developers and apply the change directly to that application's ontology, automation, or widget spec.
+- **ALWAYS** sanitize application-specific examples and personal data from generic Foundation plans, test evidence, and changelogs.
 - **NEVER** invoque o `architect` na esperança de que ele dispare os devs — o `architect` é sub-agente e NÃO pode invocar outros sub-agentes. Quem dispara é esta skill.
 - **NEVER** invoque o `ux` aqui — UX só entra no Planejamento. A spec dele já está no plano como contrato.
 - **NEVER** mova status, edite o `implementationPlan` ou rode `cargo`/`npm` aqui — tudo isso é responsabilidade do `architect` (status / plano) e dos devs (build).

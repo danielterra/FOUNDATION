@@ -12,6 +12,11 @@
   import QueryConfigEditor from './QueryConfigEditor.svelte';
   import { Input } from '$lib/components/ui/input';
   import * as Tooltip from '$lib/components/ui/tooltip';
+  import InspectorValueEntry from './InspectorValueEntry.svelte';
+  import InspectorReferenceDecision from './InspectorReferenceDecision.svelte';
+  import InspectorInformation from './InspectorInformation.svelte';
+  import InspectorDetails from './InspectorDetails.svelte';
+  import OntologyEntityIdentity from './OntologyEntityIdentity.svelte';
 
   let {
     detailGroup,
@@ -20,6 +25,10 @@
     entityId = null,
     openEntityInspector,
     onSave = null,
+    editMode = false,
+    drafts = {},
+    fieldErrors = {},
+    onDraftChange = null,
     onSaveReference = null,
     onClearProperty = null,
     onRemoveProperty = null,
@@ -28,6 +37,53 @@
     onLoadMoreBacklinks = null,
     onLoadMoreProperty = null,
   } = $props();
+
+  const isMultipleLiteralEntry = $derived(detailGroup.maxCount !== 1);
+  const isGlobalEditable = $derived(
+    !isClass && editMode && onDraftChange && onSave &&
+    !detailGroup.isObjectProperty && !detailGroup.isCalculated &&
+    !detailGroup.sourceClassIri && !detailGroup.isQueryProperty &&
+    (isMultipleLiteralEntry || detailGroup.isEmpty || detailGroup.values.length === 1) &&
+    (isTextEditable(detailGroup.datatype) || detailGroup.datatype === 'xsd:anyURI' || detailGroup.datatype === 'xsd:boolean' || isDateType(detailGroup.datatype) || isNumericType(detailGroup.datatype) || isRruleType(detailGroup.datatype) || isQueryConfigProperty(detailGroup.property))
+  );
+  const isGlobalReferenceEditable = $derived(
+    !isClass && editMode && onDraftChange && onSaveReference &&
+    (detailGroup.isObjectProperty || detailGroup.isPropertyPicker) && !detailGroup.isCalculated &&
+    !detailGroup.sourceClassIri && !detailGroup.isQueryProperty
+  );
+
+  function semanticValueType() {
+    if (detailGroup.presentation === 'code') return 'code';
+    if (detailGroup.datatype === 'rdf:HTML') return 'html';
+    if (detailGroup.datatype === 'foundation:markdown') return 'markdown';
+    if (isRruleType(detailGroup.datatype)) return 'recurrence_rule';
+    if (isQueryConfigProperty(detailGroup.property)) return 'query_config';
+    if (detailGroup.datatype === 'xsd:dateTime') return 'date_time';
+    if (detailGroup.datatype === 'xsd:date') return 'date';
+    if (detailGroup.datatype === 'xsd:boolean') return 'boolean';
+    if (isNumericType(detailGroup.datatype)) return 'number';
+    if (detailGroup.datatype === 'xsd:anyURI') return 'url';
+    if (detailGroup.datatype === 'xsd:string' && detailGroup.property.toLowerCase().includes('email')) return 'email';
+    return 'text';
+  }
+
+  function currentDraft() {
+    if (Object.hasOwn(drafts, detailGroup.property)) return drafts[detailGroup.property];
+    if (isMultipleLiteralEntry) return [...detailGroup.values, ...extraValues].map((item) => String(item.value ?? ''));
+    return detailGroup.values[0]?.value ?? '';
+  }
+
+  function currentReferenceValues() {
+    if (!Object.hasOwn(drafts, detailGroup.property)) return detailGroup.values.map((item) => ({
+      iri: item.value,
+      label: item.valueLabel ?? item.value,
+      icon: item.valueIcon ?? null,
+    }));
+    return (drafts[detailGroup.property] ?? []).map((iri) => {
+      const previous = detailGroup.values.find((item) => item.value === iri);
+      return { iri, label: previous?.valueLabel ?? iri, icon: previous?.valueIcon ?? null };
+    });
+  }
 
   let editingKey = $state(null);
   let draftValue = $state('');
@@ -39,6 +95,7 @@
   let editingCardinalityKey = $state(null);
   let extraValues = $state([]);
   let loadingMore = $state(false);
+  let loadingAllForEdit = $state(false);
   let nextCursor = $state(null);
   let pageHasMore = $state(false);
 
@@ -82,6 +139,7 @@
           value: item.value,
           valueLabel: item.valueLabel ?? null,
           valueIcon: item.valueIcon ?? null,
+          valueEntityKind: item.valueEntityKind ?? null,
           valueStatus: item.valueStatus ?? null,
           datatype: item.datatype ?? null,
           presentation: item.presentation ?? null,
@@ -98,9 +156,72 @@
       loadingMore = false;
     }
   }
+
+  async function loadAllValuesForEdit() {
+    if (loadingAllForEdit) return;
+    loadingAllForEdit = true;
+    try {
+      while (pageHasMore) await loadMore();
+    } finally {
+      loadingAllForEdit = false;
+    }
+  }
   let cardinalityDraftMin = $state('');
   let cardinalityDraftMax = $state('');
   let savingCardinality = $state(false);
+
+  let previewElement = $state(null);
+  let isPreviewExpanded = $state(false);
+  let hasPreviewOverflow = $state(false);
+
+  const isReadOnlyPreview = $derived(
+    !editMode && !editingKey && !editingRefKey &&
+    editingCardinalityKey !== detailGroup.property &&
+    editingQueryConfigKey !== detailGroup.property
+  );
+  const previewId = $derived(`property-preview-${String(detailGroup._groupKey ?? detailGroup.property).replace(/[^a-zA-Z0-9_-]/g, '-')}`);
+  const semanticReadValues = $derived([
+    ...detailGroup.values,
+    ...extraValues,
+  ].map((item) => String(item.valueLabel ?? item.value ?? '')).filter(Boolean));
+  const semanticDetailFacts = $derived(semanticReadValues.map((value, index) => ({
+    label: semanticReadValues.length === 1 ? 'Conteúdo' : `Valor ${index + 1}`,
+    value,
+  })));
+  const semanticSummary = $derived(semanticReadValues.join(' · ').slice(0, 240));
+
+  $effect(() => {
+    const groupKey = detailGroup._groupKey;
+    const currentEntityId = entityId;
+    if (groupKey !== _lastGroupKey || currentEntityId !== _lastEntityId) {
+      isPreviewExpanded = false;
+      hasPreviewOverflow = false;
+    }
+  });
+
+  $effect(() => {
+    const element = previewElement;
+    if (!element || !isReadOnlyPreview || isPreviewExpanded) return;
+
+    let frame = 0;
+    const measure = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        hasPreviewOverflow = element.scrollHeight > element.clientHeight + 1;
+      });
+    };
+    const resizeObserver = new ResizeObserver(measure);
+    resizeObserver.observe(element);
+    const mutationObserver = new MutationObserver(measure);
+    mutationObserver.observe(element, { subtree: true, childList: true, characterData: true, attributes: true });
+    measure();
+
+    return () => {
+      cancelAnimationFrame(frame);
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+    };
+  });
 
   let editingQueryConfigKey = $state(null);
   let savingQueryConfig = $state(false);
@@ -108,6 +229,15 @@
   let dateInputRef = $state(null);
   let numericInputRef = $state(null);
   let cardinalityMinRef = $state(null);
+
+  $effect(() => {
+    if (editMode) return;
+    editingRefKey = null;
+    editingKey = null;
+    draftValue = '';
+    editingDatatype = null;
+    saveError = null;
+  });
 
   $effect(() => {
     if (dateInputRef) dateInputRef.focus();
@@ -152,6 +282,13 @@
 
   async function saveEdit(propertyIri) {
     if (!onSave || saving) return;
+    if (editMode && onDraftChange) {
+      onDraftChange(propertyIri, fromInputValue(draftValue, editingDatatype), editingDatatype, 'literal');
+      editingKey = null;
+      draftValue = '';
+      editingDatatype = null;
+      return;
+    }
     saving = true;
     saveError = null;
     try {
@@ -181,7 +318,8 @@
     if (!onSaveReference || savingRef) return;
     savingRef = true;
     try {
-      await onSaveReference(propertyIri, iris);
+      if (editMode && onDraftChange) onDraftChange(propertyIri, iris, null, 'references');
+      else await onSaveReference(propertyIri, iris);
     } finally {
       savingRef = false;
       editingRefKey = null;
@@ -323,16 +461,6 @@
     return String(value);
   }
 
-  function formatDatatype(datatype) {
-    if (!datatype || datatype === 'xsd:string' || datatype === 'rdf:langString') return 'String';
-    if (datatype === 'foundation:rrule') return 'Recorrência';
-    if (datatype === 'rdf:HTML') return 'HTML';
-    if (datatype === 'foundation:markdown') return 'Markdown';
-    const parts = datatype.split(':');
-    const typeName = parts.length > 1 ? parts[1] : datatype;
-    return typeName.charAt(0).toUpperCase() + typeName.slice(1);
-  }
-
   function datePart(v) { return v?.split('T')[0] ?? ''; }
   function timePart(v) { return v?.split('T')[1] ?? ''; }
   function combineDatetime(d, t) {
@@ -379,7 +507,7 @@
         }}
       />
     {/if}
-    <div class="edit-actions">
+    {#if !editMode}<div class="edit-actions">
       <Button
         variant="default"
         size="sm"
@@ -397,13 +525,14 @@
       <Button
         variant="ghost"
         size="sm"
+        class="preview-toggle-button"
         onmousedown={(e) => e.preventDefault()}
         onclick={cancelEdit}
       >
         <span class="material-symbols-outlined">close</span>
         Cancel
       </Button>
-    </div>
+    </div>{/if}
   </div>
 {/snippet}
 
@@ -420,7 +549,7 @@
         else if (e.key === 'Enter') saveEdit(propertyIri);
       }}
     />
-    <div class="edit-actions">
+    {#if !editMode}<div class="edit-actions">
       <Button
         variant="default"
         size="sm"
@@ -444,63 +573,57 @@
         <span class="material-symbols-outlined">close</span>
         Cancel
       </Button>
-    </div>
+    </div>{/if}
   </div>
 {/snippet}
 
-<div class="detail-item" transition:slide={{ duration: 300, easing: cubicOut }}>
+<div class="detail-item" class:class-entity={isClass} transition:slide={{ duration: 300, easing: cubicOut }}>
   <div class="detail-header">
-    <div class="detail-name field-label">
-      {detailGroup.propertyLabel}
-      {#if detailGroup.propertyComment || detailGroup.sourceClassLabel}
-        <Tooltip.Root>
-          <Tooltip.Trigger class="prop-info-trigger" aria-label="Ajuda sobre {detailGroup.propertyLabel}">
-            <span class="material-symbols-outlined prop-info" aria-hidden="true">info</span>
-          </Tooltip.Trigger>
-          <Tooltip.Content class="prop-hint-content">
-            {#if detailGroup.propertyComment}
-              <p class="prop-hint-desc">{detailGroup.propertyComment}</p>
-            {/if}
-            {#if detailGroup.sourceClassLabel}
-              <div class="prop-hint-source" class:with-sep={detailGroup.propertyComment}>
-                <span class="prop-hint-chip">
-                  {#if detailGroup.sourceClassIcon}
-                    <span class="material-symbols-outlined prop-hint-chip-icon">{detailGroup.sourceClassIcon}</span>
-                  {/if}
-                  {detailGroup.sourceClassLabel}
-                </span>
-              </div>
-            {/if}
-          </Tooltip.Content>
-        </Tooltip.Root>
-      {/if}
-      {#if detailGroup.isObjectProperty}
-        <span class="detail-type detail-type-object">
-          {#if detailGroup.rangeClassIcon}
-            <span class="material-symbols-outlined detail-type-icon">{detailGroup.rangeClassIcon}</span>
-          {/if}
-          {detailGroup.rangeClassLabel ?? 'Object'}
-        </span>
-      {:else}
-        <span class="detail-type">{formatDatatype(detailGroup.datatype)}</span>
-      {/if}
-      {#if detailGroup.isQueryProperty}
-        <span class="calculated-badge query-badge" title="Coleção derivada — valores resolvidos automaticamente por filtros">
-          <span class="material-symbols-outlined calculated-icon">manage_search</span>
-          Query
-        </span>
-      {:else if detailGroup.isCalculated}
-        <span class="calculated-badge" title="Campo calculado automaticamente">
-          <span class="material-symbols-outlined calculated-icon">calculate</span>
-          Calculado
-        </span>
-      {/if}
-      {#if (detailGroup.values.length + extraValues.length) > 1}
-        <span class="detail-count">{detailGroup.values.length + extraValues.length}{#if detailGroup.groupTotal && (detailGroup.values.length + extraValues.length) < detailGroup.groupTotal}/{detailGroup.groupTotal}{/if}</span>
-      {/if}
-      {#if isClass && (detailGroup.minCount !== null || detailGroup.maxCount !== null)}
-        <span class="cardinality-badge">{formatCardinality(detailGroup.minCount, detailGroup.maxCount)}</span>
-      {/if}
+    <div class="detail-heading">
+      <div class="detail-name field-label">
+        {detailGroup.propertyLabel}
+        {#if detailGroup.propertyComment || detailGroup.sourceClassLabel}
+          <Tooltip.Root>
+            <Tooltip.Trigger class="prop-info-trigger" aria-label="Ajuda sobre {detailGroup.propertyLabel}">
+              <span class="material-symbols-outlined prop-info" aria-hidden="true">info</span>
+            </Tooltip.Trigger>
+            <Tooltip.Content class="prop-hint-content">
+              {#if detailGroup.propertyComment}
+                <p class="prop-hint-desc">{detailGroup.propertyComment}</p>
+              {/if}
+              {#if detailGroup.sourceClassLabel}
+                <div class="prop-hint-source" class:with-sep={detailGroup.propertyComment}>
+                  <span class="prop-hint-chip">
+                    <OntologyEntityIdentity
+                      kind="class"
+                      label={detailGroup.sourceClassLabel}
+                      icon={detailGroup.sourceClassIcon}
+                      compact
+                    />
+                  </span>
+                </div>
+              {/if}
+            </Tooltip.Content>
+          </Tooltip.Root>
+        {/if}
+        {#if detailGroup.isQueryProperty}
+          <span class="calculated-badge query-badge" title="Coleção derivada — valores resolvidos automaticamente por filtros">
+            <span class="material-symbols-outlined calculated-icon">manage_search</span>
+            Query
+          </span>
+        {:else if detailGroup.isCalculated}
+          <span class="calculated-badge" title="Campo calculado automaticamente">
+            <span class="material-symbols-outlined calculated-icon">calculate</span>
+            Calculado
+          </span>
+        {/if}
+        {#if (detailGroup.values.length + extraValues.length) > 1}
+          <span class="detail-count">{detailGroup.values.length + extraValues.length}{#if detailGroup.groupTotal && (detailGroup.values.length + extraValues.length) < detailGroup.groupTotal}/{detailGroup.groupTotal}{/if}</span>
+        {/if}
+        {#if isClass && (detailGroup.minCount !== null || detailGroup.maxCount !== null)}
+          <span class="cardinality-badge">{formatCardinality(detailGroup.minCount, detailGroup.maxCount)}</span>
+        {/if}
+      </div>
     </div>
     {#if isClass}
       <div class="class-prop-actions">
@@ -556,54 +679,97 @@
         {/if}
       </div>
     {:else}
-      <div class="prop-actions">
-        {#if onSave && !detailGroup.isObjectProperty && !detailGroup.isCalculated && (isTextEditable(detailGroup.datatype) || isDateType(detailGroup.datatype) || isNumericType(detailGroup.datatype) || isRruleType(detailGroup.datatype) || isQueryConfigProperty(detailGroup.property)) && (detailGroup.isEmpty || detailGroup.values.length <= 1)}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            class="edit-btn"
-            title="Edit"
-            onclick={() => startEdit(detailGroup.property, detailGroup.values[0]?.value ?? '', 0, detailGroup.datatype ?? null)}
-          >
-            <span class="material-symbols-outlined">edit</span>
-          </Button>
-        {:else if onSaveReference && detailGroup.isObjectProperty && !detailGroup.isCalculated && !detailGroup.sourceClass}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            class="edit-btn"
-            title="Edit"
-            onclick={() => startRefEdit(detailGroup.property)}
-          >
-            <span class="material-symbols-outlined">edit</span>
-          </Button>
-        {:else if onSaveReference && detailGroup.isPropertyPicker && !detailGroup.isCalculated && !detailGroup.sourceClass}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            class="edit-btn"
-            title="Selecionar propriedade"
-            onclick={() => startRefEdit(detailGroup.property)}
-          >
-            <span class="material-symbols-outlined">edit</span>
-          </Button>
-        {/if}
-        {#if onClearProperty && !detailGroup.isCalculated && !detailGroup.isEmpty}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            class="edit-btn clear-btn"
-            title="Limpar valor"
-            onclick={() => onClearProperty(detailGroup.property)}
-          >
-            <span class="material-symbols-outlined">backspace</span>
-          </Button>
-        {/if}
-      </div>
+      <div class="prop-actions"></div>
     {/if}
   </div>
 
-  <div class="detail-content">
+  <InspectorInformation title={detailGroup.propertyLabel ?? detailGroup.property} active={isReadOnlyPreview}>
+  <InspectorDetails
+    title={detailGroup.propertyLabel ?? detailGroup.property}
+    summary={semanticSummary}
+    details={semanticDetailFacts.length ? semanticDetailFacts : [{ label: 'Conteúdo', value: 'Conteúdo complementar' }]}
+    expanded={isPreviewExpanded}
+    active={isReadOnlyPreview && hasPreviewOverflow}
+  >
+  <div id={previewId} bind:this={previewElement} class="detail-content" class:preview-collapsed={isReadOnlyPreview && !isPreviewExpanded}>
+  {#if isGlobalReferenceEditable}
+    <InspectorReferenceDecision
+      title={detailGroup.propertyLabel ?? detailGroup.property}
+      rangeLabel={detailGroup.rangeClassLabel}
+      multiple={detailGroup.maxCount !== 1}
+      selectedValues={currentReferenceValues()}
+    >
+      {#snippet children()}
+        {#if detailGroup.isPropertyPicker}
+          <PropertySelect
+            nodeIri={entityId}
+            propertyIri={detailGroup.property}
+            currentValue={currentReferenceValues()[0] ?? null}
+            saving={savingRef}
+            draftOnly={editMode}
+            onsave={saveRefEdit}
+            oncancel={cancelRefEdit}
+          />
+        {:else if detailGroup.maxCount === 1}
+          <ReferenceSingleSelect
+            propertyIri={detailGroup.property}
+            rangeClassIri={detailGroup.rangeClassIri}
+            rangeClassLabel={detailGroup.rangeClassLabel}
+            currentValue={currentReferenceValues()[0] ?? null}
+            saving={savingRef}
+            draftOnly={editMode}
+            onsave={saveRefEdit}
+            oncancel={cancelRefEdit}
+          />
+        {:else}
+          <ReferenceSelect
+            propertyIri={detailGroup.property}
+            rangeClassIri={detailGroup.rangeClassIri}
+            rangeClassLabel={detailGroup.rangeClassLabel}
+            currentValues={currentReferenceValues()}
+            minCount={detailGroup.minCount}
+            maxCount={detailGroup.maxCount}
+            saving={savingRef}
+            draftOnly={editMode}
+            onsave={saveRefEdit}
+            oncancel={cancelRefEdit}
+          />
+        {/if}
+      {/snippet}
+    </InspectorReferenceDecision>
+    {#if fieldErrors[detailGroup.property]}
+      <div class="save-error" role="alert">
+        <span class="material-symbols-outlined save-error-icon">error</span>
+        <span class="save-error-text">{fieldErrors[detailGroup.property]}</span>
+      </div>
+    {/if}
+  {:else if isGlobalEditable}
+    {#if isMultipleLiteralEntry && hasMore}
+      <div class="load-all-values" role="status">
+        <span>Há valores ainda não carregados. Carregue o conjunto completo antes de editar para preservar todos os dados.</span>
+        <Button variant="outline" size="sm" onclick={loadAllValuesForEdit} disabled={loadingAllForEdit || loadingMore}>
+          <span class:spinning-small={loadingAllForEdit} class="material-symbols-outlined">{loadingAllForEdit ? 'progress_activity' : 'unfold_more'}</span>
+          {loadingAllForEdit ? 'Carregando valores…' : 'Carregar todos para editar'}
+        </Button>
+      </div>
+    {:else}
+      <InspectorValueEntry
+        label={detailGroup.propertyLabel ?? detailGroup.property}
+        value={currentDraft()}
+        cardinality={isMultipleLiteralEntry ? 'multiple' : 'single'}
+        valueType={semanticValueType()}
+        language={detailGroup.language}
+        required={Boolean(detailGroup.minCount && detailGroup.minCount > 0)}
+        onvaluechange={(value) => onDraftChange(detailGroup.property, value, detailGroup.datatype ?? null, Array.isArray(value) ? 'literal-set' : 'literal')}
+      />
+    {/if}
+    {#if fieldErrors[detailGroup.property]}
+      <div class="save-error" role="alert">
+        <span class="material-symbols-outlined save-error-icon">error</span>
+        <span class="save-error-text">{fieldErrors[detailGroup.property]}</span>
+      </div>
+    {/if}
+  {:else}
   {#if editingCardinalityKey === detailGroup.property}
     <div class="cardinality-edit-form">
       <div class="cardinality-edit-row">
@@ -663,7 +829,7 @@
     </div>
   {/if}
 
-  {#if editingQueryConfigKey === detailGroup.property}
+  {#if !editMode && editingQueryConfigKey === detailGroup.property}
     <div class="query-config-edit-container">
       <QueryConfigEditor
         value={detailGroup.queryConfig ?? ''}
@@ -673,7 +839,7 @@
     </div>
   {/if}
 
-  {#if editingRefKey === detailGroup.property}
+  {#if !isGlobalReferenceEditable && editingRefKey === detailGroup.property}
     {#if detailGroup.isPropertyPicker}
       <PropertySelect
         nodeIri={entityId}
@@ -719,11 +885,13 @@
     {/if}
   {:else if detailGroup.isEmpty && editingKey !== editKey(detailGroup.property, 0)}
     <div class="empty-value">—</div>
-  {:else if detailGroup.isEmpty && editingKey === editKey(detailGroup.property, 0)}
+  {:else if !editMode && detailGroup.isEmpty && editingKey === editKey(detailGroup.property, 0)}
     <div class="detail-value">
       {#if isQueryConfigProperty(detailGroup.property)}
         <QueryConfigEditor
           value={detailGroup.values[0]?.value ?? ''}
+          draftOnly={editMode}
+          onDraftChange={(json) => onDraftChange?.(detailGroup.property, json, editingDatatype, 'literal')}
           onconfirm={(json) => { draftValue = json; saveEdit(detailGroup.property); }}
           oncancel={cancelEdit}
         />
@@ -734,6 +902,8 @@
       {:else if isRruleType(editingDatatype)}
         <RecurrenceEditor
           value={detailGroup.values[0]?.value ?? ''}
+          draftOnly={editMode}
+          onDraftChange={(rrule) => onDraftChange?.(detailGroup.property, rrule, editingDatatype, 'literal')}
           onconfirm={(rrule) => { draftValue = rrule; saveEdit(detailGroup.property); }}
           oncancel={cancelEdit}
         />
@@ -749,7 +919,7 @@
       {/if}
     </div>
   {:else if isQueryConfigProperty(detailGroup.property)}
-    {#if editingKey === editKey(detailGroup.property, 0)}
+    {#if !editMode && editingKey === editKey(detailGroup.property, 0)}
       <div class="detail-value">
         <QueryConfigEditor
           value={detailGroup.values[0]?.value ?? ''}
@@ -802,7 +972,7 @@
     <PropertyValuesGroup
       {detailGroup}
       {extraValues}
-      {editingKey}
+      editingKey={editMode ? null : editingKey}
       {editingDatatype}
       bind:draftValue
       {saving}
@@ -832,16 +1002,33 @@
       <span class="save-error-text">{saveError}</span>
     </div>
   {/if}
+  {/if}
   </div>
+  {#if isReadOnlyPreview && hasPreviewOverflow}
+    <div class="preview-toggle-container">
+      <Button
+        variant="ghost"
+        size="sm"
+        class="preview-toggle-button"
+        aria-controls={previewId}
+        aria-expanded={isPreviewExpanded}
+        onclick={() => isPreviewExpanded = !isPreviewExpanded}
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">{isPreviewExpanded ? 'expand_less' : 'expand_more'}</span>
+        {isPreviewExpanded ? 'Mostrar menos' : 'Mostrar mais'}
+      </Button>
+    </div>
+  {/if}
+  </InspectorDetails>
+  </InspectorInformation>
 </div>
 
 <style>
   .detail-item {
     display: flex;
     flex-direction: column;
-    gap: var(--spacing-label-to-value);
-    padding: var(--spacing-field-block) 0;
-    border-bottom: 1px solid var(--color-hud-line-subtle);
+    gap: var(--spacing-inspector-label-value);
+    padding: 0;
   }
 
   .detail-header {
@@ -852,18 +1039,23 @@
     min-width: 0;
   }
 
+  .detail-heading {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-inline-tight);
+    min-width: 0;
+  }
+
   .detail-name {
     display: flex;
     flex-direction: row;
     align-items: center;
     flex-wrap: wrap;
     gap: var(--spacing-inline-related);
-    line-height: 1.4;
+    line-height: var(--line-height-hud-compact);
     overflow-wrap: anywhere;
     min-width: 0;
-    font-size: var(--type-label);
-    letter-spacing: var(--tracking-hud-label);
-    text-transform: uppercase;
   }
 
   .detail-content {
@@ -871,6 +1063,35 @@
     flex-direction: column;
     gap: var(--spacing-inline-related);
     min-width: 0;
+  }
+
+  .detail-content.preview-collapsed {
+    max-height: var(--size-inspector-preview-lines);
+    overflow: hidden;
+  }
+
+  .preview-toggle-container {
+    align-self: flex-start;
+    margin-top: var(--spacing-inline-tight);
+  }
+
+  .preview-toggle-container :global([data-slot="button"].preview-toggle-button) {
+    color: var(--color-interactive);
+    justify-content: flex-start;
+    border: 1px solid var(--color-hud-line-subtle);
+    border-radius: 0;
+  }
+
+  .preview-toggle-container :global([data-slot="button"].preview-toggle-button:hover) {
+    background: var(--color-surface-hover-subtle);
+    border-color: var(--color-interactive);
+  }
+
+  .load-all-values {
+    display: grid;
+    gap: var(--spacing-control-internal);
+    color: var(--text-secondary);
+    font-size: var(--type-body-compact);
   }
 
   :global(.prop-info-trigger) {
@@ -952,23 +1173,6 @@
     opacity: 0.8;
   }
 
-  .detail-type {
-    font-size: var(--type-overline);
-    padding: 2px 6px;
-    background: color-mix(in srgb, var(--color-neutral) 20%, transparent);
-    color: var(--text-secondary);
-  }
-
-  .detail-type-object {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-  }
-
-  .detail-type-icon {
-    font-size: var(--type-caption-compact);
-  }
-
   .detail-count {
     font-size: var(--type-overline);
     padding: 2px 6px;
@@ -981,7 +1185,7 @@
     padding: 2px 6px;
     background: color-mix(in srgb, var(--color-interactive) 20%, transparent);
     color: var(--color-interactive);
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
   }
 
   .cardinality-edit-form {
@@ -1059,7 +1263,7 @@
   }
 
   :global([data-slot="button"].remove-btn:hover) {
-    color: var(--color-error, #ef4444) !important;
+    color: var(--color-error) !important;
   }
 
   .empty-value {
@@ -1102,7 +1306,7 @@
   }
 
   .qc-class {
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
     font-size: var(--type-body-compact);
     color: var(--color-neutral-active);
   }
@@ -1115,7 +1319,7 @@
   }
 
   .qc-filter-line {
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
     font-size: var(--type-label);
     color: var(--color-neutral);
   }
@@ -1217,7 +1421,7 @@
   }
 
   .save-error-text {
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
     font-size: var(--type-label);
     color: var(--color-error);
     line-height: 1.4;

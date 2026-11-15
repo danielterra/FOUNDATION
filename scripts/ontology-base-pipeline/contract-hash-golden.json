@@ -1,0 +1,55 @@
+{
+  "formatVersion": 1,
+  "algorithm": "SHA-256 over UTF-8 canonical JSON",
+  "canonicalization": {
+    "fields": [
+      "componentId",
+      "intent",
+      "propsSchema",
+      "actionsSchema",
+      "examples"
+    ],
+    "objectKeys": "recursive lexicographic ascending",
+    "arrays": "preserve order",
+    "slots": "add propsSchema[\"x-foundation-slots\"] only when component declares slots",
+    "excluded": [
+      "manifestVersion",
+      "contractVersion"
+    ]
+  },
+  "hashes": {
+    "Decision": {
+      "contractVersion": 1,
+      "hash": "sha256:24ff8da1b2b90d74511ce13e666cdcaa175a538db346dfeb6117c72873d3efc3"
+    },
+    "ValueEntry": {
+      "contractVersion": 2,
+      "hash": "sha256:0dce753b2847b1d12001d8a4a4d3c707c7540972187dcd6c1ea97f729c6d407f"
+    },
+    "Action": {
+      "contractVersion": 1,
+      "hash": "sha256:ac770c44f28765d3077ad762f2faaf00a459d1c559fe1035aaae15df85103eb8"
+    },
+    "Information": {
+      "contractVersion": 0,
+      "hash": "sha256:68d27fee5f66186593f19aebd68a6eb65d12053e339527bbf5bc4c6fc9a93b51"
+    },
+    "Details": {
+      "contractVersion": 2,
+      "hash": "sha256:b2063f2ddda1eba7a7a7e03d3dc57650134be88b10f148f7f07faad42ae0c5df"
+    },
+    "Confirmation": {
+      "contractVersion": 1,
+      "hash": "sha256:f9bf93eb2ed1ae825d01279f1cba0a9aedb65040c19b491070d0dd9b6c351d8e"
+    },
+    "Comparison": {
+      "contractVersion": 2,
+      "hash": "sha256:8c41753a792882a11f1bb7079b8ea758ad775a172a2c4aaa4c3b8fc8fa23512e"
+    },
+    "Distribution": {
+      "contractVersion": 2,
+      "hash": "sha256:85538cd94c225b50dd06f2d545773db21112e0b56f7cdbbd904a08cd981a6c57"
+    }
+  },
+  "actionCanonicalPayload": "{\"actionsSchema\":[{\"description\":\"Apresenta uma mensagem local no widget.\",\"id\":\"announce\",\"paramsSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"message\":{\"maxLength\":500,\"type\":\"string\"}},\"required\":[\"message\"],\"type\":\"object\"}},{\"description\":\"Executa uma ação local explicitamente conectada pelo widget.\",\"id\":\"perform\",\"paramsSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}},{\"description\":\"Atualiza estado local do widget.\",\"id\":\"setState\",\"paramsSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"statePath\":{\"type\":\"string\"},\"value\":{}},\"required\":[\"statePath\",\"value\"],\"type\":\"object\"}},{\"description\":\"Adiciona valor ao estado local do widget.\",\"id\":\"pushState\",\"paramsSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"statePath\":{\"type\":\"string\"},\"value\":{}},\"required\":[\"statePath\",\"value\"],\"type\":\"object\"}},{\"description\":\"Remove valor do estado local do widget.\",\"id\":\"removeState\",\"paramsSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"index\":{\"type\":\"number\"},\"statePath\":{\"type\":\"string\"}},\"required\":[\"statePath\",\"index\"],\"type\":\"object\"}},{\"description\":\"Valida formulário local.\",\"id\":\"validateForm\",\"paramsSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"formPath\":{\"type\":\"string\"}},\"required\":[\"formPath\"],\"type\":\"object\"}}],\"componentId\":\"Action\",\"examples\":{\"elements\":{\"sync\":{\"children\":[],\"on\":{\"press\":{\"action\":\"announce\",\"params\":{\"message\":\"A sincronização foi solicitada.\"}}},\"props\":{\"available\":true,\"frequency\":\"occasional\",\"icon\":\"sync\",\"label\":\"Sincronizar agora\",\"objective\":\"Buscar novos dados da conta.\",\"priority\":\"primary\"},\"type\":\"Action\"}},\"root\":\"sync\"},\"intent\":\"Expõe uma ação de acordo com sua prioridade, frequência, impacto, disponibilidade e resultado.\",\"propsSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"available\":{\"type\":\"boolean\"},\"frequency\":{\"enum\":[\"routine\",\"occasional\",\"rare\"],\"type\":\"string\"},\"icon\":{\"type\":\"string\"},\"impact\":{\"type\":\"string\"},\"label\":{\"type\":\"string\"},\"objective\":{\"type\":\"string\"},\"priority\":{\"enum\":[\"primary\",\"supporting\",\"destructive\"],\"type\":\"string\"},\"progress\":{\"type\":\"string\"},\"result\":{\"type\":\"string\"},\"reversibility\":{\"enum\":[\"reversible\",\"hard_to_reverse\",\"irreversible\"],\"type\":\"string\"}},\"required\":[\"label\",\"icon\"],\"type\":\"object\"}}"
+}

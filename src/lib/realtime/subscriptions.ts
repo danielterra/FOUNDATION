@@ -133,13 +133,14 @@ function ensureStarted() {
 
 let syncTimer: ReturnType<typeof setTimeout> | undefined;
 let lastSentKey = '';
+let pendingSync: Promise<void> | null = null;
 
 function scheduleSync() {
   clearTimeout(syncTimer);
-  syncTimer = setTimeout(syncNow, 50);
+  syncTimer = setTimeout(() => { void syncNow().catch(() => {}); }, 50);
 }
 
-function syncNow() {
+function syncNow(): Promise<void> {
   const iris = new Set<string>();
   const patterns = new Set<string>();
   const queriesMap = new Map<string, CreationQuerySpec>();
@@ -161,11 +162,12 @@ function syncNow() {
     '|' +
     queryList.map((q) => `${q.classIri}:${q.predicate}=${q.objectValue}`).join(',');
 
-  if (key === lastSentKey) return;
+  if (key === lastSentKey) return pendingSync ?? Promise.resolve();
   lastSentKey = key;
 
+  let request: Promise<unknown>;
   if (queryList.length > 0) {
-    invoke('events__set_subscriptions_v2', {
+    request = invoke('events__set_subscriptions_v2', {
       iris: iriList,
       patterns: patternList,
       creationQueries: queryList.map((q) => ({
@@ -173,12 +175,23 @@ function syncNow() {
         predicate: q.predicate,
         objectValue: q.objectValue,
       })),
-    }).catch((err) => console.error('[realtime] events__set_subscriptions_v2 failed:', err));
+    });
   } else {
-    invoke('events__set_subscriptions', { iris: iriList, patterns: patternList }).catch((err) =>
-      console.error('[realtime] events__set_subscriptions failed:', err),
-    );
+    request = invoke('events__set_subscriptions', { iris: iriList, patterns: patternList });
   }
+
+  const command = queryList.length > 0 ? 'events__set_subscriptions_v2' : 'events__set_subscriptions';
+  pendingSync = request
+    .then(() => undefined)
+    .catch((err) => {
+      if (lastSentKey === key) lastSentKey = '';
+      console.error(`[realtime] ${command} failed:`, err);
+      throw err;
+    })
+    .finally(() => {
+      if (lastSentKey === key) pendingSync = null;
+    });
+  return pendingSync;
 }
 
 function setsEqual(a: Set<string>, b: Set<string>): boolean {
@@ -212,6 +225,8 @@ export interface EntitySubscription {
    * the snapshot and the subscription being registered.
    */
   setSinceTx(tx: number): void;
+  /** Flush pending aggregate subscription changes and resolve after backend registration. */
+  synchronize(): Promise<void>;
   /** Request immediate replay of events with tx > the last setSinceTx value. */
   replayMissed(): void;
   /** Detach this consumer and drop its IRIs from the aggregate set. */
@@ -260,10 +275,15 @@ export function createEntitySubscription(handler: EntityHandler): EntitySubscrip
       // gate in syncNow() prevents a redundant push if nothing actually changed.
       clearTimeout(syncTimer);
       syncTimer = undefined;
-      syncNow();
+      void syncNow().catch(() => {});
     },
     setSinceTx(tx: number) {
       sub.sinceTx = tx;
+    },
+    synchronize() {
+      clearTimeout(syncTimer);
+      syncTimer = undefined;
+      return syncNow();
     },
     replayMissed() {
       if (sub.sinceTx <= 0) return;

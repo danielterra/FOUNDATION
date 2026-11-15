@@ -109,23 +109,8 @@
 
 <style>
   .messages-scroll {
-    flex: 1;
-    overflow-y: auto;
-    overflow-x: hidden;
-    min-height: 0;
-    height: 100%;
-  }
-
-  .messages-scroll::-webkit-scrollbar {
-    width: 6px;
-  }
-
-  .messages-scroll::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  .messages-scroll::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--color-white) 20%, transparent);
+    width: 100%;
+    min-width: 0;
   }
 
   .messages-inner {
@@ -140,7 +125,7 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    height: 100%;
+    min-height: 8rem;
     gap: 12px;
     padding: 32px;
   }

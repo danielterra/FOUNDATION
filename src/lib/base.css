@@ -9,6 +9,35 @@
   }
 }
 
+/* A consistent pointer cue makes every enabled semantic control feel actionable. */
+button:not(:disabled),
+a[href],
+summary,
+label[for],
+.clickable:not([aria-disabled="true"]),
+select:not(:disabled),
+input[type="button"]:not(:disabled),
+input[type="submit"]:not(:disabled),
+input[type="reset"]:not(:disabled),
+input[type="file"]:not(:disabled),
+input[type="color"]:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+[role="combobox"]:not([aria-disabled="true"]),
+[role="link"]:not([aria-disabled="true"]),
+[role="menuitem"]:not([aria-disabled="true"]),
+[role="menuitemcheckbox"]:not([aria-disabled="true"]),
+[role="menuitemradio"]:not([aria-disabled="true"]),
+[role="option"]:not([aria-disabled="true"]),
+[role="treeitem"]:not([aria-disabled="true"]),
+[role="tab"]:not([aria-disabled="true"]),
+[role="checkbox"]:not([aria-disabled="true"]),
+[role="radio"]:not([aria-disabled="true"]),
+[role="switch"]:not([aria-disabled="true"]),
+input[type="checkbox"]:not(:disabled),
+input[type="radio"]:not(:disabled) {
+  cursor: pointer;
+}
+
 /* ============================================================================
  * Typography utilities — semantic, shared across components.
  * Use these instead of redefining locally to keep visual hierarchy consistent.
@@ -29,18 +58,31 @@
   font-size: var(--type-heading);
 }
 
-/* Field / property label (e.g. "Provedor", "Última Atualização em").
- * Clear and prominent — this is where the user's eye lands. */
+/* Shared label and metadata role across fields, widgets, and summaries. */
+.semantic-label,
 .field-label {
-  font-family: var(--font-title);
+  font-family: var(--font-mono);
   font-size: var(--type-label);
+  font-weight: 400;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--color-neutral-active);
+  letter-spacing: var(--tracking-hud-label);
+  line-height: var(--line-height-hud-compact);
+  color: var(--text-label);
   margin: 0;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--spacing-inline-related);
+}
+
+.semantic-metadata {
+  font-family: var(--font-mono);
+  font-size: var(--type-overline);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: normal;
+  line-height: var(--line-height-hud-compact);
+  color: var(--text-metadata);
+  margin: 0;
 }
 
 .field-label .material-symbols-outlined {

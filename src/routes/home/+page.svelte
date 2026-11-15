@@ -17,6 +17,7 @@
   import { cubicOut } from 'svelte/easing';
 
   let isChatOpen = $state(false);
+  let homeInitialized = $state(false);
   let providerState = $state('loading');
   let conversations = $state([]);
   let conversationsLoading = $state(false);
@@ -54,6 +55,7 @@
   }
 
   $effect(() => {
+    if (!homeInitialized || showSettings) return;
     resolveBlackboard(activeBoardConversationIri);
   });
 
@@ -81,6 +83,7 @@
       isChatOpen = false;
       chatVisibilityReady = true;
     }
+    homeInitialized = true;
   }
 
   async function loadChatVisibility() {
@@ -103,9 +106,10 @@
     try {
       const service = await invoke('setup__get_current_ai_service');
       if (!service) { providerState = 'not-configured'; return; }
-      if (service.isLocal) { providerState = 'configured'; return; }
-      const key = await invoke('ai__get_api_key', { serviceIri: service.iri });
-      providerState = key && key.trim() ? 'configured' : 'not-configured';
+      if (typeof service.isConfigured !== 'boolean') {
+        throw new Error('O estado de configuração do serviço de IA está ausente.');
+      }
+      providerState = service.isConfigured ? 'configured' : 'not-configured';
     } catch (error) {
       console.error('Failed to check AI provider configuration:', error);
       providerState = 'error';
@@ -274,7 +278,6 @@
       widgetType: 'ai_call_history',
       entityId: '',
       position: null,
-      size: null,
       conversationId: activeBoardConversationIri,
     }).catch(e => console.error('Failed to open AI call history:', e));
   }
@@ -321,7 +324,7 @@
     {/if}
   {/if}
   <Button variant="ghost" size="icon" title="Consumo de IA" onclick={openAiCallHistory}><span class="material-symbols-outlined">payments</span></Button>
-  <NotificationBell />
+  {#if homeInitialized}<NotificationBell />{/if}
   <Button variant="ghost" size="icon" title="Configurações" onclick={() => showSettings = true}><span class="material-symbols-outlined">settings</span></Button>
 </HeaderActions>
 
@@ -336,7 +339,14 @@
         </div>
       {/if}
       <div class="canvas-area">
-        <WidgetManager {activeBlackboardIri} activeConversationIri={activeBoardConversationIri} />
+        {#if homeInitialized}
+          <WidgetManager {activeBlackboardIri} activeConversationIri={activeBoardConversationIri} />
+        {:else}
+          <div class="home-initializing" role="status" aria-live="polite">
+            <span class="material-symbols-outlined" aria-hidden="true">progress_activity</span>
+            <span>Preparando a lousa…</span>
+          </div>
+        {/if}
       </div>
 
       {#if providerState === 'configured' && chatVisibilityReady && isChatOpen}
@@ -386,6 +396,22 @@
     inset: 0;
     overflow: hidden;
     background: var(--color-black);
+  }
+
+  .home-initializing {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-inline-related);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: var(--type-label);
+  }
+
+  .home-initializing .material-symbols-outlined {
+    color: var(--color-transition);
   }
 
   .chat-slot {

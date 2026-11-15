@@ -1,6 +1,38 @@
 // App-crate OWL façade: re-exports the ontology primitives from foundation-core.
 pub use foundation_core::owl::*;
 
+pub fn with_transaction<T, F>(conn: &mut Connection, operation: F) -> std::result::Result<T, String>
+where
+    F: FnOnce(&mut Connection) -> std::result::Result<T, String>,
+{
+    foundation_core::eavto::with_transaction(conn, operation)
+}
+
+#[cfg(test)]
+mod transaction_tests {
+    use super::with_transaction;
+    use crate::eavto::test_helpers::setup_test_db;
+
+    #[test]
+    fn transaction_facade_rolls_back_failed_operation() {
+        let mut conn = setup_test_db();
+        let result = with_transaction(&mut conn, |conn| {
+            conn.execute(
+                "INSERT INTO transactions (origin, created_at) VALUES ('test', 0)",
+                [],
+            )
+            .map_err(|error| error.to_string())?;
+            Err::<(), _>("forced failure".to_string())
+        });
+
+        assert_eq!(result.unwrap_err(), "forced failure");
+        let transaction_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM transactions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(transaction_count, 0);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SnapshotPropertyValue {
     pub iri: Option<String>,

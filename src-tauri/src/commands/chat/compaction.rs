@@ -1,5 +1,6 @@
 use super::super::log_backend;
 use crate::ai::local::LocalProvider;
+use crate::ai::openai_responses::OpenAIResponsesProvider;
 use crate::ai::providers::{ClaudeProvider, OpenRouterProvider};
 use crate::ai::{AiProvider, ChatMessage, GenerateRequest};
 use crate::commands::chat::settings::AgentConfig;
@@ -48,6 +49,7 @@ pub struct CompactionConfig {
     pub model_identifier: String,
     pub fallback_models: Vec<String>,
     pub timeout_secs: u64,
+    pub authentication_mode: String,
 }
 
 impl CompactionConfig {
@@ -59,6 +61,7 @@ impl CompactionConfig {
             model_identifier: cfg.model_identifier.clone(),
             fallback_models: cfg.fallback_models.clone(),
             timeout_secs: cfg.timeout_secs,
+            authentication_mode: cfg.authentication_mode.clone(),
         }
     }
 }
@@ -152,7 +155,7 @@ async fn run_compaction(
         history_text
     );
 
-    let provider = build_provider(&cfg);
+    let provider = build_provider(&cfg, &executor).await?;
     let request = GenerateRequest {
         messages: vec![ChatMessage::text("user", &prompt)],
         max_tokens: Some(2048),
@@ -230,22 +233,36 @@ async fn run_compaction(
     Ok(())
 }
 
-fn build_provider(cfg: &CompactionConfig) -> AiProvider {
-    if cfg.base_url.contains("openrouter.ai") {
-        AiProvider::OpenRouter(OpenRouterProvider::with_model(
+async fn build_provider(
+    cfg: &CompactionConfig,
+    executor: &DbExecutor,
+) -> Result<AiProvider, String> {
+    if cfg.base_url.contains("openai.com") {
+        let token = if cfg.authentication_mode == "chatgpt_plan" {
+            crate::ai::chatgpt_auth::access_token(executor).await?
+        } else {
+            cfg.api_key.clone()
+        };
+        Ok(AiProvider::OpenAIResponses(OpenAIResponsesProvider::new(
+            token,
+            cfg.model_identifier.clone(),
+            cfg.timeout_secs,
+        )))
+    } else if cfg.base_url.contains("openrouter.ai") {
+        Ok(AiProvider::OpenRouter(OpenRouterProvider::with_model(
             cfg.api_key.clone(),
             cfg.base_url.clone(),
             cfg.model_identifier.clone(),
             cfg.fallback_models.clone(),
             cfg.timeout_secs,
-        ))
+        )))
     } else if cfg.api_key.is_empty() {
-        AiProvider::Local(LocalProvider::new(String::new()))
+        Ok(AiProvider::Local(LocalProvider::new(String::new())))
     } else {
-        AiProvider::Claude(ClaudeProvider::with_model(
+        Ok(AiProvider::Claude(ClaudeProvider::with_model(
             cfg.api_key.clone(),
             cfg.model_identifier.clone(),
             cfg.timeout_secs,
-        ))
+        )))
     }
 }

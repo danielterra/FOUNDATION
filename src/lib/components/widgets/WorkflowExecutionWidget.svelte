@@ -119,7 +119,6 @@
       entityId: detail.controlInstanceIri,
       content: null,
       position: null,
-      size: null,
       conversationId: conversationIri,
     }).catch(() => {})
   }
@@ -231,7 +230,7 @@
                     {/if}
                   </span>
                 {/if}
-                <span class="step-duration">{duration ?? ''}</span>
+                <span class="step-duration semantic-metadata">{duration ?? ''}</span>
                 {#if step.inputContext || step.executionOutput?.length > 0 || step.executionSummary || step.stepError}
                   <span class="material-symbols-outlined step-chevron" class:rotated={isExpanded}>
                     expand_more
@@ -319,9 +318,7 @@
   }
 
   .body {
-    flex: 1;
-    overflow-y: auto;
-    min-height: 0;
+    min-width: 0;
   }
 
   .center-state {
@@ -329,7 +326,7 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    height: 100%;
+    min-height: 8rem;
     gap: 8px;
     color: var(--color-neutral);
     font-size: 14px;
@@ -452,8 +449,6 @@
   }
 
   .step-duration {
-    font-size: 10px;
-    color: var(--color-neutral-disabled);
     flex-shrink: 0;
   }
 
@@ -497,9 +492,7 @@
     white-space: pre-wrap;
     word-break: break-word;
     margin: 0;
-    font-family: var(--font-mono, monospace);
-    max-height: 120px;
-    overflow-y: auto;
+    font-family: var(--font-family-app);
   }
 
   .detail-content-output {

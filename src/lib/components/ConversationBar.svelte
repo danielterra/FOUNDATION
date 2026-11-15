@@ -230,7 +230,7 @@
 			<Dialog.Description>Defina um assunto para identificar esta conversa.</Dialog.Description>
 		</Dialog.Header>
 		<form onsubmit={submitCreate}>
-			<label for="new-conversation-subject">Assunto</label>
+			<label class="field-label" for="new-conversation-subject">Assunto</label>
 			<Input bind:ref={subjectInputEl} id="new-conversation-subject" bind:value={newSubject} required maxlength="120" autocomplete="off" />
 			<div class="create-actions">
 				<Button variant="ghost" type="button" onclick={closeCreateDialog}>Cancelar</Button>
@@ -424,11 +424,6 @@
 	:global(.create-dialog form) {
 		display: grid;
 		gap: var(--space-2);
-	}
-
-	:global(.create-dialog label) {
-		font-size: var(--type-label);
-		color: var(--color-neutral);
 	}
 
 	.create-actions {

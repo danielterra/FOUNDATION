@@ -15,6 +15,7 @@
     minCount = null,
     maxCount = null,
     saving = false,
+    draftOnly = false,
     onsave,
     oncancel,
   }: {
@@ -25,6 +26,7 @@
     minCount?: number | null
     maxCount?: number | null
     saving?: boolean
+    draftOnly?: boolean
     onsave: (propertyIri: string, iris: string[]) => Promise<void>
     oncancel: () => void
   } = $props()
@@ -34,6 +36,10 @@
   )
 
   const maxReached = $derived(maxCount != null && selected.length >= maxCount)
+
+  $effect(() => {
+    selected = currentValues.map(v => ({ iri: v.iri, label: v.label, icon: v.icon ?? null }))
+  })
 
   const cardinalityHint = $derived.by(() => {
     if (minCount != null && maxCount != null) {
@@ -54,15 +60,17 @@
     return JSON.parse(raw) as { id: string; label: string; icon?: string | null }[]
   }
 
-  function handleSelect(item: { id: string; label: string; icon?: string | null }) {
+  async function handleSelect(item: { id: string; label: string; icon?: string | null }) {
     if (maxReached) return
     if (!selected.some(s => s.iri === item.id)) {
       selected = [...selected, { iri: item.id, label: item.label, icon: item.icon ?? null }]
+      if (draftOnly) await onsave(propertyIri, selected.map(s => s.iri))
     }
   }
 
-  function remove(iri: string) {
+  async function remove(iri: string) {
     selected = selected.filter(s => s.iri !== iri)
+    if (draftOnly) await onsave(propertyIri, selected.map(s => s.iri))
   }
 
   function isIconUrl(icon: string): boolean {
@@ -117,25 +125,27 @@
     {#if cardinalityHint}
       <span class="cardinality-hint">{cardinalityHint}</span>
     {/if}
-    <div class="actions">
-      <Button variant="default" size="sm" onclick={save} disabled={saving}>
-        {#if saving}
-          <span class="material-symbols-outlined spinning">progress_activity</span>
-        {:else}
-          <span class="material-symbols-outlined">check</span>
-        {/if}
-        Save
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        onmousedown={(e) => e.preventDefault()}
-        onclick={oncancel}
-      >
-        <span class="material-symbols-outlined">close</span>
-        Cancel
-      </Button>
-    </div>
+    {#if !draftOnly}
+      <div class="actions">
+        <Button variant="default" size="sm" onclick={save} disabled={saving}>
+          {#if saving}
+            <span class="material-symbols-outlined spinning">progress_activity</span>
+          {:else}
+            <span class="material-symbols-outlined">check</span>
+          {/if}
+          Save
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onmousedown={(e) => e.preventDefault()}
+          onclick={oncancel}
+        >
+          <span class="material-symbols-outlined">close</span>
+          Cancel
+        </Button>
+      </div>
+    {/if}
   </div>
 </div>
 

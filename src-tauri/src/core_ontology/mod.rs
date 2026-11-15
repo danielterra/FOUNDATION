@@ -1,10 +1,15 @@
+pub mod ai_services;
 pub mod automation_execution;
 pub mod chat;
 pub mod conversation;
 pub mod data_sync;
+pub mod entity_kind;
+pub mod inspector_property_order;
 pub mod materialization;
 pub mod property_configuration;
 pub mod qa_evidence;
 pub mod search;
+pub mod semantic_catalog;
+pub mod semantic_widget_data;
 pub mod setup;
 pub mod status;

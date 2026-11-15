@@ -668,7 +668,7 @@
 				<span class="material-symbols-outlined step-icon">waving_hand</span>
 				<h2>Bem-vindo ao FOUNDATION</h2>
 				<p class="subtitle">Vamos configurar tudo em poucos minutos. Primeiro, como podemos te chamar?</p>
-				<label for="person-name">Seu nome</label>
+				<label class="field-label" for="person-name">Seu nome</label>
 				<Input
 					id="person-name"
 					type="text"
@@ -729,12 +729,12 @@
 
 						{#if selectedEmailProviderId === 'custom'}
 							<div class="field-group">
-								<label for="email-host">Servidor IMAP</label>
+								<label class="field-label" for="email-host">Servidor IMAP</label>
 								<Input id="email-host" type="text" placeholder="imap.exemplo.com" bind:value={emailHost} oninput={invalidateEmailTest} />
 							</div>
 							<div class="field-row">
 								<div class="field-group">
-									<label for="email-port">Porta</label>
+								<label class="field-label" for="email-port">Porta</label>
 									<Input id="email-port" type="number" bind:value={emailPort} oninput={invalidateEmailTest} />
 								</div>
 								<div class="field-group checkbox-group">
@@ -747,12 +747,12 @@
 						{/if}
 
 						<div class="field-group">
-							<label for="email-username">Usuário (e-mail)</label>
+						<label class="field-label" for="email-username">Usuário (e-mail)</label>
 							<Input id="email-username" type="email" placeholder="seu@email.com" bind:value={emailUsername} oninput={invalidateEmailTest} />
 						</div>
 
 						<div class="field-group">
-							<label for="email-password">
+						<label class="field-label" for="email-password">
 								{selectedEmailProvider.passwordLabel}
 								{#if selectedEmailProvider.passwordHint}
 									<span class="hint">— {selectedEmailProvider.passwordHint}</span>
@@ -858,7 +858,7 @@
 						</div>
 					{:else}
 						<div class="field-group">
-							<label for="setup-ai-service">Serviço de IA</label>
+							<label class="field-label" for="setup-ai-service">Serviço de IA</label>
 							<Select.Root
 								type="single"
 								value={selectedAIServiceIri}
@@ -887,7 +887,7 @@
 							{#if requiresAIKey}
 								{#if isOpenRouterService}
 									<div class="field-group">
-									<label for="setup-ai-base-url">URL base</label>
+					<label class="field-label" for="setup-ai-base-url">URL base</label>
 									<Input
 										id="setup-ai-base-url"
 										type="url"
@@ -899,7 +899,7 @@
 								{/if}
 
 								<div class="field-group">
-									<label for="setup-ai-api-key">Chave de API</label>
+					<label class="field-label" for="setup-ai-api-key">Chave de API</label>
 									<div class="field-row">
 										<Input
 											id="setup-ai-api-key"
@@ -940,7 +940,7 @@
 								</div>
 							{:else}
 								<div class="field-group">
-									<label for="setup-ai-model">Modelo</label>
+					<label class="field-label" for="setup-ai-model">Modelo</label>
 									{#if aiModelsLoading}
 										<p class="state-message" role="status" aria-live="polite">Carregando modelos…</p>
 									{:else if aiConfigError}

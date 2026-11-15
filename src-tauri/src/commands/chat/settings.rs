@@ -5,6 +5,7 @@ const DEFAULT_TIMEOUT_SECS: u64 = 900;
 
 pub struct AgentConfig {
     pub api_key: String,
+    pub authentication_mode: String,
     pub is_local: bool,
     pub base_url: String,
     pub fallback_models: Vec<String>,
@@ -36,7 +37,19 @@ pub fn load_agent_config(
             )
         })?;
 
-    let (api_key, is_local) =
+    let authentication_mode =
+        crate::owl::get_literal_property(conn, &service_iri, "foundation:aiAuthenticationMode")
+            .map_err(|error| format!("Failed to get AI authentication mode: {error}"))?
+            .unwrap_or_else(|| "api_key".to_string());
+
+    let base_url = crate::owl::get_literal_property(conn, &service_iri, "foundation:apiBaseUrl")
+        .unwrap_or_default()
+        .unwrap_or_default();
+    let is_local = base_url.trim().is_empty();
+
+    let api_key = if authentication_mode == "chatgpt_plan" {
+        String::new()
+    } else {
         match crate::owl::get_iri_property(conn, &service_iri, "foundation:apiKey")
             .map_err(|e| format!("Failed to get apiKey from service: {}", e))?
         {
@@ -50,14 +63,12 @@ pub fn load_agent_config(
                 .ok_or_else(|| {
                     "API key has no value. Please reconfigure your API key.".to_string()
                 })?;
-                (key, false)
+                key
             }
-            None => (String::new(), true),
-        };
-
-    let base_url = crate::owl::get_literal_property(conn, &service_iri, "foundation:apiBaseUrl")
-        .unwrap_or_default()
-        .unwrap_or_default();
+            None if is_local => String::new(),
+            None => return Err("The selected AI service requires an API key".to_string()),
+        }
+    };
 
     let fallback_models: Vec<String> =
         crate::owl::get_literal_property(conn, &service_iri, "foundation:fallbackModelIdentifiers")
@@ -158,6 +169,7 @@ pub fn load_agent_config(
 
     Ok(AgentConfig {
         api_key,
+        authentication_mode,
         is_local,
         base_url,
         fallback_models,

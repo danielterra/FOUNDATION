@@ -8,6 +8,7 @@
     propertyIri,
     currentValue = null,
     saving = false,
+    draftOnly = false,
     onsave,
     oncancel,
   } = $props();
@@ -54,9 +55,11 @@
 
   <div class="header-row">
     <span class="hint">Propriedades da controlClass</span>
-    <Button variant="ghost" size="icon-sm" onclick={oncancel} disabled={saving} aria-label="Cancelar">
-      <span class="material-symbols-outlined">close</span>
-    </Button>
+    {#if !draftOnly}
+      <Button variant="ghost" size="icon-sm" onclick={oncancel} disabled={saving} aria-label="Cancelar">
+        <span class="material-symbols-outlined">close</span>
+      </Button>
+    {/if}
   </div>
 
   {#if loading}

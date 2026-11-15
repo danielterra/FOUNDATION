@@ -9,6 +9,9 @@
   import RecurrenceEditor from './RecurrenceEditor.svelte';
   import { Input } from '$lib/components/ui/input';
   import CodeEditor from './CodeEditor.svelte';
+  import { formatRelativeTime, formatLocalizedDate } from '$lib/utils/dateFormatters';
+  import OntologyEntityIdentity from './OntologyEntityIdentity.svelte';
+  import OntologyEntityReferenceChip from './OntologyEntityReferenceChip.svelte';
 
   let {
     detailGroup,
@@ -38,15 +41,8 @@
     return `${propertyIri}::${valueIdx}`;
   }
 
-  function handleEntityReferenceClick(event) {
-    const entityIri = event.currentTarget.dataset.entityIri;
+  function openEntityReference(entityIri) {
     if (entityIri) openEntityInspector(entityIri);
-  }
-
-  function handleEntityReferenceKeydown(event) {
-    if (event.key !== 'Enter' && event.key !== ' ') return;
-    event.preventDefault();
-    handleEntityReferenceClick(event);
   }
 
   function isUrl(datatype) {
@@ -107,54 +103,9 @@
   }
 
   function formatDate(timestamp) {
-    const currentNow = now;
-    const ts = typeof timestamp === 'string' ? parseInt(timestamp) : timestamp;
-    const date = new Date(ts);
-
-    if (isNaN(date.getTime())) return timestamp;
-
-    const nowDate = new Date(currentNow);
-    const today = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate());
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-
-    const dateDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    const diffMs = currentNow - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return 'just now';
-    if (diffMins < 60) return `${diffMins} ${diffMins === 1 ? 'minute' : 'minutes'} ago`;
-
-    if (dateDay.getTime() === today.getTime()) {
-      if (diffHours < 2) return '1 hour ago';
-      return `${diffHours} hours ago`;
-    }
-
-    if (dateDay.getTime() === yesterday.getTime()) {
-      const timeStr = date.toLocaleTimeString(
-        'en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-      return `Yesterday at ${timeStr}`;
-    }
-
-    if (diffDays < 7) {
-      const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
-      const timeStr = date.toLocaleTimeString(
-        'en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-      return `${dayName} at ${timeStr}`;
-    }
-
-    if (date.getFullYear() === nowDate.getFullYear()) {
-      return date.toLocaleDateString('en-US', {
-        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false
-      });
-    }
-
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric', month: 'short', day: 'numeric',
-      hour: '2-digit', minute: '2-digit', hour12: false
-    });
+    if (timestamp == null || timestamp === '') return '';
+    const formatted = formatRelativeTime(timestamp, now ?? Date.now());
+    return formatted || String(timestamp);
   }
 
   function datePart(v) { return v?.split('T')[0] ?? ''; }
@@ -295,45 +246,46 @@
 <div class="detail-values-group">
   {#each [...detailGroup.values, ...extraValues] as val, idx (detailGroup.property + '_' + val.value + '_' + idx)}
     {#if detailGroup.isObjectProperty}
-      <div
-        class="detail-value clickable"
-        class:calculated={detailGroup.isCalculated}
-        role="button"
-        tabindex="0"
-        data-entity-iri={val.value}
-        onclick={handleEntityReferenceClick}
-        onkeydown={handleEntityReferenceKeydown}
+      <OntologyEntityReferenceChip
+        kind={val.valueEntityKind}
+        label={val.valueLabel || val.value}
+        icon={val.valueIcon ?? null}
+        entityIri={val.value}
+        onopen={openEntityReference}
+        calculated={detailGroup.isCalculated}
       >
-        {#if val.valueIcon}
-          {#if isIconUrl(val.valueIcon)}
-            <img src={getIconUrl(val.valueIcon)} alt="" class="value-icon-image" />
-          {:else}
-            <span class="material-symbols-outlined value-icon">{inspectorIconSymbol(val.valueIcon)}</span>
+        {#snippet children()}
+          <OntologyEntityIdentity
+            kind={val.valueEntityKind}
+            label={val.valueLabel || val.value}
+            icon={val.valueIcon ?? null}
+            compact
+            reference
+          />
+          {#if val.valueStatus}
+            <span
+              class="inline-status"
+              style="--status-color: {val.valueStatus.color || 'var(--color-neutral)'}"
+              title={val.valueStatus.iri}
+            >
+              <span class="material-symbols-outlined inline-status-icon">radio_button_checked</span>
+              <span class="inline-status-label">{val.valueStatus.label}</span>
+            </span>
           {/if}
-        {/if}
-        {#if val.unitLabel && !isCurrencyCode(val.unitLabel)}
-          <span class="unit">{val.unitLabel}</span>
-        {/if}
-        <span class="value-text">{val.valueLabel || val.value}</span>
-        {#if val.valueStatus}
-          <span
-            class="inline-status"
-            style="--status-color: {val.valueStatus.color || 'var(--color-neutral)'}"
-            title={val.valueStatus.iri}
-          >
-            <span class="material-symbols-outlined inline-status-icon">radio_button_checked</span>
-            <span class="inline-status-label">{val.valueStatus.label}</span>
-          </span>
-        {/if}
-        {#if val.formulaError}
-          <span class="formula-error" title={val.formulaError}>
-            <span class="material-symbols-outlined formula-error-icon">warning</span>
-            <span class="formula-error-text">{val.formulaError}</span>
-          </span>
-        {/if}
-      </div>
+          {#if val.formulaError}
+            <span class="formula-error" title={val.formulaError}>
+              <span class="material-symbols-outlined formula-error-icon">warning</span>
+              <span class="formula-error-text">{val.formulaError}</span>
+            </span>
+          {/if}
+        {/snippet}
+      </OntologyEntityReferenceChip>
     {:else}
-      <div class="detail-value" class:calculated={detailGroup.isCalculated}>
+      <div
+        class="detail-value"
+        class:calculated={detailGroup.isCalculated}
+        class:markdown-value={val.datatype === 'foundation:markdown' && editingKey !== editKey(detailGroup.property, idx) && (val.value ?? '').length <= 50_000}
+      >
         {#if val.presentation === 'code'}
           {#if editingKey === editKey(detailGroup.property, idx)}
             <PropertyEditForm
@@ -355,12 +307,12 @@
             {@const date = new Date(val.value)}
             <div class="timestamp-display">
               <span class="value-text">
-                {date.toLocaleString('pt-BR', {
+              {formatLocalizedDate(date, {
                   year: 'numeric', month: 'short', day: 'numeric',
                   hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
                 })}
               </span>
-              <span class="timestamp-relative">{formatDate(date.getTime())}</span>
+              <span class="timestamp-relative semantic-metadata">{formatDate(date.getTime())}</span>
             </div>
           {/if}
         {:else if val.datatype === 'xsd:date'}
@@ -370,7 +322,7 @@
             {@const [y, m, d] = val.value.split('-').map(Number)}
             {@const date = new Date(y, m - 1, d)}
             <span class="value-text">
-              {date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+              {formatLocalizedDate(date, { year: 'numeric', month: 'short', day: 'numeric' })}
             </span>
           {/if}
         {:else if isUrl(val.datatype)}
@@ -389,7 +341,7 @@
               oncancel={onCancelEdit}
             />
           {:else}
-            <SafeHtmlFrame value={val.value} mode="contained" maxHeight={300} />
+            <SafeHtmlFrame value={val.value} mode="contained" />
           {/if}
         {:else if val.datatype === 'foundation:markdown'}
           {#if editingKey === editKey(detailGroup.property, idx)}
@@ -508,7 +460,12 @@
     display: flex;
     align-items: center;
     gap: var(--spacing-inline-related);
-    padding: var(--spacing-field-block) 0;
+    padding-block: var(--spacing-inspector-label-value);
+  }
+
+  .detail-value.markdown-value {
+    align-items: flex-start;
+    padding-block: var(--spacing-inspector-label-value);
   }
 
   .value-large {
@@ -520,13 +477,13 @@
   }
 
   .value-pre {
-    font-family: monospace;
+    font-family: var(--font-family-app);
     font-size: 11px;
     color: var(--color-neutral-active);
     background: color-mix(in srgb, var(--color-black) 40%, transparent);
     padding: var(--spacing-control-internal);
-    max-height: 200px;
-    overflow-y: auto;
+    max-height: none;
+    overflow: visible;
     white-space: pre-wrap;
     word-break: break-all;
     margin: 0;
@@ -539,30 +496,6 @@
 
   :global([data-slot="button"].copy-btn:hover) {
     color: var(--color-neutral-active);
-  }
-
-  .clickable {
-    cursor: pointer;
-    user-select: none;
-  }
-
-  .clickable:hover {
-    background: color-mix(in srgb, var(--color-interactive) 5%, transparent) !important;
-  }
-
-  .clickable:active {
-    transform: translateX(1px);
-  }
-
-  .value-icon {
-    font-size: 18px;
-    color: var(--color-interactive);
-  }
-
-  .value-icon-image {
-    width: 24px;
-    height: 24px;
-    object-fit: cover;
   }
 
   .value-text {
@@ -583,7 +516,7 @@
   }
 
   .value-mono {
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
     font-size: 13px;
   }
 
@@ -602,10 +535,7 @@
   }
 
   .timestamp-relative {
-    font-size: 11px;
-    color: var(--color-neutral);
-    opacity: 0.6;
-    font-family: var(--font-body);
+    display: block;
   }
 
   :global([data-slot="button"].url-value) {

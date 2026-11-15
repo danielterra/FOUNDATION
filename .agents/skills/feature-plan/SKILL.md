@@ -108,6 +108,8 @@ Mostre ao usuário, em até 8 linhas:
 
 ## Regras
 
+- **NEVER** plan a Feature that tracks an application configured on top of Foundation; application behavior belongs directly in that application's ontology, automations, and widget specs. Plan only reusable Foundation platform capabilities.
+- **ALWAYS** verify that every in-scope UserStory changes reusable Foundation behavior before planning the Feature; stop if the scope is confined to one configured application.
 - **NEVER** invente IRIs de status — use `foundation:Status_1772596341042` para "Planejado".
 - **NEVER** crie User Stories dentro desta skill — apenas orquestre o planejamento das existentes.
 - **NEVER** planeje a Feature sem antes ter passado por **todas** as US filhas elegíveis em `$userstory-plan`.

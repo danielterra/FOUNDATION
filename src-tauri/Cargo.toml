@@ -31,7 +31,7 @@ path = "src/bin/purge_retracted.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-foundation-core = { git = "https://github.com/danielterra/foundation-core", rev = "862d6aadb8e0608a4ff107398afad34a2450c996" }
+foundation-core = { git = "https://github.com/danielterra/foundation-core", rev = "ef8fd0f" }
 tauri = { version = "2", features = ["protocol-asset", "test", "devtools"] }
 tauri-plugin-opener = "2"
 tauri-plugin-fs = "2"
@@ -56,6 +56,10 @@ rcgen = "0.13"  # Self-signed TLS certificate generation
 reqwest = { version = "0.12", features = ["blocking", "json", "stream"] }  # For HTTP API calls
 futures-util = "0.3"  # For SSE stream processing
 async-trait = "0.1"  # For async trait definitions
+jsonwebtoken = "9"
+rand = "0.8"
+uuid = { version = "1", features = ["v4"] }
+url = "2"
 tiktoken-rs = "0.6"  # For accurate token counting (Claude/GPT compatible)
 base64 = "0.22.1"
 pdf-extract = "0.10.0"
@@ -80,7 +84,7 @@ llama-cpp-2 = { version = "0.1.143", features = ["sampler"] }
 
 [dev-dependencies]
 tempfile = "3.8"  # Temporary files for tests
-foundation-core = { git = "https://github.com/danielterra/foundation-core", rev = "862d6aadb8e0608a4ff107398afad34a2450c996", features = ["test-helpers"] }
+foundation-core = { git = "https://github.com/danielterra/foundation-core", rev = "ef8fd0f", features = ["test-helpers"] }
 
 [profile.dev]
 incremental = true

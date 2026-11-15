@@ -2,28 +2,43 @@ use tauri::{AppHandle, State};
 
 use crate::owl::{self, Connection, DbExecutor, Individual, Object};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum SetupAIServiceReadiness {
     Ready,
+    NeedsModel,
     NeedsCredentials,
     NeedsEndpoint,
+    NeedsModelCatalogSync,
+    SelectedModelUnavailable,
     NeedsLocalModel,
+    AuthenticationError(String),
     UnsupportedRoute,
 }
 
 impl SetupAIServiceReadiness {
-    fn status(self) -> &'static str {
+    fn status(&self) -> &'static str {
         match self {
             Self::Ready => "ready",
+            Self::NeedsModel => "needs_model",
             Self::NeedsCredentials => "needs_credentials",
             Self::NeedsEndpoint => "needs_endpoint",
+            Self::NeedsModelCatalogSync => "needs_model_catalog_sync",
+            Self::SelectedModelUnavailable => "selected_model_unavailable",
             Self::NeedsLocalModel => "needs_local_model",
+            Self::AuthenticationError(_) => "authentication_error",
             Self::UnsupportedRoute => "unsupported_route",
         }
     }
 
-    fn is_ready(self) -> bool {
-        self == Self::Ready
+    fn is_ready(&self) -> bool {
+        matches!(self, Self::Ready)
+    }
+
+    fn error(&self) -> Option<&str> {
+        match self {
+            Self::AuthenticationError(message) => Some(message),
+            _ => None,
+        }
     }
 }
 
@@ -31,7 +46,19 @@ fn setup_ai_runtime_readiness_json(readiness: SetupAIServiceReadiness) -> serde_
     serde_json::json!({
         "status": readiness.status(),
         "isReady": readiness.is_ready(),
+        "error": readiness.error(),
     })
+}
+
+fn setup_ai_service_model_readiness(
+    conn: &Connection,
+    service: &Individual,
+) -> Result<SetupAIServiceReadiness, String> {
+    if get_setup_ai_model_for_service(conn, &service.iri)?.is_some() {
+        Ok(SetupAIServiceReadiness::Ready)
+    } else {
+        Ok(SetupAIServiceReadiness::NeedsModel)
+    }
 }
 
 fn setup_ai_service_base_url(service: &Individual) -> Option<String> {
@@ -51,7 +78,11 @@ fn has_setup_ai_service_base_url_property(service: &Individual) -> bool {
 }
 
 fn is_supported_setup_remote_route(base_url: &str) -> bool {
-    base_url.contains("openrouter.ai") || base_url.contains("api.anthropic.com")
+    let is_openai = url::Url::parse(base_url)
+        .ok()
+        .and_then(|url| url.host_str().map(|host| host == "api.openai.com"))
+        .unwrap_or(false);
+    base_url.contains("openrouter.ai") || base_url.contains("api.anthropic.com") || is_openai
 }
 
 fn has_setup_local_runtime_model(conn: &Connection, service: &Individual) -> Result<bool, String> {
@@ -95,6 +126,31 @@ fn has_setup_api_credentials(conn: &Connection, service: &Individual) -> Result<
     Ok(credential_value.is_some_and(|value| !value.trim().is_empty()))
 }
 
+fn setup_ai_service_is_configured(conn: &Connection, service: &Individual) -> Result<bool, String> {
+    if !has_setup_ai_service_base_url_property(service) {
+        return Ok(true);
+    }
+    if setup_ai_service_base_url(service).is_none() {
+        return Ok(false);
+    }
+    let authentication_mode = service
+        .properties
+        .iter()
+        .find(|(property, _)| property == "foundation:aiAuthenticationMode")
+        .and_then(|(_, value)| value.as_literal())
+        .ok_or_else(|| format!("AI service '{}' has no authentication mode", service.iri))?;
+    match authentication_mode.as_str() {
+        "chatgpt_plan" => {
+            crate::ai::chatgpt_auth::service_has_plan_access_from_connection(conn, &service.iri)
+        }
+        "api_key" => has_setup_api_credentials(conn, service),
+        _ => Err(format!(
+            "AI service '{}' has unsupported authentication mode '{}'",
+            service.iri, authentication_mode
+        )),
+    }
+}
+
 fn setup_ai_service_readiness(
     conn: &Connection,
     service: &Individual,
@@ -107,18 +163,122 @@ fn setup_ai_service_readiness(
         if !is_supported_setup_remote_route(&base_url) {
             return Ok(SetupAIServiceReadiness::UnsupportedRoute);
         }
+        let Some(authentication_mode) = service
+            .properties
+            .iter()
+            .find(|(property, _)| property == "foundation:aiAuthenticationMode")
+            .and_then(|(_, value)| value.as_literal())
+        else {
+            return Ok(SetupAIServiceReadiness::AuthenticationError(
+                "AI service has no authentication mode".to_string(),
+            ));
+        };
+        if authentication_mode == "chatgpt_plan" {
+            return match crate::ai::chatgpt_auth::service_has_plan_access_from_connection(
+                conn,
+                &service.iri,
+            ) {
+                Ok(true) => setup_ai_service_model_readiness(conn, service),
+                Ok(false) => Ok(SetupAIServiceReadiness::NeedsCredentials),
+                Err(error) => Ok(SetupAIServiceReadiness::AuthenticationError(error)),
+            };
+        }
+        if authentication_mode != "api_key" {
+            return Ok(SetupAIServiceReadiness::AuthenticationError(format!(
+                "Unsupported AI authentication mode '{}'",
+                authentication_mode
+            )));
+        }
         return if has_setup_api_credentials(conn, service)? {
-            Ok(SetupAIServiceReadiness::Ready)
+            if is_openai_api_catalog_service(service)
+                && !is_openai_model_catalog_current(conn, &service.iri)?
+            {
+                Ok(SetupAIServiceReadiness::NeedsModelCatalogSync)
+            } else {
+                if is_openai_api_catalog_service(service) {
+                    if let Some(model_iri) = get_setup_ai_model_for_service(conn, &service.iri)? {
+                        if owl::get_literal_property(conn, &model_iri, "foundation:isDeprecated")
+                            .map_err(|error| {
+                                format!("Unable to inspect selected model status: {error}")
+                            })?
+                            .as_deref()
+                            == Some("true")
+                        {
+                            return Ok(SetupAIServiceReadiness::SelectedModelUnavailable);
+                        }
+                    }
+                }
+                setup_ai_service_model_readiness(conn, service)
+            }
         } else {
             Ok(SetupAIServiceReadiness::NeedsCredentials)
         };
     }
 
     if has_setup_local_runtime_model(conn, service)? && local_model_installed {
-        Ok(SetupAIServiceReadiness::Ready)
+        setup_ai_service_model_readiness(conn, service)
     } else {
         Ok(SetupAIServiceReadiness::NeedsLocalModel)
     }
+}
+
+fn is_openai_api_catalog_service(service: &Individual) -> bool {
+    let is_api_key_route = service
+        .properties
+        .iter()
+        .find(|(property, _)| property == "foundation:aiAuthenticationMode")
+        .and_then(|(_, value)| value.as_literal())
+        .as_deref()
+        .unwrap_or("api_key")
+        == "api_key";
+    is_api_key_route
+        && service
+            .properties
+            .iter()
+            .find(|(property, _)| property == "foundation:apiBaseUrl")
+            .and_then(|(_, value)| value.as_literal())
+            .and_then(|value| url::Url::parse(&value).ok())
+            .is_some_and(|url| url.host_str() == Some("api.openai.com"))
+}
+
+fn is_openai_model_catalog_current(conn: &Connection, service_iri: &str) -> Result<bool, String> {
+    Ok(
+        owl::get_literal_property(conn, service_iri, "foundation:modelCatalogStatus")
+            .map_err(|error| format!("Unable to read OpenAI model catalog state: {error}"))?
+            .as_deref()
+            == Some("current"),
+    )
+}
+
+fn openai_catalog_freshness(service: &Individual) -> serde_json::Value {
+    let property = |name: &str| {
+        service
+            .properties
+            .iter()
+            .find(|(predicate, _)| predicate == name)
+            .map(|(_, value)| value)
+    };
+    let status = property("foundation:modelCatalogStatus")
+        .and_then(Object::as_literal)
+        .map(|status| match status.as_str() {
+            "current" => "current",
+            "syncing" => "syncing",
+            _ => "stale",
+        })
+        .unwrap_or("stale");
+    let datetime = |name: &str| match property(name) {
+        Some(Object::DateTime(value)) => Some(value.clone()),
+        _ => None,
+    };
+    let error = property("foundation:modelCatalogSyncError")
+        .and_then(Object::as_literal)
+        .map(|message| message.chars().take(500).collect::<String>());
+    serde_json::json!({
+        "status": status,
+        "lastSuccessAt": datetime("foundation:modelCatalogLastSuccessAt"),
+        "lastAttemptAt": datetime("foundation:modelCatalogLastAttemptAt"),
+        "error": error,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,7 +329,7 @@ fn validate_setup_ai_selection_with_local_model(
                 .filter(|value| !value.trim().is_empty())
                 .ok_or_else(|| "Chat mode requires an explicit AI model".to_string())?;
             validate_setup_ai_model(conn, model_iri, service_iri)?;
-            validate_setup_ai_service_runtime_with_local_model(
+            validate_setup_ai_service_selection_with_local_model(
                 conn,
                 service_iri,
                 local_model_installed,
@@ -222,6 +382,24 @@ fn validate_setup_ai_service_credentials(
         return Err(format!(
             "AI service '{}' has no configured API endpoint",
             service_iri
+        ));
+    }
+    let authentication_mode = service
+        .properties
+        .iter()
+        .find(|(property, _)| property == "foundation:aiAuthenticationMode")
+        .and_then(|(_, value)| value.as_literal())
+        .ok_or_else(|| format!("AI service '{}' has no authentication mode", service_iri))?;
+    if authentication_mode == "chatgpt_plan" {
+        if crate::ai::chatgpt_auth::service_has_plan_access_from_connection(conn, service_iri)? {
+            return Ok(());
+        }
+        return Err("A ChatGPT account with plan usage enabled must be connected".to_string());
+    }
+    if authentication_mode != "api_key" {
+        return Err(format!(
+            "AI service '{}' has unsupported authentication mode '{}'",
+            service_iri, authentication_mode
         ));
     }
     if !has_setup_api_credentials(conn, &service)? {
@@ -486,9 +664,66 @@ fn validate_setup_ai_service_runtime_with_local_model(
         .ok_or_else(|| format!("AI service '{}' not found", service_iri))?;
     match setup_ai_service_readiness(conn, &service, local_model_installed)? {
         SetupAIServiceReadiness::Ready => Ok(()),
+        SetupAIServiceReadiness::NeedsModel => Err(format!(
+            "AI service '{}' has no selected model. Select a model in Settings before using this service.",
+            service_iri
+        )),
         SetupAIServiceReadiness::NeedsCredentials => {
             validate_setup_ai_service_credentials(conn, service_iri)
         }
+        SetupAIServiceReadiness::NeedsModelCatalogSync => Err(format!(
+            "OpenAI API model catalog for '{}' is stale. Refresh the model catalog before using this route.",
+            service_iri
+        )),
+        SetupAIServiceReadiness::SelectedModelUnavailable => Err(format!(
+            "The selected model for OpenAI API service '{}' is unavailable. Choose another model; the existing selection was preserved.",
+            service_iri
+        )),
+        SetupAIServiceReadiness::AuthenticationError(error) => Err(format!(
+            "Unable to verify authentication for AI service '{}': {}",
+            service_iri, error
+        )),
+        SetupAIServiceReadiness::NeedsEndpoint => Err(format!(
+            "AI service '{}' has no configured API endpoint",
+            service_iri
+        )),
+        SetupAIServiceReadiness::NeedsLocalModel => Err(format!(
+            "AI service '{}' has no configured local runtime model",
+            service_iri
+        )),
+        SetupAIServiceReadiness::UnsupportedRoute => Err(format!(
+            "AI service '{}' has no configured runtime route",
+            service_iri
+        )),
+    }
+}
+
+fn validate_setup_ai_service_selection_with_local_model(
+    conn: &Connection,
+    service_iri: &str,
+    local_model_installed: bool,
+) -> Result<(), String> {
+    validate_setup_ai_service_structure(conn, service_iri)?;
+    let service = Individual::get(conn, service_iri)
+        .map_err(|error| format!("Failed to load AI service '{}': {}", service_iri, error))?
+        .ok_or_else(|| format!("AI service '{}' not found", service_iri))?;
+    match setup_ai_service_readiness(conn, &service, local_model_installed)? {
+        SetupAIServiceReadiness::Ready | SetupAIServiceReadiness::NeedsModel => Ok(()),
+        SetupAIServiceReadiness::NeedsCredentials => {
+            validate_setup_ai_service_credentials(conn, service_iri)
+        }
+        SetupAIServiceReadiness::NeedsModelCatalogSync => Err(format!(
+            "OpenAI API model catalog for '{}' is stale. Refresh the model catalog before selecting a model.",
+            service_iri
+        )),
+        SetupAIServiceReadiness::SelectedModelUnavailable => Err(format!(
+            "The selected model for OpenAI API service '{}' is unavailable. Choose another model; the existing selection was preserved.",
+            service_iri
+        )),
+        SetupAIServiceReadiness::AuthenticationError(error) => Err(format!(
+            "Unable to verify authentication for AI service '{}': {}",
+            service_iri, error
+        )),
         SetupAIServiceReadiness::NeedsEndpoint => Err(format!(
             "AI service '{}' has no configured API endpoint",
             service_iri
@@ -530,6 +765,28 @@ pub fn validate_setup_ai_model(
             "Selected AI model '{}' is not offered by service '{}'",
             model_iri, service_iri
         ));
+    }
+
+    let service = Individual::get(conn, service_iri)
+        .map_err(|error| format!("Failed to load AI service '{}': {}", service_iri, error))?
+        .ok_or_else(|| format!("AI service '{}' not found", service_iri))?;
+    if is_openai_api_catalog_service(&service) {
+        if !is_openai_model_catalog_current(conn, service_iri)? {
+            return Err(format!(
+                "OpenAI API model catalog for '{}' is stale. Refresh it before selecting or using a model.",
+                service_iri
+            ));
+        }
+        if owl::get_literal_property(conn, model_iri, "foundation:isDeprecated")
+            .map_err(|error| format!("Failed to inspect model availability: {error}"))?
+            .as_deref()
+            == Some("true")
+        {
+            return Err(format!(
+                "Selected OpenAI model '{}' is unavailable",
+                model_iri
+            ));
+        }
     }
 
     Ok(())
@@ -730,17 +987,51 @@ pub async fn setup__list_ai_services(
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn setup__list_ai_models(
+    app: AppHandle,
     service_iri: Option<String>,
     offset: Option<i64>,
     limit: Option<i64>,
     snapshot_tx: Option<i64>,
     executor: State<'_, DbExecutor>,
 ) -> Result<serde_json::Value, String> {
+    if let Some(service_iri) = service_iri.as_deref() {
+        let _ = crate::commands::openai_model_catalog::ensure_fresh_for_service(
+            app,
+            executor.inner(),
+            service_iri,
+        )
+        .await;
+    }
     executor
         .read(move |conn| {
-            if let Some(service_iri) = service_iri.as_deref() {
+            let catalog = if let Some(service_iri) = service_iri.as_deref() {
                 validate_setup_ai_service_structure(conn, service_iri)?;
-            }
+                let service = Individual::get(conn, service_iri)
+                    .map_err(|error| {
+                        format!("Failed to load AI service '{}': {error}", service_iri)
+                    })?
+                    .ok_or_else(|| format!("AI service '{}' not found", service_iri))?;
+                let is_openai_api = is_openai_api_catalog_service(&service);
+                let catalog = is_openai_api.then(|| openai_catalog_freshness(&service));
+                let catalog_current = !is_openai_api_catalog_service(&service)
+                    || is_openai_model_catalog_current(conn, service_iri)?;
+                if !catalog_current {
+                    let current_tx = owl::current_snapshot_tx(conn)
+                        .map_err(|e| format!("Failed to read model catalog snapshot: {e}"))?;
+                    let pinned_tx =
+                        resolve_setup_model_snapshot(offset.unwrap_or(0), snapshot_tx, current_tx)?;
+                    return Ok(serde_json::json!({
+                        "items": [],
+                        "next_cursor": null,
+                        "has_more": false,
+                        "snapshot_tx": pinned_tx,
+                        "catalog": catalog,
+                    }));
+                }
+                catalog
+            } else {
+                None
+            };
             let page_size = limit.unwrap_or(100).max(1).min(500);
             let page_offset = offset.unwrap_or(0).max(0);
 
@@ -749,22 +1040,67 @@ pub async fn setup__list_ai_models(
             let pinned_tx =
                 resolve_setup_model_snapshot(offset.unwrap_or(0), snapshot_tx, current_tx)?;
 
-            let (rows, has_more) = owl::list_ai_models_as_of(
-                conn,
-                service_iri.as_deref(),
-                "foundation:offeredBy",
-                "rdf:type",
-                "foundation:AIModel",
-                "foundation:isDefaultModel",
-                "rdfs:label",
-                "foundation:modelIdentifier",
-                "foundation:modelVersion",
-                "rdfs:comment",
-                pinned_tx,
-                page_size,
-                page_offset,
-            )
-            .map_err(|e| format!("Failed to query models: {}", e))?;
+            let service_is_openai_api = service_iri
+                .as_deref()
+                .and_then(|iri| Individual::get(conn, iri).ok().flatten())
+                .is_some_and(|service| is_openai_api_catalog_service(&service));
+            let mut rows = Vec::new();
+            let mut raw_offset = page_offset;
+            let mut has_more = false;
+            loop {
+                let (batch, raw_has_more) = owl::list_ai_models_as_of(
+                    conn,
+                    service_iri.as_deref(),
+                    "foundation:offeredBy",
+                    "rdf:type",
+                    "foundation:AIModel",
+                    "foundation:isDefaultModel",
+                    "rdfs:label",
+                    "foundation:modelIdentifier",
+                    "foundation:modelVersion",
+                    "rdfs:comment",
+                    pinned_tx,
+                    if service_is_openai_api {
+                        500
+                    } else {
+                        page_size
+                    },
+                    raw_offset,
+                )
+                .map_err(|error| format!("Failed to query models: {error}"))?;
+                if service_is_openai_api {
+                    for (index, row) in batch.iter().enumerate() {
+                        let deprecated = owl::get_literal_property_as_of(
+                            conn,
+                            &row.subject,
+                            "foundation:isDeprecated",
+                            pinned_tx,
+                        )
+                        .map_err(|error| {
+                            format!("Failed to inspect model availability: {error}")
+                        })?;
+                        if deprecated.as_deref() != Some("true") {
+                            rows.push(row.clone());
+                            if rows.len() > page_size as usize {
+                                raw_offset += index as i64;
+                                has_more = true;
+                                break;
+                            }
+                        }
+                    }
+                    if has_more || !raw_has_more {
+                        break;
+                    }
+                    raw_offset += batch.len() as i64;
+                } else {
+                    rows = batch;
+                    has_more = raw_has_more;
+                    break;
+                }
+            }
+            if service_is_openai_api && rows.len() > page_size as usize {
+                rows.truncate(page_size as usize);
+            }
 
             let items: Vec<serde_json::Value> = rows
                 .into_iter()
@@ -781,7 +1117,14 @@ pub async fn setup__list_ai_models(
                 .collect();
 
             let next_cursor = if has_more {
-                serde_json::Value::Number((page_offset + page_size).into())
+                serde_json::Value::Number(
+                    if service_is_openai_api {
+                        raw_offset
+                    } else {
+                        page_offset + page_size
+                    }
+                    .into(),
+                )
             } else {
                 serde_json::Value::Null
             };
@@ -791,7 +1134,28 @@ pub async fn setup__list_ai_models(
                 "next_cursor": next_cursor,
                 "has_more": has_more,
                 "snapshot_tx": pinned_tx,
+                "catalog": catalog,
             }))
+        })
+        .await
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn setup__get_ai_model_catalog_status(
+    service_iri: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<Option<serde_json::Value>, String> {
+    executor
+        .read(move |conn| {
+            validate_setup_ai_service_structure(conn, &service_iri)?;
+            let service = Individual::get(conn, &service_iri)
+                .map_err(|error| format!("Failed to load AI service '{service_iri}': {error}"))?
+                .ok_or_else(|| format!("AI service '{service_iri}' not found"))?;
+            if !is_openai_api_catalog_service(&service) {
+                return Ok(None);
+            }
+            Ok(Some(openai_catalog_freshness(&service)))
         })
         .await
 }
@@ -859,12 +1223,29 @@ pub async fn setup__get_active_model_info(
                     "mcp" => "MCP client".to_string(),
                     _ => "Not configured".to_string(),
                 });
+            let authentication_mode = service_ind
+                .as_ref()
+                .and_then(|service| {
+                    service
+                        .properties
+                        .iter()
+                        .find(|(property, _)| property == "foundation:aiAuthenticationMode")
+                        .and_then(|(_, value)| value.as_literal())
+                })
+                .unwrap_or_else(|| "api_key".to_string());
             let model_label = model_ind
                 .as_ref()
                 .and_then(|i| i.label.clone())
                 .unwrap_or_else(|| "Not configured".to_string());
+            let model_iri = if model_iri.is_empty() {
+                None
+            } else {
+                Some(model_iri)
+            };
+            let needs_model = service_ind.is_some() && model_iri.is_none();
 
             let is_local = service_ind
+                .as_ref()
                 .map(|i| {
                     !i.properties
                         .iter()
@@ -875,8 +1256,12 @@ pub async fn setup__get_active_model_info(
             Ok(serde_json::json!({
                 "integrationMode": integration_mode,
                 "modelLabel": model_label,
+                "modelIri": model_iri,
+                "needsModel": needs_model,
                 "serviceLabel": service_label,
                 "isLocal": is_local,
+                "authenticationMode": authentication_mode,
+                "usesChatGPTPlan": authentication_mode == "chatgpt_plan",
             }))
         })
         .await
@@ -903,6 +1288,7 @@ pub async fn setup__get_current_ai_service(
                     "iri": service_iri,
                     "label": service_ind.label,
                     "isLocal": is_local,
+                    "isConfigured": setup_ai_service_is_configured(conn, &service_ind)?,
                 })))
             } else {
                 Ok(None)
@@ -981,6 +1367,70 @@ pub async fn setup__save_ai_model(
 
 #[tauri::command]
 #[allow(non_snake_case)]
+pub async fn setup__save_ai_configuration(
+    service_iri: String,
+    model_iri: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<serde_json::Value, String> {
+    let result = executor
+        .write(move |conn| {
+            validate_setup_ai_model(conn, &model_iri, &service_iri)?;
+
+            if let Some(current_service_iri) =
+                crate::commands::chat::settings::get_ai_service_iri(conn)?
+            {
+                migrate_legacy_ai_model_for_service(conn, &current_service_iri)?;
+            }
+
+            let setting_iris =
+                owl::find_entities_with_property(conn, "rdf:type", "foundation:SoftwareSetting")
+                    .map_err(|error| format!("Failed to query settings: {error}"))?;
+            let mut service_setting_found = false;
+            for iri in setting_iris {
+                if let Some(setting) = Individual::get(conn, &iri)
+                    .map_err(|error| format!("Failed to load AI service setting: {error}"))?
+                {
+                    let key = setting
+                        .properties
+                        .iter()
+                        .find(|(property, _)| property == "foundation:settingKey")
+                        .and_then(|(_, value)| value.as_literal());
+                    if key.as_deref() == Some("aiService") {
+                        owl::replace_all_property_literals(
+                            conn,
+                            &setting.iri,
+                            "foundation:settingValue",
+                            &[service_iri.as_str()],
+                            "settings",
+                        )
+                        .map_err(|error| {
+                            format!("Failed to save the selected AI service: {error}")
+                        })?;
+                        service_setting_found = true;
+                        break;
+                    }
+                }
+            }
+            if !service_setting_found {
+                return Err("DefaultAIServiceSetting not found".to_string());
+            }
+
+            set_setup_ai_model_for_service(conn, &service_iri, &model_iri)?;
+            sync_active_ai_model_setting(conn, &service_iri, Some(&model_iri))?;
+
+            Ok(serde_json::json!({
+                "serviceIri": service_iri,
+                "modelIri": model_iri,
+            })
+            .to_string())
+        })
+        .await?;
+    serde_json::from_str(&result)
+        .map_err(|error| format!("Unable to read saved AI configuration: {error}"))
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
 pub async fn agent__get_ai_config(
     agent_iri: String,
     executor: State<'_, DbExecutor>,
@@ -1009,8 +1459,14 @@ pub async fn agent__get_ai_config(
             (fallback, false)
         };
 
-        let service_label = Individual::get(conn, &service_iri).ok().flatten()
-            .and_then(|i| i.label).unwrap_or_else(|| service_iri.clone());
+        let service_individual = Individual::get(conn, &service_iri).ok().flatten();
+        let service_label = service_individual.as_ref()
+            .and_then(|i| i.label.clone()).unwrap_or_else(|| service_iri.clone());
+        let authentication_mode = service_individual.as_ref()
+            .and_then(|service| service.properties.iter()
+                .find(|(property, _)| property == "foundation:aiAuthenticationMode")
+                .and_then(|(_, value)| value.as_literal()))
+            .unwrap_or_else(|| "api_key".to_string());
 
         let (model_label, supports_tool_calling) = if model_iri.is_empty() {
             (String::new(), false)
@@ -1033,6 +1489,8 @@ pub async fn agent__get_ai_config(
             "modelLabel": model_label,
             "modelOverridden": model_overridden,
             "supportsToolCalling": supports_tool_calling,
+            "authenticationMode": authentication_mode,
+            "usesChatGPTPlan": authentication_mode == "chatgpt_plan",
         }))
     }).await
 }
@@ -1100,9 +1558,9 @@ mod setup_ai_mode_tests {
     use super::{
         activate_ai_service_model, get_setup_ai_model_for_service,
         migrate_legacy_ai_model_for_service, resolve_setup_model_snapshot,
-        set_setup_ai_model_for_service, setup_ai_runtime_readiness_json, setup_ai_service_literal,
-        setup_ai_service_readiness, validate_setup_ai_model,
-        validate_setup_ai_selection_with_local_model,
+        set_setup_ai_model_for_service, setup_ai_runtime_readiness_json,
+        setup_ai_service_is_configured, setup_ai_service_literal, setup_ai_service_readiness,
+        validate_setup_ai_model, validate_setup_ai_selection_with_local_model,
         validate_setup_ai_service_runtime_with_local_model, validate_setup_ai_service_structure,
         SetupAIIntegrationMode, SetupAIServiceReadiness,
     };
@@ -1514,6 +1972,211 @@ mod setup_ai_mode_tests {
             serde_json::json!({
                 "status": "needs_credentials",
                 "isReady": false,
+                "error": null,
+            })
+        );
+    }
+
+    #[test]
+    fn setup_service_configuration_uses_authentication_mode_and_linked_credential() {
+        let mut conn = setup_ai_test_db();
+        add_test_remote_service_without_credentials(
+            &mut conn,
+            "test:ChatGPTService",
+            "https://chatgpt.com/backend-api/codex",
+        );
+        crate::eavto::store::assert_triples(
+            &mut conn,
+            &[
+                Triple::new(
+                    "test:ChatGPTService",
+                    "foundation:aiAuthenticationMode",
+                    Object::Literal {
+                        value: "chatgpt_plan".to_string(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    },
+                ),
+                Triple::new(
+                    "test:ChatGPTService",
+                    "foundation:hasCredential",
+                    Object::Iri("test:OAuthCredential".to_string()),
+                ),
+                Triple::new(
+                    "test:OAuthCredential",
+                    "foundation:credentialValue",
+                    Object::Literal {
+                        value: serde_json::json!({
+                            "clientId": "test-client",
+                            "extAgentHostId": "test-host",
+                            "subject": "test-subject",
+                            "email": null,
+                            "issuer": "https://auth.openai.com",
+                            "idToken": "masked-test-token",
+                            "accessToken": "masked-test-token",
+                            "refreshToken": "masked-test-token",
+                            "scopes": ["chatgpt.tokens.use.direct"],
+                            "expiresAtUnix": 4_102_444_800_i64,
+                            "planUsageAcknowledged": true
+                        })
+                        .to_string(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    },
+                ),
+            ],
+            "test",
+        )
+        .unwrap();
+
+        let service = Individual::get(&conn, "test:ChatGPTService")
+            .unwrap()
+            .unwrap();
+        assert!(setup_ai_service_is_configured(&conn, &service).unwrap());
+
+        add_test_remote_service_without_credentials(
+            &mut conn,
+            "test:UnconfiguredChatGPTService",
+            "https://chatgpt.com/backend-api/codex",
+        );
+        crate::eavto::store::assert_triples(
+            &mut conn,
+            &[
+                Triple::new(
+                    "test:UnconfiguredChatGPTService",
+                    "foundation:aiAuthenticationMode",
+                    Object::Literal {
+                        value: "chatgpt_plan".to_string(),
+                        datatype: Some("xsd:string".to_string()),
+                        language: None,
+                    },
+                ),
+                Triple::new(
+                    "test:UnconfiguredChatGPTService",
+                    "foundation:hasCredential",
+                    Object::Iri("test:UnlinkedCredential".to_string()),
+                ),
+            ],
+            "test",
+        )
+        .unwrap();
+        let service = Individual::get(&conn, "test:UnconfiguredChatGPTService")
+            .unwrap()
+            .unwrap();
+        assert!(!setup_ai_service_is_configured(&conn, &service).unwrap());
+    }
+
+    #[test]
+    fn setup_service_configuration_checks_api_key_and_rejects_unknown_auth_mode() {
+        let mut conn = setup_ai_test_db();
+        add_test_service(
+            &mut conn,
+            "test:OpenRouterService",
+            Some("https://openrouter.ai/api/v1"),
+        );
+        crate::eavto::store::assert_triples(
+            &mut conn,
+            &[Triple::new(
+                "test:OpenRouterService",
+                "foundation:aiAuthenticationMode",
+                Object::Literal {
+                    value: "api_key".to_string(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                },
+            )],
+            "test",
+        )
+        .unwrap();
+        let service = Individual::get(&conn, "test:OpenRouterService")
+            .unwrap()
+            .unwrap();
+        assert!(setup_ai_service_is_configured(&conn, &service).unwrap());
+
+        crate::eavto::store::assert_triples(
+            &mut conn,
+            &[Triple::new(
+                "test:OpenRouterService",
+                "foundation:aiAuthenticationMode",
+                Object::Literal {
+                    value: "unknown".to_string(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                },
+            )],
+            "test",
+        )
+        .unwrap();
+        let service = Individual::get(&conn, "test:OpenRouterService")
+            .unwrap()
+            .unwrap();
+        assert!(setup_ai_service_is_configured(&conn, &service).is_err());
+    }
+
+    #[test]
+    fn setup_service_reports_missing_model_without_blocking_model_configuration() {
+        let mut conn = setup_ai_test_db();
+        add_test_service(
+            &mut conn,
+            "test:OpenRouterService",
+            Some("https://openrouter.ai/api/v1"),
+        );
+        let service = Individual::get(&conn, "test:OpenRouterService")
+            .unwrap()
+            .unwrap();
+
+        let readiness = setup_ai_service_readiness(&conn, &service, false).unwrap();
+        assert_eq!(readiness, SetupAIServiceReadiness::NeedsModel);
+        assert_eq!(
+            setup_ai_runtime_readiness_json(readiness),
+            serde_json::json!({
+                "status": "needs_model",
+                "isReady": false,
+                "error": null,
+            })
+        );
+
+        add_test_model(&mut conn, "test:OpenRouterModel", "test:OpenRouterService");
+        assert!(validate_setup_ai_selection_with_local_model(
+            &conn,
+            SetupAIIntegrationMode::Chat,
+            Some("test:OpenRouterService"),
+            Some("test:OpenRouterModel"),
+            false,
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn setup_service_requires_selected_model_before_runtime_use() {
+        let mut conn = setup_ai_test_db();
+        add_test_service(
+            &mut conn,
+            "test:OpenRouterService",
+            Some("https://openrouter.ai/api/v1"),
+        );
+
+        assert!(validate_setup_ai_service_runtime_with_local_model(
+            &conn,
+            "test:OpenRouterService",
+            false,
+        )
+        .unwrap_err()
+        .contains("no selected model"));
+    }
+
+    #[test]
+    fn setup_service_runtime_readiness_preserves_authentication_errors() {
+        let readiness = SetupAIServiceReadiness::AuthenticationError(
+            "Credential store is unavailable".to_string(),
+        );
+
+        assert_eq!(
+            setup_ai_runtime_readiness_json(readiness),
+            serde_json::json!({
+                "status": "authentication_error",
+                "isReady": false,
+                "error": "Credential store is unavailable",
             })
         );
     }
@@ -1642,6 +2305,17 @@ mod setup_ai_mode_tests {
             "test:OpenRouterService",
             Some("https://openrouter.ai/api/v1"),
         );
+        add_test_model(&mut conn, "test:OpenRouterModel", "test:OpenRouterService");
+        crate::eavto::store::assert_triples(
+            &mut conn,
+            &[Triple::new(
+                "test:OpenRouterService",
+                "foundation:configuredModel",
+                Object::Iri("test:OpenRouterModel".to_string()),
+            )],
+            "test",
+        )
+        .unwrap();
 
         assert!(validate_setup_ai_service_runtime_with_local_model(
             &conn,
@@ -1710,6 +2384,11 @@ mod setup_ai_mode_tests {
                         datatype: Some("xsd:string".to_string()),
                         language: None,
                     },
+                ),
+                Triple::new(
+                    "test:LocalService",
+                    "foundation:configuredModel",
+                    Object::Iri("test:LocalModel".to_string()),
                 ),
             ],
             "test",

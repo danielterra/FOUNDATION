@@ -259,9 +259,10 @@
       :host { display: block; }
       * { box-sizing: border-box; }
       div, p, span, li, td, th { font-size: 14px; color: var(--color-neutral-active); line-height: 1.5; word-wrap: break-word; }
+      .markdown-content > :first-child { margin-block-start: var(--spacing-inspector-label-value); }
       a { color: var(--color-interactive); }
-      code, pre { font-family: var(--font-mono, monospace); font-size: 13px; }
-      pre { background: color-mix(in srgb, var(--color-white) 5%, transparent); padding: 10px 14px; overflow: auto; }
+      code, pre { font-family: var(--font-family-app); font-size: 13px; }
+      pre { background: color-mix(in srgb, var(--color-white) 5%, transparent); padding: 10px 14px; overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; }
       blockquote { border-left: 3px solid var(--color-interactive); margin: 0; padding-left: 12px; opacity: 0.8; }
       table { border-collapse: collapse; width: 100%; }
       th, td { border: 1px solid color-mix(in srgb, var(--color-white) 10%, transparent); padding: 6px 10px; }
@@ -274,6 +275,7 @@
     `;
 
     const container = document.createElement('div');
+    container.className = 'markdown-content';
     shadow.appendChild(styleEl);
     shadow.appendChild(container);
 

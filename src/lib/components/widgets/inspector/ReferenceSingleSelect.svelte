@@ -10,6 +10,7 @@
     rangeClassLabel = null,
     currentValue = null,
     saving = false,
+    draftOnly = false,
     onsave,
     oncancel,
   } = $props()
@@ -68,12 +69,14 @@
     {saving}
   />
 
-  <div class="actions-row">
-    <Button variant="ghost" size="sm" onclick={oncancel} disabled={saving}>
-      <span class="material-symbols-outlined">close</span>
-      Cancelar
-    </Button>
-  </div>
+  {#if !draftOnly}
+    <div class="actions-row">
+      <Button variant="ghost" size="sm" onclick={oncancel} disabled={saving}>
+        <span class="material-symbols-outlined">close</span>
+        Cancelar
+      </Button>
+    </div>
+  {/if}
 </div>
 
 <style>

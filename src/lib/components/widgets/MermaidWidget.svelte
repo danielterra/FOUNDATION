@@ -23,6 +23,8 @@
   $effect(() => { if (!editMode) draftContent = content; });
   let renderContainer = $state(null);
   let renderError = $state(null);
+  let diagramWidth = $state(0);
+  let diagramHeight = $state(0);
   let scale = $state(1);
   let translateX = $state(0);
   let translateY = $state(0);
@@ -65,7 +67,7 @@
       titleColor: '#f1f5f9',
       edgeLabelBackground: '#1e293b',
       nodeTextColor: '#f8fafc',
-      fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+      fontFamily: 'Monaspace Krypton',
     },
   });
 
@@ -83,6 +85,8 @@
         const vbWidth = parseFloat(parts[2]);
         const vbHeight = parseFloat(parts[3]);
         if (vbWidth > 0 && vbHeight > 0) {
+          diagramWidth = vbWidth;
+          diagramHeight = vbHeight;
           svgEl.setAttribute('width', String(vbWidth));
           svgEl.setAttribute('height', String(vbHeight));
           svgEl.style.removeProperty('max-width');
@@ -124,6 +128,14 @@
     translateY = 0;
   }
 
+  function zoomIn() {
+    scale = Math.min(50, scale * 1.2);
+  }
+
+  function zoomOut() {
+    scale = Math.max(0.1, scale / 1.2);
+  }
+
   function handleKeydown(e) {
     if (e.key === 'ArrowLeft') translateX += 20;
     else if (e.key === 'ArrowRight') translateX -= 20;
@@ -132,17 +144,6 @@
     else if (e.key === '+' || e.key === '=') scale = Math.min(50, scale * 1.1);
     else if (e.key === '-') scale = Math.max(0.1, scale * 0.9);
     else if (e.key === '0') resetView();
-  }
-
-  function handleWheel(e) {
-    e.preventDefault();
-    if (e.ctrlKey) {
-      const factor = e.deltaY > 0 ? 0.97 : 1.03;
-      scale = Math.max(0.1, Math.min(50, scale * factor));
-    } else {
-      translateX -= e.deltaX;
-      translateY -= e.deltaY;
-    }
   }
 
   function handleMouseDown(e) {
@@ -253,6 +254,8 @@
 {/snippet}
 
 {#snippet normalActions()}
+  <Button variant="ghost" size="icon" onclick={zoomOut} title="Diminuir diagrama" aria-label="Diminuir diagrama"><span class="material-symbols-outlined">remove</span></Button>
+  <Button variant="ghost" size="icon" onclick={zoomIn} title="Ampliar diagrama" aria-label="Ampliar diagrama"><span class="material-symbols-outlined">add</span></Button>
   <Button variant="ghost" size="icon" onclick={resetView} title="Reset view"><span class="material-symbols-outlined">center_focus_strong</span></Button>
   <Button variant="ghost" size="icon" onclick={() => { draftContent = content; editMode = true; }} title="Edit diagram"><span class="material-symbols-outlined">edit</span></Button>
 {/snippet}
@@ -290,8 +293,7 @@
         class="diagram-canvas"
         role="button"
         tabindex="0"
-        aria-label="Mermaid diagram. Scroll to zoom, drag to pan."
-        onwheel={handleWheel}
+        aria-label="Diagrama Mermaid. Use os controles para ampliar ou reduzir; arraste para mover."
         onmousedown={handleMouseDown}
         onmousemove={handleMouseMove}
         onmouseup={handleMouseUp}
@@ -302,7 +304,7 @@
       >
         <div
           class="diagram-container"
-          style="transform: translate(calc(-50% + {translateX}px), calc(-50% + {translateY}px)) scale({scale}); transform-origin: center center;"
+          style="width: {diagramWidth * scale}px; transform: translate({translateX}px, {translateY}px);"
           bind:this={renderContainer}
         ></div>
       </div>
@@ -343,35 +345,33 @@
   }
 
   :global([data-slot="textarea"].diagram-editor) {
-    flex: 1;
     width: 100%;
-    height: 100%;
+    height: auto;
     background: transparent;
     border: none;
     box-shadow: none;
     outline: none;
-    resize: none;
+    resize: vertical;
     padding: 16px;
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
     font-size: 14px;
     line-height: 1.6;
     color: var(--color-neutral-active);
     box-sizing: border-box;
-    min-height: unset;
-    field-sizing: unset;
+    min-height: 8rem;
+    field-sizing: content;
+    overflow-y: hidden;
   }
 
   .diagram-view {
-    flex: 1;
-    overflow: hidden;
-    position: relative;
+    width: 100%;
+    min-width: 0;
   }
 
   .diagram-canvas {
-    position: absolute;
-    inset: 0;
+    position: relative;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
     background: none;
     border: none;
@@ -379,15 +379,18 @@
   }
 
   .diagram-container {
-    position: absolute;
-    top: 50%;
-    left: 50%;
+    position: relative;
+    top: auto;
+    left: auto;
     display: flex;
     align-items: center;
     justify-content: center;
+    flex: 0 0 auto;
+    margin-inline: auto;
   }
 
   .diagram-container :global(svg) {
+    width: 100%;
     max-width: none !important;
     height: auto;
     display: block;

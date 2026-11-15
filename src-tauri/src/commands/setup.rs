@@ -253,6 +253,48 @@ pub async fn initialize_app(app: AppHandle) -> Result<(), String> {
         Vec<crate::eavto::WrittenTriple>,
     )>();
     let executor = DbExecutor::new_with_notify(conn, db_path.clone(), Some(notify_tx));
+    let catalog_updates = executor
+        .write(|conn| {
+            let ai_services_created = crate::core_ontology::ai_services::sync(conn)?;
+            crate::core_ontology::semantic_catalog::sync_schema(conn)?;
+            let catalog_summary = crate::core_ontology::semantic_catalog::sync(conn)?;
+            let migrated_specs = crate::core_ontology::semantic_catalog::sync_legacy_specs(conn)?;
+            serde_json::to_string(&(
+                ai_services_created,
+                catalog_summary.contract_versions_created,
+                catalog_summary.registry_links_added,
+                catalog_summary.registry_contracts_verified,
+                catalog_summary.specs_requiring_update,
+                migrated_specs,
+            ))
+            .map_err(|error| error.to_string())
+        })
+        .await
+        .map_err(|error| {
+            let message = format!("Failed to synchronize semantic widget catalog: {error}");
+            super::log_backend("error", &message);
+            message
+        })?;
+    let (
+        ai_services_created,
+        contracts_created,
+        links_added,
+        contracts_verified,
+        specs_requiring_update,
+        migrated_specs,
+    ): (usize, usize, usize, usize, Vec<String>, usize) = serde_json::from_str(&catalog_updates)
+        .map_err(|error| format!("Invalid semantic catalog sync summary: {error}"))?;
+    super::log_backend(
+        "info",
+        &format!(
+            "Core ontology startup sync: {ai_services_created} OpenAI service(s) created; semantic catalog: {} contract version(s) created, {} registry link(s) added, {} versioned contract(s) verified in CoreOntologyRegistry, {migrated_specs} widget specification(s) migrated, {} spec(s) require agent update: {:?}",
+            contracts_created,
+            links_added,
+            contracts_verified,
+            specs_requiring_update.len(),
+            specs_requiring_update,
+        ),
+    );
     executor
         .write(|conn| {
             crate::commands::migrate_legacy_active_ai_model(conn)?;
@@ -262,6 +304,10 @@ pub async fn initialize_app(app: AppHandle) -> Result<(), String> {
         .map_err(|error| format!("Failed to migrate active AI model configuration: {}", error))?;
     let executor_for_worker = executor.clone();
     app.manage(executor);
+    super::openai_model_catalog::start_daily_sync(
+        app.clone(),
+        app.state::<DbExecutor>().inner().clone(),
+    );
     app.manage(retention_gate.clone());
     super::log_backend(
         "debug",

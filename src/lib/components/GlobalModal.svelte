@@ -62,7 +62,7 @@
 
   .modal-title {
     font-size: 12px;
-    font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+    font-family: var(--font-family-app);
     color: var(--color-neutral);
     font-weight: 600;
   }
@@ -112,7 +112,7 @@
     padding: 10px;
     background: color-mix(in srgb, var(--color-white) 4%, transparent);
     font-size: 11px;
-    font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+    font-family: var(--font-family-app);
     overflow-x: auto;
     white-space: pre-wrap;
     word-break: break-all;

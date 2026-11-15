@@ -461,8 +461,6 @@
 
 <style>
   .raw-content {
-    flex: 1;
-    overflow: hidden;
     display: flex;
     flex-direction: column;
   }
@@ -543,9 +541,7 @@
   /* ── Área de lista ── */
 
   .list-area {
-    flex: 1;
-    overflow-y: auto;
-    min-height: 0;
+    min-width: 0;
   }
 
   /* ── Paginação ── */
@@ -657,7 +653,7 @@
   }
 
   .cell-mono {
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
     font-size: 11px;
     max-width: 160px;
     overflow: hidden;
@@ -816,7 +812,7 @@
   }
 
   .detail-field dd.mono {
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
     font-size: 11px;
   }
 
@@ -853,13 +849,11 @@
     background: color-mix(in srgb, var(--color-error) 10%, transparent);
     border-radius: var(--radius);
     color: var(--color-error);
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
     font-size: 11px;
     line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-all;
-    max-height: 120px;
-    overflow-y: auto;
   }
 
   /* ── Bloco de raw_payload ── */
@@ -876,13 +870,11 @@
     background: var(--color-surface-2);
     border-radius: var(--radius);
     color: var(--color-neutral);
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
     font-size: 11px;
     line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-all;
-    max-height: 200px;
-    overflow-y: auto;
   }
 
   .expand-btn {

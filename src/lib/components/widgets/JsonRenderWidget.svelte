@@ -200,9 +200,9 @@
   .json-render-body {
     box-sizing: border-box;
     width: 100%;
-    height: 100%;
+    height: auto;
     min-width: 0;
-    overflow: auto;
+    overflow: visible;
     padding: var(--spacing-widget-inset);
     color: var(--text-body);
   }

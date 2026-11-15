@@ -3,8 +3,112 @@ use crate::owl::{self, Individual, Object, Triple};
 use chrono::{DateTime, SecondsFormat, Utc};
 use std::collections::HashSet;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_opener::OpenerExt;
 
 const OPENROUTER_MODELS_PAGE_SIZE: u64 = 1_000;
+
+fn validate_openai_model_catalog_service(
+    conn: &crate::owl::Connection,
+    service_iri: &str,
+) -> Result<(), String> {
+    crate::commands::setup_ai::validate_setup_ai_service_structure(conn, service_iri)?;
+    let service = Individual::get(conn, service_iri)
+        .map_err(|error| format!("Unable to read the selected AI service: {error}"))?
+        .ok_or_else(|| format!("AI service '{}' does not exist", service_iri))?;
+    let base_url = service
+        .properties
+        .iter()
+        .find(|(property, _)| property == "foundation:apiBaseUrl")
+        .and_then(|(_, value)| value.as_literal())
+        .unwrap_or_default();
+    let is_openai_api = url::Url::parse(&base_url)
+        .ok()
+        .and_then(|url| url.host_str().map(|host| host == "api.openai.com"))
+        .unwrap_or(false);
+    if !is_openai_api {
+        return Err(format!("'{}' is not an OpenAI service", service_iri));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod openai_model_catalog_service_tests {
+    use super::validate_openai_model_catalog_service;
+    use crate::owl::{Class, ClassType, Individual, Object, Triple};
+
+    fn setup_service(iri: &str, class_iri: &str, base_url: &str) -> crate::owl::Connection {
+        let mut conn = crate::eavto::test_helpers::setup_test_db();
+        Class::new(class_iri)
+            .assert(
+                &mut conn,
+                ClassType::OwlClass,
+                "Test AI service",
+                "https://example.com/icon.svg",
+                None,
+                "test",
+            )
+            .unwrap();
+        Individual::new(iri)
+            .assert_without_icon(&mut conn, class_iri, "Test AI service", "test")
+            .unwrap();
+        crate::eavto::store::assert_triples(
+            &mut conn,
+            &[Triple::new(
+                iri,
+                "foundation:apiBaseUrl",
+                Object::Literal {
+                    value: base_url.to_string(),
+                    datatype: Some("xsd:string".to_string()),
+                    language: None,
+                },
+            )],
+            "test",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn accepts_a_valid_openai_api_service_from_ontology_types() {
+        let conn = setup_service(
+            "test:OpenAIService",
+            "foundation:AIAPIService",
+            "https://api.openai.com/v1",
+        );
+
+        assert!(validate_openai_model_catalog_service(&conn, "test:OpenAIService").is_ok());
+    }
+
+    #[test]
+    fn rejects_a_non_ai_api_service_even_when_its_endpoint_is_openai() {
+        let conn = setup_service(
+            "test:OtherService",
+            "foundation:OtherService",
+            "https://api.openai.com/v1",
+        );
+
+        assert!(
+            validate_openai_model_catalog_service(&conn, "test:OtherService")
+                .unwrap_err()
+                .contains("is not an AI API service")
+        );
+    }
+
+    #[test]
+    fn rejects_an_ai_api_service_with_a_non_openai_endpoint() {
+        let conn = setup_service(
+            "test:OtherEndpointService",
+            "foundation:AIAPIService",
+            "https://example.com/v1",
+        );
+
+        assert!(
+            validate_openai_model_catalog_service(&conn, "test:OtherEndpointService")
+                .unwrap_err()
+                .contains("is not an OpenAI service")
+        );
+    }
+}
 
 struct OpenRouterModelPage {
     data: Vec<serde_json::Value>,
@@ -1502,4 +1606,234 @@ pub async fn ai__initialize(
     });
 
     Ok(())
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn ai__chatgpt_start_auth(
+    app: AppHandle,
+    auth_state: State<'_, crate::ai::chatgpt_auth::ChatGptAuthState>,
+) -> Result<serde_json::Value, String> {
+    let result =
+        crate::ai::chatgpt_auth::start_auth(app.clone(), auth_state.inner().clone()).await?;
+    let reused = result["reused"].as_bool().unwrap_or(false);
+    let authorization_url = result["authorizationUrl"].as_str();
+    if !reused {
+        let authorization_url = authorization_url
+            .ok_or_else(|| "ChatGPT sign-in did not provide an authorization URL".to_string())?;
+        if let Err(error) = app.opener().open_url(authorization_url, None::<&str>) {
+            if let Some(session_id) = result["authSessionId"].as_str() {
+                if let Some(session) = auth_state.inner().fail_session(
+                    session_id,
+                    "browser_open",
+                    "Unable to open the ChatGPT sign-in page. Open the authorization page again."
+                        .to_string(),
+                ).await {
+                    let _ = app.emit("chatgpt-auth-status", session);
+                }
+            }
+            crate::commands::log_backend(
+                "error",
+                &format!(
+                    "[CHATGPT_AUTH] authSessionId={} stage=browser_open outcome=error kind={}",
+                    result["authSessionId"].as_str().unwrap_or("unknown"),
+                    std::any::type_name_of_val(&error)
+                ),
+            );
+            return Err("Unable to open the ChatGPT sign-in page".to_string());
+        }
+    }
+    Ok(serde_json::json!({
+        "authSessionId": result["authSessionId"],
+        "status": result["status"],
+    }))
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn ai__chatgpt_cancel_auth(
+    app: AppHandle,
+    authSessionId: String,
+    auth_state: State<'_, crate::ai::chatgpt_auth::ChatGptAuthState>,
+) -> Result<(), String> {
+    if let Some(session) = auth_state.inner().cancel_session(&authSessionId).await? {
+        let _ = app.emit("chatgpt-auth-status", session);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn ai__chatgpt_get_connection_status(
+    app: AppHandle,
+    authSessionId: Option<String>,
+    auth_state: State<'_, crate::ai::chatgpt_auth::ChatGptAuthState>,
+) -> Result<serde_json::Value, String> {
+    let stored_status =
+        crate::ai::chatgpt_auth::connection_status(app.state::<DbExecutor>().inner()).await?;
+    if stored_status.status == "connected" {
+        let mut value = serde_json::to_value(stored_status)
+            .map_err(|error| format!("Unable to serialize ChatGPT connection status: {error}"))?;
+        if let Some(session) = auth_state.inner().get_active_or_connected_session() {
+            if session.status == "connected" {
+                if let Some(object) = value.as_object_mut() {
+                    object.insert(
+                        "authSessionId".to_string(),
+                        serde_json::json!(session.auth_session_id),
+                    );
+                    object.insert("stage".to_string(), serde_json::json!(session.stage));
+                }
+            }
+        }
+        auth_state.inner().cancel_active_session().await;
+        return Ok(value);
+    }
+    let session = authSessionId
+        .as_deref()
+        .and_then(|session_id| auth_state.inner().get_session(session_id))
+        .or_else(|| auth_state.inner().get_active_session());
+    if let Some(session) = session {
+        if session.status != "connected" {
+            return Ok(serde_json::json!({
+                "status": session.status,
+                "stage": session.stage,
+                "email": session.email,
+                "planUsageEnabled": false,
+                "expiresAt": null,
+                "usage": null,
+                "showWelcomeConfirmation": false,
+                "error": session.error,
+                "authSessionId": session.auth_session_id,
+            }));
+        }
+        let mut status = serde_json::to_value(stored_status)
+            .map_err(|error| format!("Unable to serialize ChatGPT connection status: {error}"))?;
+        if let Some(object) = status.as_object_mut() {
+            object.insert(
+                "authSessionId".to_string(),
+                serde_json::json!(session.auth_session_id),
+            );
+            object.insert("stage".to_string(), serde_json::json!(session.stage));
+        }
+        return Ok(status);
+    }
+    let status =
+        crate::ai::chatgpt_auth::connection_status(app.state::<DbExecutor>().inner()).await?;
+    serde_json::to_value(status)
+        .map_err(|error| format!("Unable to serialize ChatGPT connection status: {error}"))
+}
+
+#[tauri::command]
+pub async fn ai__chatgpt_acknowledge_plan_use(
+    executor: State<'_, DbExecutor>,
+) -> Result<(), String> {
+    crate::ai::chatgpt_auth::acknowledge_plan_usage(executor.inner()).await
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn ai__chatgpt_list_models(
+    serviceIri: String,
+    executor: State<'_, DbExecutor>,
+) -> Result<serde_json::Value, String> {
+    let models = crate::ai::chatgpt_auth::list_models(executor.inner()).await?;
+    let result = executor
+        .write(move |conn| {
+            validate_openai_model_catalog_service(conn, &serviceIri)?;
+
+            let mut items = Vec::with_capacity(models.len());
+            for model in models {
+                let mut hasher = sha2::Sha256::new();
+                use sha2::Digest;
+                hasher.update(serviceIri.as_bytes());
+                hasher.update([0]);
+                hasher.update(model.id.as_bytes());
+                let hash = hasher.finalize();
+                let hash_hex = hash
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>();
+                let model_iri = format!("foundation:AIModel_OpenAI_{}", &hash_hex[..24]);
+                if Individual::get(conn, &model_iri)
+                    .map_err(|error| format!("Unable to inspect model '{}': {error}", model.id))?
+                    .is_none()
+                {
+                    let individual = Individual::new(&model_iri);
+                    individual
+                        .assert(
+                            conn,
+                            "foundation:AIModel",
+                            &model.name,
+                            "psychology_alt",
+                            "ai",
+                        )
+                        .map_err(|error| format!("Unable to add model '{}': {error}", model.id))?;
+                    individual
+                        .add_property(
+                            conn,
+                            "foundation:hasStatus",
+                            vec![Object::Iri("foundation:Completed".to_string())],
+                            "ai",
+                        )
+                        .map_err(|error| {
+                            format!("Unable to set model status '{}': {error}", model.id)
+                        })?;
+                    individual
+                        .add_property(
+                            conn,
+                            "foundation:modelIdentifier",
+                            vec![Object::Literal {
+                                value: model.id.clone(),
+                                datatype: Some("xsd:string".to_string()),
+                                language: None,
+                            }],
+                            "ai",
+                        )
+                        .map_err(|error| {
+                            format!("Unable to set model identifier '{}': {error}", model.id)
+                        })?;
+                    individual
+                        .add_property(
+                            conn,
+                            "foundation:offeredBy",
+                            vec![Object::Iri(serviceIri.clone())],
+                            "ai",
+                        )
+                        .map_err(|error| format!("Unable to link model '{}': {error}", model.id))?;
+                    individual
+                        .add_property(
+                            conn,
+                            "rdfs:comment",
+                            vec![Object::Literal {
+                                value: format!(
+                                    "Model supplied by OpenAI. Publisher: {}",
+                                    model.owned_by
+                                ),
+                                datatype: Some("xsd:string".to_string()),
+                                language: None,
+                            }],
+                            "ai",
+                        )
+                        .map_err(|error| {
+                            format!("Unable to describe model '{}': {error}", model.id)
+                        })?;
+                }
+                items.push(serde_json::json!({
+                    "iri": model_iri,
+                    "label": model.name,
+                    "modelIdentifier": model.id,
+                    "ownedBy": model.owned_by,
+                }));
+            }
+            serde_json::to_string(&serde_json::json!({ "models": items }))
+                .map_err(|error| format!("Unable to serialize ChatGPT models: {error}"))
+        })
+        .await?;
+    serde_json::from_str(&result)
+        .map_err(|error| format!("Unable to parse ChatGPT models: {error}"))
+}
+
+#[tauri::command]
+pub async fn ai__chatgpt_disconnect(executor: State<'_, DbExecutor>) -> Result<(), String> {
+    crate::ai::chatgpt_auth::disconnect(executor.inner()).await
 }

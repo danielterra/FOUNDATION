@@ -1,13 +1,33 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
+
   let {
     value,
     mode = 'contained',
-    maxHeight = 300,
   }: {
     value: string;
     mode?: 'fill' | 'contained';
-    maxHeight?: number;
   } = $props();
+
+  let frame = $state<HTMLIFrameElement | null>(null);
+  let contentHeight = $state(80);
+  let contentObserver: ResizeObserver | null = null;
+
+  function measureContent() {
+    const body = frame?.contentDocument?.body;
+    const documentElement = frame?.contentDocument?.documentElement;
+    if (!body || !documentElement) return;
+    const updateHeight = () => {
+      contentHeight = Math.max(body.scrollHeight, documentElement.scrollHeight, 80);
+    };
+    updateHeight();
+    contentObserver?.disconnect();
+    contentObserver = new ResizeObserver(updateHeight);
+    contentObserver.observe(body);
+    contentObserver.observe(documentElement);
+  }
+
+  onDestroy(() => contentObserver?.disconnect());
 
   // CSS vars do app não atravessam a barreira de origem opaca do srcdoc.
   // Solução: valores concretos resolvidos de colors.css injetados diretamente.
@@ -26,7 +46,7 @@
     box-sizing: border-box;
     background: #ffffff;
     color: #111111;
-    font-family: system-ui, sans-serif;
+    font-family: 'Monaspace Krypton';
   }
   * { box-sizing: border-box; max-width: 100%; }
   img { height: auto; }
@@ -54,9 +74,11 @@
 {:else}
   <iframe
     class="safe-frame safe-frame--contained"
-    sandbox="allow-popups allow-popups-to-escape-sandbox"
+    sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
     title="Conteúdo HTML"
-    style="height: {maxHeight}px;"
+    style="height: {contentHeight}px;"
+    bind:this={frame}
+    onload={measureContent}
     {srcdoc}
   ></iframe>
 {/if}
@@ -76,7 +98,7 @@
 
   .safe-frame--contained {
     display: block;
-    overflow-y: auto;
+    overflow: hidden;
     min-height: 80px;
   }
 </style>

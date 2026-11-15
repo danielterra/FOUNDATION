@@ -2,10 +2,31 @@ fn main() {
     println!("cargo:rerun-if-changed=../core-ontology");
     println!("cargo:rerun-if-changed=../node_modules/material-symbols/index.d.ts");
     println!("cargo:rerun-if-changed=../node_modules/material-symbols/package.json");
+    println!("cargo:rerun-if-changed=../src/lib/json-render/semantic/catalog-manifest.json");
 
     generate_material_symbols_list();
+    copy_semantic_catalog_manifest();
 
     tauri_build::build()
+}
+
+fn copy_semantic_catalog_manifest() {
+    use std::path::PathBuf;
+
+    let app_root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let manifest_path = app_root.join("src/lib/json-render/semantic/catalog-manifest.json");
+    let out_path =
+        PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("semantic_catalog_manifest.json");
+
+    std::fs::copy(&manifest_path, &out_path).unwrap_or_else(|error| {
+        panic!(
+            "Failed to copy semantic widget catalog manifest from {}: {error}",
+            manifest_path.display()
+        )
+    });
 }
 
 fn generate_material_symbols_list() {

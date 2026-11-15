@@ -6,7 +6,7 @@
   import { openEntity } from '$lib/blackboard'
   import { SvelteFlow, Controls, Background, BackgroundVariant } from '@xyflow/svelte'
   import '@xyflow/svelte/dist/style.css'
-  import { applyDagreLayout } from './automation/layout.js'
+  import { applyDagreLayout, getNodeLayoutSize } from './automation/layout.js'
   import WidgetContainer from './WidgetContainer.svelte'
   import { Button } from '$lib/components/ui/button'
   import ExecutionHistory from './automation/ExecutionHistory.svelte'
@@ -72,6 +72,10 @@
   let isExecutable = $state(false)
   let nodes = $state.raw([])
   let edges = $state.raw([])
+  const flowHeight = $derived(Math.max(
+    600,
+    ...nodes.map(node => node.position.y + getNodeLayoutSize(node).height + 64),
+  ))
   let loading = $state(true)
   let error = $state(null)
   let hoveredNodeId = $state(null)
@@ -256,7 +260,6 @@
         entityId: node.id,
         content: null,
         position: null,
-        size: null,
         conversationId: conversationIri,
       }).catch(e => console.error('Failed to open inspector:', e))
     } else if (node.data.invokesProcess) {
@@ -265,7 +268,6 @@
         entityId: node.data.invokesProcess,
         content: null,
         position: null,
-        size: null,
         conversationId: conversationIri,
       }).catch(e => console.error('Failed to open sub-process widget:', e))
     } else {
@@ -495,6 +497,7 @@
 <WidgetContainer
   icon="bolt"
   title={automationLabel || 'Automation'}
+  minHeight={600}
   {windowState}
   {onWindowStateChange}
   onClose={closeWidget}
@@ -541,7 +544,7 @@
         <ExecutionHistory automationIri={entityId} onOpenEntity={openExecutionOutputEntity} />
       </div>
     {:else}
-      <div class="flow-panel" id="automation-flow-panel" role="tabpanel" aria-labelledby="automation-flow-tab">
+      <div class="flow-panel" id="automation-flow-panel" role="tabpanel" aria-labelledby="automation-flow-tab" style="height: {flowHeight}px">
     {#if loading}
       <div class="loading">
         <span class="material-symbols-outlined spinning">progress_activity</span>
@@ -557,7 +560,7 @@
         edges={displayEdges}
         {nodeTypes}
         fitView
-        panOnScroll
+        panOnScroll={false}
         zoomOnScroll={false}
         onnodeclick={handleNodeClick}
         onnodepointerenter={({ node }) => hoveredNodeId = node.id}
@@ -578,10 +581,9 @@
     font-size: 10px;
     color: var(--color-warning);
     font-style: italic;
-    max-width: 140px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    max-width: min(36ch, 100%);
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .active-step-phase,
@@ -635,11 +637,11 @@
   }
 
   .widget-content {
-    height: 100%;
-    overflow: hidden;
     position: relative;
     display: flex;
     flex-direction: column;
+    flex: 1 0 auto;
+    min-height: 0;
   }
 
   .automation-tabs {
@@ -672,10 +674,14 @@
     outline-offset: var(--size-hud-frame-line);
   }
 
-  .history-panel, .flow-panel {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: hidden;
+  .history-panel {
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+
+  .flow-panel {
+    flex: 1 0 auto;
+    min-width: 0;
   }
 
   .flow-panel :global(.svelte-flow) {
@@ -728,7 +734,7 @@
   }
 
   :global(.svelte-flow .svelte-flow__node) {
-    font-family: var(--font-title, sans-serif);
+    font-family: var(--font-family-app);
   }
 
   :global(.svelte-flow__edge.edge-highlighted .svelte-flow__edge-path) {

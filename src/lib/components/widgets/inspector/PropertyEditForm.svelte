@@ -93,12 +93,12 @@
     box-sizing: border-box;
     outline: none;
     box-shadow: none;
-    overflow-y: auto;
-    field-sizing: fixed;
+    overflow-y: hidden;
+    field-sizing: content;
   }
 
   :global([data-slot="textarea"].edit-textarea.mono) {
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family-app);
     font-size: 13px;
   }
 
