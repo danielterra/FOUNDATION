@@ -192,6 +192,17 @@ impl ClaudeProvider {
             model_identifier: Some(model_identifier),
         }
     }
+
+    /// Creates a provider client without a request deadline for long-running
+    /// background ingestion; termination must come from the provider or worker
+    /// task itself, not elapsed wall-clock time.
+    pub fn with_model_without_request_deadline(api_key: String, model_identifier: String) -> Self {
+        Self {
+            api_key,
+            client: reqwest::Client::new(),
+            model_identifier: Some(model_identifier),
+        }
+    }
 }
 
 fn add_cache_breakpoint(message: &mut ClaudeMessage) {
@@ -760,6 +771,24 @@ impl OpenRouterProvider {
             model_identifier: Some(model_identifier),
             fallback_models,
             client,
+        }
+    }
+
+    /// Creates a provider client without a request deadline for long-running
+    /// background ingestion; termination must come from the provider or worker
+    /// task itself, not elapsed wall-clock time.
+    pub fn with_model_without_request_deadline(
+        api_key: String,
+        base_url: String,
+        model_identifier: String,
+        fallback_models: Vec<String>,
+    ) -> Self {
+        Self {
+            api_key,
+            base_url,
+            model_identifier: Some(model_identifier),
+            fallback_models,
+            client: reqwest::Client::new(),
         }
     }
 }

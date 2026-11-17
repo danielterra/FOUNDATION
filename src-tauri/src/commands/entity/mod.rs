@@ -581,6 +581,23 @@ pub async fn widget_inspector__get_entity_property_page(
         .await
 }
 
+/// Reads and filters one or more entity-linked record collections at a shared snapshot.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn widget_inspector__get_entity_records_page(
+    request: crate::core_ontology::semantic_widget_data::EntityRecordsPageRequest,
+    executor: State<'_, DbExecutor>,
+) -> Result<String, String> {
+    executor
+        .read(move |conn| {
+            let page = crate::core_ontology::semantic_widget_data::get_entity_records_page(
+                conn, &request,
+            )?;
+            serde_json::to_string(&page).map_err(|error| error.to_string())
+        })
+        .await
+}
+
 /// Returns the properties applicable to the outputProperty picker of a FlowNode.
 ///
 /// Resolution chain:

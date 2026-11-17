@@ -14,6 +14,7 @@ mod tool_execution;
 mod trace;
 
 pub use cancellation::{AiCancellationState, ConversationProcessingState};
+pub use message_utils::message_to_api_format;
 pub use recovery::{process_conversation_queue, run_conversation_from_current_state};
 pub use tool_execution::execute_tools_from_message;
 

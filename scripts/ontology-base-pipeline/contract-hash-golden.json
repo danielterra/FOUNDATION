@@ -43,12 +43,16 @@
       "hash": "sha256:f9bf93eb2ed1ae825d01279f1cba0a9aedb65040c19b491070d0dd9b6c351d8e"
     },
     "Comparison": {
-      "contractVersion": 2,
-      "hash": "sha256:8c41753a792882a11f1bb7079b8ea758ad775a172a2c4aaa4c3b8fc8fa23512e"
+      "contractVersion": 3,
+      "hash": "sha256:7c9cdc3afcb086fd75f06f2b222691b5b7dc3566e4fd467f950537caff920d7d"
     },
     "Distribution": {
       "contractVersion": 2,
       "hash": "sha256:85538cd94c225b50dd06f2d545773db21112e0b56f7cdbbd904a08cd981a6c57"
+    },
+    "Records": {
+      "contractVersion": 1,
+      "hash": "sha256:45a90b66d9248c260ba177bbbaeb83238ffb24b0f3808f18fd7d0e953857bc33"
     }
   },
   "actionCanonicalPayload": "{\"actionsSchema\":[{\"description\":\"Apresenta uma mensagem local no widget.\",\"id\":\"announce\",\"paramsSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"message\":{\"maxLength\":500,\"type\":\"string\"}},\"required\":[\"message\"],\"type\":\"object\"}},{\"description\":\"Executa uma ação local explicitamente conectada pelo widget.\",\"id\":\"perform\",\"paramsSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{},\"type\":\"object\"}},{\"description\":\"Atualiza estado local do widget.\",\"id\":\"setState\",\"paramsSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"statePath\":{\"type\":\"string\"},\"value\":{}},\"required\":[\"statePath\",\"value\"],\"type\":\"object\"}},{\"description\":\"Adiciona valor ao estado local do widget.\",\"id\":\"pushState\",\"paramsSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"statePath\":{\"type\":\"string\"},\"value\":{}},\"required\":[\"statePath\",\"value\"],\"type\":\"object\"}},{\"description\":\"Remove valor do estado local do widget.\",\"id\":\"removeState\",\"paramsSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"index\":{\"type\":\"number\"},\"statePath\":{\"type\":\"string\"}},\"required\":[\"statePath\",\"index\"],\"type\":\"object\"}},{\"description\":\"Valida formulário local.\",\"id\":\"validateForm\",\"paramsSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"formPath\":{\"type\":\"string\"}},\"required\":[\"formPath\"],\"type\":\"object\"}}],\"componentId\":\"Action\",\"examples\":{\"elements\":{\"sync\":{\"children\":[],\"on\":{\"press\":{\"action\":\"announce\",\"params\":{\"message\":\"A sincronização foi solicitada.\"}}},\"props\":{\"available\":true,\"frequency\":\"occasional\",\"icon\":\"sync\",\"label\":\"Sincronizar agora\",\"objective\":\"Buscar novos dados da conta.\",\"priority\":\"primary\"},\"type\":\"Action\"}},\"root\":\"sync\"},\"intent\":\"Expõe uma ação de acordo com sua prioridade, frequência, impacto, disponibilidade e resultado.\",\"propsSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"available\":{\"type\":\"boolean\"},\"frequency\":{\"enum\":[\"routine\",\"occasional\",\"rare\"],\"type\":\"string\"},\"icon\":{\"type\":\"string\"},\"impact\":{\"type\":\"string\"},\"label\":{\"type\":\"string\"},\"objective\":{\"type\":\"string\"},\"priority\":{\"enum\":[\"primary\",\"supporting\",\"destructive\"],\"type\":\"string\"},\"progress\":{\"type\":\"string\"},\"result\":{\"type\":\"string\"},\"reversibility\":{\"enum\":[\"reversible\",\"hard_to_reverse\",\"irreversible\"],\"type\":\"string\"}},\"required\":[\"label\",\"icon\"],\"type\":\"object\"}}"

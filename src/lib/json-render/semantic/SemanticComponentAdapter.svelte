@@ -8,12 +8,14 @@
   import QueryConfigEditor from '$lib/components/widgets/inspector/QueryConfigEditor.svelte';
   import RecurrenceEditor from '$lib/components/widgets/inspector/RecurrenceEditor.svelte';
   import OntologyEntityReferenceChip from '$lib/components/widgets/inspector/OntologyEntityReferenceChip.svelte';
-  import { ENTITY_BINDING_CONTEXT, type BoundPropertyItem, type EntityBindingContext } from './entityBindingContext';
+  import { ENTITY_BINDING_CONTEXT, type BoundPropertyItem, type EntityBindingContext, type SemanticRecordsCriteria, type SemanticRecordsRow } from './entityBindingContext';
   import { semanticCatalog } from './catalog';
   import { informationFactLabelVisible, informationPrimaryChildSpans as shouldSpanPrimaryInformationChild, informationSummaryVisible, SEMANTIC_COMPONENT_CONTRACT_VERSIONS } from './runtimeSpec';
   import { createSemanticDomIds } from './domIds';
-  import { areComparisonUnitsCompatible, calculateComparison, canCalculateComparison, comparisonBarGeometry, formatComparisonMonth, formatSemanticAmount, formatSemanticPercent, isComparisonPeriodClosed, previousComparisonMonth } from './comparison';
+  import { areComparisonUnitsCompatible, calculateComparison, canCalculateComparison, formatComparisonMonth, formatSemanticAmount, formatSemanticPercent, isComparisonPeriodClosed, previousComparisonMonth } from './comparison';
   import { aggregateDistribution, resolveDistributionCoverage } from './distribution';
+  import { formatLocalizedDate, formatLocalizedDateTime, formatRelativeCalendarDate, formatRelativeTime } from '$lib/utils/dateFormatters';
+  import { onMount } from 'svelte';
 
   type Candidate = { value: string; title: string; description?: string; disabled?: boolean; comparison?: Record<string, string> };
   type Fact = { label: string; value: string; unit?: string };
@@ -76,6 +78,17 @@
   let boundFactLabelIsVisible = $derived(informationFactLabelVisible(componentContractVersion, factsPage?.items.length ?? 0));
   let distributionProjectionBindings = $derived((props.__ontologyProjectionBindings as Record<string, Record<string, string>> | undefined) ?? {});
   let distributionProjection = $derived(distributionProjectionBindings.collection ?? {});
+  let recordsElementId = $derived(String(props.__semanticElementId ?? ''));
+  let recordsPage = $derived(recordsElementId ? entityBindingContext?.getRecords(recordsElementId) : undefined);
+  let recordsColumns = $derived((Array.isArray(props.columns) ? props.columns : []) as Array<{ id: string; label: string; valueType: string; unit?: string; sortable?: boolean; filterOperators?: string[] }>);
+  let recordsFilterColumn = $state('');
+  let recordsFilterValue = $state('');
+  let recordsFilterOperator = $state('contains');
+  let relativeNow = $state(Date.now());
+  onMount(() => {
+    const timer = setInterval(() => relativeNow = Date.now(), 60_000);
+    return () => clearInterval(timer);
+  });
   let comparison = $derived.by(() => {
     if (!comparisonPeriodClosed) return null;
     const currentItem = currentComparisonPage?.items[0];
@@ -89,7 +102,6 @@
     if (!currentItem || !referenceItem || !canCalculateComparison(comparisonPeriodClosed, currentItem.value, referenceItem.value, unitsCompatible)) return null;
     return calculateComparison(currentItem.value, referenceItem.value, props.favorableDirection === 'higher' || props.favorableDirection === 'lower' ? props.favorableDirection : 'neutral');
   });
-  let comparisonBars = $derived(comparison ? comparisonBarGeometry(comparison.current, comparison.reference) : null);
   let comparisonHasCompatibleUnit = $derived(areComparisonUnitsCompatible(
     currentComparisonPage?.unitIri,
     currentComparisonPage?.unitLabel,
@@ -179,7 +191,70 @@
     if (value === 'hard_to_reverse') return 'Difícil de reverter';
     return 'Pode ser desfeita';
   }
+
+  function submitRecordsFilter() {
+    if (!recordsElementId || !recordsPage || !recordsFilterColumn || !recordsFilterValue.trim()) return;
+    entityBindingContext?.loadRecords(recordsElementId, {
+      filters: [{ columnId: recordsFilterColumn, operator: recordsFilterOperator as SemanticRecordsCriteria['filters'][number]['operator'], value: recordsFilterValue.trim() }],
+      sort: recordsPage.criteria.sort,
+    });
+  }
+
+  function clearRecordsFilter() {
+    if (!recordsElementId || !recordsPage) return;
+    recordsFilterValue = '';
+    entityBindingContext?.loadRecords(recordsElementId, { filters: [], sort: recordsPage.criteria.sort });
+  }
+
+  function sortRecords(columnId: string) {
+    if (!recordsElementId || !recordsPage) return;
+    const direction = recordsPage.criteria.sort.columnId === columnId && recordsPage.criteria.sort.direction === 'asc' ? 'desc' : 'asc';
+    entityBindingContext?.loadRecords(recordsElementId, { ...recordsPage.criteria, sort: { columnId, direction } });
+  }
+
+  function recordCell(row: SemanticRecordsRow, column: typeof recordsColumns[number]) {
+    const item = row.values[column.id]?.[0];
+    if (!item) return '—';
+    if (item.isObjectProperty) return item.valueLabel ?? item.value;
+    if (column.valueType === 'currency' || column.valueType === 'number' || column.valueType === 'percentage') {
+      const number = Number(item.value);
+      if (Number.isFinite(number)) {
+        if (column.valueType === 'currency' && column.unit && /^[A-Z]{3}$/.test(column.unit)) {
+          return new Intl.NumberFormat(Intl.DateTimeFormat().resolvedOptions().locale, { style: 'currency', currency: column.unit }).format(number);
+        }
+        const formatted = new Intl.NumberFormat(Intl.DateTimeFormat().resolvedOptions().locale, { maximumFractionDigits: 2 }).format(number);
+        return column.valueType === 'percentage' ? `${formatted}%` : `${formatted}${column.unit ? ` ${column.unit}` : ''}`;
+      }
+    }
+    return item.valueLabel ?? item.value;
+  }
+
+  function dateValue(value: string, valueType: 'date' | 'date_time') {
+    const datePrefix = /^(\d{4}-\d{2}-\d{2})/.exec(value)?.[1];
+    const isUtcCalendarBoundary = valueType === 'date_time' && /T(?:00:00(?::00(?:\.0+)?)?|23:59:59\.999)(?:Z|\+00:00)$/.test(value);
+    const isCalendarDate = valueType === 'date' || isUtcCalendarBoundary;
+    // Some ontology date-only values are stored as UTC day boundaries. Preserve their calendar day
+    // instead of shifting them to the previous local day (for example, midnight UTC in São Paulo).
+    const date = isCalendarDate && datePrefix ? new Date(`${datePrefix}T12:00:00`) : new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    const calendarDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    return {
+      absolute: isCalendarDate ? formatLocalizedDate(date, { dateStyle: 'medium' }) : formatLocalizedDateTime(date),
+      relative: isCalendarDate ? formatRelativeCalendarDate(date, relativeNow) : formatRelativeTime(date, relativeNow),
+      dateTime: isCalendarDate ? calendarDate : date.toISOString(),
+    };
+  }
 </script>
+
+{#snippet boundText(item: BoundPropertyItem)}
+  {#if !item.isObjectProperty && item.datatype === 'xsd:dateTime'}
+    {@const date = dateValue(item.value, 'date_time')}
+    {#if date}<span class="date-value-display"><time class="date-value-absolute" datetime={date.dateTime}>{date.absolute}</time><span class="date-value-relative semantic-metadata">{date.relative}</span></span>{:else}{item.value}{/if}
+  {:else if !item.isObjectProperty && item.datatype === 'xsd:date'}
+    {@const date = dateValue(item.value, 'date')}
+    {#if date}<span class="date-value-display"><time class="date-value-absolute" datetime={item.value}>{date.absolute}</time><span class="date-value-relative semantic-metadata">{date.relative}</span></span>{:else}{item.value}{/if}
+  {:else}<span class:atomic-value={isAtomicDisplayValue(item)}>{item.valueLabel ?? item.value}</span>{/if}
+{/snippet}
 
 {#if componentType === 'Decision'}
   <section class="semantic-block" aria-labelledby={semanticDomIds.decisionTitle}>
@@ -252,7 +327,7 @@
             {#if item.isObjectProperty && item.valueEntityKind}
               <OntologyEntityReferenceChip kind={item.valueEntityKind} label={item.valueLabel ?? item.value} icon={item.valueIcon} entityIri={item.value} onopen={(iri) => entityBindingContext?.openEntity(iri)} />
             {:else}
-              <output class="read-only-value">{item.value}{#if props.unit}<span>{props.unit}</span>{/if}</output>
+              <output class="read-only-value">{@render boundText(item)}{#if props.unit}<span>{props.unit}</span>{/if}</output>
             {/if}
           {/each}
         </div>
@@ -262,7 +337,13 @@
         <p class="supporting-text">Sem valor registrado.</p>
       {/if}
     {:else if props.editable === false}
-      <output class="read-only-value">{value}{#if props.unit}<span>{props.unit}</span>{/if}</output>
+      <output class="read-only-value">
+        {#if props.valueType === 'date' || props.valueType === 'date_time'}
+          {@const date = dateValue(value, props.valueType)}
+          {#if date}<span class="date-value-display"><time class="date-value-absolute" datetime={date.dateTime}>{date.absolute}</time><span class="date-value-relative semantic-metadata">{date.relative}</span></span>{:else}{value}{/if}
+        {:else}{value}{/if}
+        {#if props.unit}<span>{props.unit}</span>{/if}
+      </output>
     {:else if props.cardinality === 'multiple'}
       <div class="multiple-value-list">
         {#each values as item, index (index)}
@@ -430,7 +511,7 @@
         <dl class="fact-list">
           {#each factsPage.items as item, index (`${item.value}:${index}`)}
             <div class="fact" class:fact-labeled={boundFactLabelIsVisible}>{#if boundFactLabelIsVisible}<dt>{factsPage.propertyLabel}</dt>{/if}<dd>
-              {#if item.isObjectProperty && item.valueEntityKind}<OntologyEntityReferenceChip kind={item.valueEntityKind} label={item.valueLabel ?? item.value} icon={item.valueIcon} entityIri={item.value} onopen={(iri) => entityBindingContext?.openEntity(iri)} />{:else}<span class:atomic-value={isAtomicDisplayValue(item)}>{item.value}</span>{/if}
+              {#if item.isObjectProperty && item.valueEntityKind}<OntologyEntityReferenceChip kind={item.valueEntityKind} label={item.valueLabel ?? item.value} icon={item.valueIcon} entityIri={item.value} onopen={(iri) => entityBindingContext?.openEntity(iri)} />{:else}{@render boundText(item)}{/if}
             </dd></div>
           {/each}
         </dl>
@@ -447,7 +528,7 @@
     {:else if ontologyBindings.relationships && relationshipsPage}
       {#if relationshipsPage.loading && !relationshipsPage.items.length}<p class="supporting-text" role="status">Carregando {relationshipsPage.propertyLabel}…</p>
       {:else if relationshipsPage.error && !relationshipsPage.items.length}<div class="binding-error" role="alert"><span>{relationshipsPage.error}</span><Button variant="outline" size="sm" onclick={() => entityBindingContext?.retry(relationshipsPage.propertyIri)}>Tentar novamente</Button></div>
-      {:else if relationshipsPage.items.length}<div class="bound-value-list">{#each relationshipsPage.items as item, index (`${item.value}:${index}`)}{#if item.isObjectProperty && item.valueEntityKind}<OntologyEntityReferenceChip kind={item.valueEntityKind} label={item.valueLabel ?? item.value} icon={item.valueIcon} entityIri={item.value} onopen={(iri) => entityBindingContext?.openEntity(iri)} />{:else}<span>{item.value}</span>{/if}{/each}</div>{#if relationshipsPage.error}<p class="binding-error" role="alert">{relationshipsPage.error}</p>{/if}{#if relationshipsPage.hasMore}<Button variant="outline" size="sm" disabled={relationshipsPage.loadingMore} onclick={() => entityBindingContext?.loadMore(relationshipsPage.propertyIri)}><span class="material-symbols-outlined" aria-hidden="true">expand_more</span>{relationshipsPage.loadingMore ? 'Carregando…' : 'Mostrar mais'}</Button>{/if}
+      {:else if relationshipsPage.items.length}<div class="bound-value-list">{#each relationshipsPage.items as item, index (`${item.value}:${index}`)}{#if item.isObjectProperty && item.valueEntityKind}<OntologyEntityReferenceChip kind={item.valueEntityKind} label={item.valueLabel ?? item.value} icon={item.valueIcon} entityIri={item.value} onopen={(iri) => entityBindingContext?.openEntity(iri)} />{:else}{@render boundText(item)}{/if}{/each}</div>{#if relationshipsPage.error}<p class="binding-error" role="alert">{relationshipsPage.error}</p>{/if}{#if relationshipsPage.hasMore}<Button variant="outline" size="sm" disabled={relationshipsPage.loadingMore} onclick={() => entityBindingContext?.loadMore(relationshipsPage.propertyIri)}><span class="material-symbols-outlined" aria-hidden="true">expand_more</span>{relationshipsPage.loadingMore ? 'Carregando…' : 'Mostrar mais'}</Button>{/if}
       {:else}<p class="supporting-text">Sem valor registrado.</p>{/if}
     {/if}
     {#if supportsDefaultSlot && children}
@@ -470,7 +551,7 @@
         {:else if detailsPage.items.length}
           {#each detailsPage.items as item, index (`${item.value}:${index}`)}
             <div class="fact"><dt>{detailsPage.propertyLabel}</dt><dd>
-              {#if item.isObjectProperty && item.valueEntityKind}<OntologyEntityReferenceChip kind={item.valueEntityKind} label={item.valueLabel ?? item.value} icon={item.valueIcon} entityIri={item.value} onopen={(iri) => entityBindingContext?.openEntity(iri)} />{:else}{item.value}{/if}
+              {#if item.isObjectProperty && item.valueEntityKind}<OntologyEntityReferenceChip kind={item.valueEntityKind} label={item.valueLabel ?? item.value} icon={item.valueIcon} entityIri={item.value} onopen={(iri) => entityBindingContext?.openEntity(iri)} />{:else}{@render boundText(item)}{/if}
             </dd></div>
           {/each}
           {#if detailsPage.error}<p class="binding-error" role="alert">{detailsPage.error}</p>{/if}
@@ -500,35 +581,27 @@
         {#if comparisonPeriodEndPage}<Button variant="outline" size="sm" onclick={() => entityBindingContext?.retry(comparisonPeriodEndPage.propertyIri)}>Tentar novamente</Button>{/if}
       </div>
     {:else if currentComparisonPage?.items.length && referenceComparisonPage?.items.length && comparisonPeriodClosed && comparisonHasCompatibleUnit && comparison}
-      {#if comparisonBars}
-        {@const favorable = comparison.interpretation === 'favorable'}
-        {@const unfavorable = comparison.interpretation === 'unfavorable'}
-        <div class="comparison-values" class:favorable class:unfavorable aria-label={`${props.metric}: ${comparison.interpretation === 'neutral' ? 'variação neutra' : favorable ? 'variação favorável' : 'variação desfavorável'}`}>
-          <div class="comparison-current">
-            <span class="semantic-metadata comparison-period">{currentPeriodLabel}</span>
-            <strong class="comparison-value">{formatSemanticAmount(comparison.current, currentComparisonPage.unitLabel)}</strong>
-            <div class="comparison-track" role="img" aria-label={`${props.metric}, ${currentPeriodLabel}: ${formatSemanticAmount(comparison.current, currentComparisonPage.unitLabel)}`}>
-              <span class="comparison-zero" style={`--comparison-zero: ${comparisonBars.zero}%`}></span>
-              <span class="comparison-bar" style={`--comparison-start: ${comparisonBars.current.start}%; --comparison-width: ${comparisonBars.current.width}%`}></span>
-            </div>
-          </div>
-          <div class="comparison-reference">
-            <span class="semantic-metadata comparison-period">{referencePeriodLabel}</span>
-            <span class="comparison-value">{formatSemanticAmount(comparison.reference, referenceComparisonPage.unitLabel)}</span>
-            <div class="comparison-track comparison-reference-track" role="img" aria-label={`${props.metric}, ${referencePeriodLabel}: ${formatSemanticAmount(comparison.reference, referenceComparisonPage.unitLabel)}`}>
-              <span class="comparison-zero" style={`--comparison-zero: ${comparisonBars.zero}%`}></span>
-              <span class="comparison-bar" style={`--comparison-start: ${comparisonBars.reference.start}%; --comparison-width: ${comparisonBars.reference.width}%`}></span>
-            </div>
-          </div>
+      {@const favorable = comparison.interpretation === 'favorable'}
+      {@const unfavorable = comparison.interpretation === 'unfavorable'}
+      <div class="comparison-values" aria-label={`${props.metric}: ${comparison.interpretation === 'neutral' ? 'variação neutra' : favorable ? 'variação favorável' : 'variação desfavorável'}`}>
+        <div class="comparison-period-value comparison-current">
+          <span class="semantic-metadata comparison-period">{currentPeriodLabel}</span>
+          <strong class="comparison-value">{formatSemanticAmount(comparison.current, currentComparisonPage.unitLabel)}</strong>
         </div>
-        <p class="comparison-change" class:favorable class:unfavorable role="status" aria-live="polite">
-          <span class="material-symbols-outlined" aria-hidden="true">{comparison.direction === 'higher' ? 'trending_up' : comparison.direction === 'lower' ? 'trending_down' : 'trending_flat'}</span>
-          <span>{formatSemanticAmount(comparison.delta, currentComparisonPage.unitLabel)}{#if formatSemanticPercent(comparison.percentChange)} · {formatSemanticPercent(comparison.percentChange)}{/if}</span>
-          <span>{comparison.interpretation === 'neutral' ? 'sem mudança' : favorable ? 'favorável' : 'desfavorável'}</span>
-        </p>
-      {:else}
-        <p class="supporting-text" role="status">Não há variação comparável para estes valores.</p>
-      {/if}
+        <div class="comparison-period-value comparison-reference">
+          <span class="semantic-metadata comparison-period">{referencePeriodLabel}</span>
+          <span class="comparison-value">{formatSemanticAmount(comparison.reference, referenceComparisonPage.unitLabel)}</span>
+        </div>
+      </div>
+      <p class="comparison-change" class:favorable class:unfavorable role="status" aria-live="polite"
+        aria-label={`${comparison.interpretation === 'neutral' ? 'Sem variação' : favorable ? 'Variação favorável' : 'Variação desfavorável'}: ${formatSemanticAmount(comparison.delta, currentComparisonPage.unitLabel)}${formatSemanticPercent(comparison.percentChange) ? `, ${formatSemanticPercent(comparison.percentChange)}` : ''}`}>
+        <span class="material-symbols-outlined" aria-hidden="true">{comparison.direction === 'higher' ? 'trending_up' : comparison.direction === 'lower' ? 'trending_down' : 'trending_flat'}</span>
+        <span>{formatSemanticAmount(comparison.delta, currentComparisonPage.unitLabel)}</span>
+        {#if formatSemanticPercent(comparison.percentChange)}
+          <span class="comparison-change-divider" aria-hidden="true"></span>
+          <span>{formatSemanticPercent(comparison.percentChange)}</span>
+        {/if}
+      </p>
     {:else if currentComparisonPage?.items.length && !comparisonPeriodClosed}
       <p class="supporting-text" role="status">{comparisonPeriodClosed
         ? props.unavailableBaselineMessage ?? 'Ainda não há um período de referência comparável.'
@@ -606,6 +679,86 @@
       <p class="supporting-text">{props.emptyMessage ?? 'A coleção não contém itens.'}</p>
     {:else}
       <p class="supporting-text">A coleção não está disponível.</p>
+    {/if}
+  </section>
+{:else if componentType === 'Records'}
+  <section class="semantic-block records-block" aria-labelledby={semanticDomIds.recordsTitle} aria-busy={recordsPage?.loading ?? true}>
+    <header class="comparison-heading">
+      <div><h2 id={semanticDomIds.recordsTitle}>{props.title}</h2></div>
+      <span class="material-symbols-outlined semantic-icon" aria-hidden="true">table_view</span>
+    </header>
+    {#if recordsPage}
+      <form class="records-filters" onsubmit={(event) => { event.preventDefault(); submitRecordsFilter(); }}>
+        <label class="visually-hidden" for={semanticDomIds.recordsFilterColumn}>Campo para filtrar</label>
+        <select id={semanticDomIds.recordsFilterColumn} class="semantic-input" bind:value={recordsFilterColumn} onchange={(event) => {
+          recordsFilterColumn = event.currentTarget.value;
+          recordsFilterOperator = recordsColumns.find((column) => column.id === recordsFilterColumn)?.filterOperators?.[0] ?? 'equals';
+        }}>
+          <option value="">Filtrar por campo</option>
+          {#each recordsColumns.filter((column) => column.filterOperators?.length) as column (column.id)}
+            <option value={column.id}>{column.label}</option>
+          {/each}
+        </select>
+        <label class="visually-hidden" for={semanticDomIds.recordsFilterValue}>Valor do filtro</label>
+        <input id={semanticDomIds.recordsFilterValue} class="semantic-input" type={recordsColumns.find((column) => column.id === recordsFilterColumn)?.valueType === 'date' ? 'date' : ['number', 'currency', 'percentage'].includes(recordsColumns.find((column) => column.id === recordsFilterColumn)?.valueType ?? '') ? 'number' : 'search'} bind:value={recordsFilterValue} placeholder="Valor para filtrar" />
+        {#if recordsFilterColumn}
+          <label class="visually-hidden" for={semanticDomIds.recordsFilterOperator}>Tipo de filtro</label>
+          <select id={semanticDomIds.recordsFilterOperator} class="semantic-input" bind:value={recordsFilterOperator}>
+            {#each recordsColumns.find((column) => column.id === recordsFilterColumn)?.filterOperators ?? [] as operator (operator)}
+              <option value={operator}>{operator === 'contains' ? 'Contém' : operator === 'equals' ? 'Igual a' : operator}</option>
+            {/each}
+          </select>
+        {/if}
+        <Button type="submit" variant="outline" size="sm" disabled={!recordsFilterColumn || !recordsFilterValue.trim()}><span class="material-symbols-outlined" aria-hidden="true">search</span>Filtrar</Button>
+        {#if recordsPage.criteria.filters.length}<Button type="button" variant="ghost" size="sm" onclick={clearRecordsFilter}><span class="material-symbols-outlined" aria-hidden="true">filter_alt_off</span>Limpar</Button>{/if}
+      </form>
+      {#if recordsPage.loading && !recordsPage.rows.length}
+        <p class="supporting-text" role="status">Carregando registros…</p>
+      {:else if recordsPage.error && !recordsPage.rows.length}
+        <div class="binding-error" role="alert"><span>{recordsPage.error}</span><Button variant="outline" size="sm" onclick={() => entityBindingContext?.retryRecords(recordsElementId)}>Tentar novamente</Button></div>
+      {:else if recordsPage.rows.length}
+        <div class="records-table-scroll">
+          <table class="records-table">
+            <thead><tr>
+              {#each recordsColumns as column (column.id)}
+                <th scope="col" data-column-type={column.valueType}>
+                  {#if column.sortable}<button type="button" class="records-sort" aria-label="Ordenar por {column.label}" onclick={() => sortRecords(column.id)}>{column.label}<span class="material-symbols-outlined" aria-hidden="true">{recordsPage.criteria.sort.columnId === column.id ? (recordsPage.criteria.sort.direction === 'asc' ? 'arrow_upward' : 'arrow_downward') : 'unfold_more'}</span></button>
+                  {:else}{column.label}{/if}
+                </th>
+              {/each}
+              {#if recordsPage.sources.length > 1}<th scope="col">Tipo</th>{/if}
+              <th scope="col"><span class="visually-hidden">Abrir registro</span></th>
+            </tr></thead>
+            <tbody>
+              {#each recordsPage.rows as row (`${row.sourceAlias}:${row.entityIri}`)}
+                <tr>
+                  {#each recordsColumns as column (column.id)}
+                    {@const cellItem = row.values[column.id]?.[0]}
+                    <td data-column-type={column.valueType}>
+                      {#if cellItem?.isObjectProperty}
+                        <OntologyEntityReferenceChip kind={cellItem.valueEntityKind ?? 'individual'} label={cellItem.valueLabel ?? cellItem.value} icon={cellItem.valueIcon} entityIri={cellItem.value} onopen={(iri) => entityBindingContext?.openEntity(iri)} />
+                      {:else if cellItem && (column.valueType === 'date' || column.valueType === 'date_time')}
+                        {@const date = dateValue(cellItem.value, column.valueType)}
+                        {#if date}<span class="date-value-display"><time class="date-value-absolute" datetime={date.dateTime}>{date.absolute}</time><span class="date-value-relative semantic-metadata">{date.relative}</span></span>{:else}{recordCell(row, column)}{/if}
+                      {:else}{recordCell(row, column)}{/if}
+                    </td>
+                  {/each}
+                  {#if recordsPage.sources.length > 1}<td><span class="records-source">{recordsPage.sources.find((source) => source.alias === row.sourceAlias)?.label ?? row.sourceAlias}</span></td>{/if}
+                  <td><button type="button" class="records-open" aria-label="Abrir registro {row.entityIri}" title="Abrir registro" onclick={() => entityBindingContext?.openEntity(row.entityIri)}><span class="material-symbols-outlined" aria-hidden="true">open_in_new</span></button></td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        <footer class="records-pagination" aria-live="polite">
+          <span class="semantic-metadata">{recordsPage.rows.length} de {recordsPage.pageInfo.totalCount} registros{#if recordsPage.loading} · atualizando{/if}</span>
+          {#if recordsPage.pageInfo.hasMore}<Button variant="outline" size="sm" disabled={recordsPage.loading} onclick={() => entityBindingContext?.loadRecords(recordsElementId, recordsPage.criteria, recordsPage.pageInfo.nextCursor)}><span class="material-symbols-outlined" aria-hidden="true">{recordsPage.loading ? 'progress_activity' : 'expand_more'}</span>Carregar próxima página</Button>{/if}
+        </footer>
+      {:else}
+        <p class="supporting-text">{props.emptyMessage ?? 'Nenhum registro encontrado.'}</p>
+      {/if}
+    {:else}
+      <p class="supporting-text" role="status">Preparando a lista de registros…</p>
     {/if}
   </section>
 {:else if componentType === 'Confirmation'}
@@ -710,20 +863,16 @@
   .confirmation-consequence { color: var(--text-primary); }
   .confirmation-actions { display: flex; justify-content: flex-end; gap: var(--spacing-control-internal); }
   .comparison-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--spacing-section); }
-  .comparison-values { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--spacing-section); }
-  .comparison-current, .comparison-reference { display: grid; gap: var(--spacing-label-to-value); min-width: 0; }
-  .comparison-current { padding: var(--spacing-control-internal); background: var(--color-surface-2); }
+  .comparison-values { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--spacing-control-internal); }
+  .comparison-period-value { display: grid; gap: var(--spacing-label-to-value); min-width: 0; padding: var(--spacing-control-internal); background: var(--color-surface-2); }
   .comparison-current strong { color: var(--text-primary); font-size: var(--type-heading); font-weight: 500; }
   .comparison-reference > .comparison-value { color: var(--text-primary); font-size: var(--type-body); }
   .comparison-value { white-space: nowrap; overflow-wrap: normal; word-break: normal; font-variant-numeric: tabular-nums; }
-  .comparison-track { position: relative; height: var(--size-comparison-bar-height); overflow: hidden; background: var(--color-surface-3); }
-  .comparison-zero { position: absolute; inset-block: 0; left: var(--comparison-zero); width: var(--size-hud-frame-line); background: var(--color-hud-line-subtle); }
-  .comparison-bar { position: absolute; inset-block: 0; left: var(--comparison-start); width: var(--comparison-width); background: var(--color-interactive); }
-  .comparison-reference-track .comparison-bar { background: var(--text-accent); }
-  .comparison-change { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-label-to-value); color: var(--text-secondary); }
+  .comparison-change { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-control-internal); margin: 0; color: var(--text-secondary); }
   .comparison-change .material-symbols-outlined { font-size: var(--type-icon-small); }
-  .comparison-change.favorable, .comparison-values.favorable + .comparison-change { color: var(--color-success); }
-  .comparison-change.unfavorable, .comparison-values.unfavorable + .comparison-change { color: var(--color-warning); }
+  .comparison-change.favorable { color: var(--color-success); }
+  .comparison-change.unfavorable { color: var(--color-warning); }
+  .comparison-change-divider { align-self: stretch; width: var(--size-hud-frame-line); min-height: var(--size-touch-target); background: var(--color-hud-line-subtle); }
   .distribution-groups { display: grid; gap: var(--spacing-section); margin: 0; padding: 0; list-style: none; }
   .distribution-row { display: grid; gap: var(--spacing-label-to-value); min-width: 0; }
   .distribution-row-heading { display: flex; justify-content: space-between; gap: var(--spacing-section); color: var(--text-primary); }
@@ -732,6 +881,22 @@
   .distribution-track > span { display: block; width: var(--distribution-share); height: 100%; background: var(--color-interactive); }
   .distribution-total { display: flex; justify-content: space-between; gap: var(--spacing-section); padding-block-start: var(--spacing-control-internal); border-block-start: var(--size-hud-frame-line) solid var(--color-hud-line-subtle); color: var(--text-primary); }
   .distribution-total strong { text-align: end; }
+  .records-filters { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-inline-related); }
+  .records-filters .semantic-input { min-width: 9rem; max-width: 16rem; }
+  .records-table-scroll { overflow-x: auto; }
+  .records-table { width: 100%; border-collapse: collapse; color: var(--text-primary); }
+  .records-table th, .records-table td { padding: var(--spacing-control-internal); text-align: start; vertical-align: top; border-block-end: var(--size-hud-frame-line) solid var(--color-hud-line-subtle); }
+  .records-table th { color: var(--text-metadata); font: inherit; }
+  .records-table td { overflow-wrap: anywhere; }
+  .records-table td[data-column-type="currency"], .records-table td[data-column-type="number"], .records-table td[data-column-type="percentage"] { white-space: nowrap; overflow-wrap: normal; }
+  .records-table td[data-column-type="date"], .records-table td[data-column-type="date_time"] { white-space: normal; }
+  .date-value-display { display: grid; gap: var(--spacing-label-to-value); min-width: 0; }
+  .date-value-absolute { white-space: nowrap; }
+  .date-value-relative { white-space: nowrap; }
+  .records-sort, .records-open { display: inline-flex; align-items: center; gap: var(--spacing-inline); padding: 0; color: var(--color-interactive); background: transparent; border: 0; cursor: pointer; }
+  .records-sort .material-symbols-outlined, .records-open .material-symbols-outlined { font-size: var(--type-icon-small); }
+  .records-open { justify-content: center; min-width: var(--size-touch-target); min-height: var(--size-touch-target); }
+  .records-pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--spacing-control-internal); }
   .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
   @media (max-width: 34rem) {

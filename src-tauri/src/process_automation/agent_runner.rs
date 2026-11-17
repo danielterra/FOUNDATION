@@ -14,6 +14,25 @@ pub struct AgentConfig {
 /// Resolves a fully configured AiProvider for the given agent IRI,
 /// falling back to the configured service/model when the agent has none.
 pub async fn resolve_agent_config(executor: &DbExecutor, agent_iri: &str) -> Result<AgentConfig> {
+    resolve_agent_config_inner(executor, agent_iri, false).await
+}
+
+/// Resolves the same configured provider as `resolve_agent_config`, but without
+/// applying the normal per-request deadline. Use only for durable background
+/// ingestion, where a healthy long-running model response must not be cut off by
+/// an arbitrary timeout.
+pub async fn resolve_agent_config_without_request_deadline(
+    executor: &DbExecutor,
+    agent_iri: &str,
+) -> Result<AgentConfig> {
+    resolve_agent_config_inner(executor, agent_iri, true).await
+}
+
+async fn resolve_agent_config_inner(
+    executor: &DbExecutor,
+    agent_iri: &str,
+    without_request_deadline: bool,
+) -> Result<AgentConfig> {
     let agent_iri = agent_iri.to_string();
     let (
         mut api_key,
@@ -120,18 +139,59 @@ pub async fn resolve_agent_config(executor: &DbExecutor, agent_iri: &str) -> Res
     if authentication_mode == "chatgpt_plan" {
         api_key = crate::ai::chatgpt_auth::access_token(executor).await?;
     }
-    let provider = build_provider(
-        &api_key,
-        &model_identifier,
-        &base_url,
-        &fallback_models,
-        timeout_secs,
-    );
+    let provider = if without_request_deadline {
+        build_provider_without_request_deadline(
+            &api_key,
+            &model_identifier,
+            &base_url,
+            &fallback_models,
+        )
+    } else {
+        build_provider(
+            &api_key,
+            &model_identifier,
+            &base_url,
+            &fallback_models,
+            timeout_secs,
+        )
+    };
     Ok(AgentConfig {
         provider,
         model_identifier,
         system_prompt,
     })
+}
+
+fn build_provider_without_request_deadline(
+    api_key: &str,
+    model_identifier: &str,
+    base_url: &str,
+    fallback_models: &[String],
+) -> AiProvider {
+    if base_url.contains("openai.com") {
+        AiProvider::OpenAIResponses(
+            crate::ai::openai_responses::OpenAIResponsesProvider::new_without_request_deadline(
+                api_key.to_string(),
+                model_identifier.to_string(),
+            ),
+        )
+    } else if base_url.contains("openrouter.ai") {
+        AiProvider::OpenRouter(
+            crate::ai::providers::OpenRouterProvider::with_model_without_request_deadline(
+                api_key.to_string(),
+                base_url.to_string(),
+                model_identifier.to_string(),
+                fallback_models.to_vec(),
+            ),
+        )
+    } else {
+        AiProvider::Claude(
+            crate::ai::providers::ClaudeProvider::with_model_without_request_deadline(
+                api_key.to_string(),
+                model_identifier.to_string(),
+            ),
+        )
+    }
 }
 
 fn build_provider(

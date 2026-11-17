@@ -1,9 +1,10 @@
 use crate::ai::functions::{
-    execute_async_tool, execute_tool as execute_fn, is_async_tool, ToolCall as FunctionToolCall,
+    execute_tool as execute_fn, is_async_tool, ToolCall as FunctionToolCall,
 };
 use crate::ai::providers::{ContentBlock, MessageContent, ToolDefinition};
 use crate::ai::{AiProvider, ChatMessage, GenerateOnce, GenerateRequest, GenerateResponse};
 use crate::owl::DbExecutor;
+use tauri::Emitter;
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -16,9 +17,13 @@ pub struct ToolLoopConfig {
     pub tools: Vec<ToolDefinition>,
     pub max_iterations: usize,
     pub max_tokens: u32,
-    pub temperature: f32,
+    pub temperature: Option<f32>,
     /// If set, the loop watches for this tool name and exits early when called.
     pub completion_tool: Option<CompletionToolConfig>,
+    /// Emits confirmed AI/tool progress for long-running background work.
+    pub progress_event: Option<ProgressEventConfig>,
+    /// Enables durable idempotency for ontology write tools within one ingestion batch.
+    pub idempotency_scope: Option<String>,
     /// Compact the in-memory message history when input_tokens / context_window exceeds this ratio.
     /// Set to 0.0 to disable. Defaults to 0.80.
     pub compaction_threshold: f32,
@@ -53,8 +58,10 @@ impl Default for ToolLoopConfig {
             tools: Vec::new(),
             max_iterations: DEFAULT_MAX_ITERATIONS,
             max_tokens: DEFAULT_MAX_TOKENS,
-            temperature: DEFAULT_TEMPERATURE,
+            temperature: Some(DEFAULT_TEMPERATURE),
             completion_tool: None,
+            progress_event: None,
+            idempotency_scope: None,
             compaction_threshold: 0.80,
             context_window: 180_000,
             persist_to: None,
@@ -64,6 +71,13 @@ impl Default for ToolLoopConfig {
             context_full_threshold: 0.90,
         }
     }
+}
+
+#[derive(Clone)]
+pub struct ProgressEventConfig {
+    pub event_name: String,
+    pub session_iri: String,
+    pub batch_iri: String,
 }
 
 pub struct CompletionToolConfig {
@@ -100,6 +114,7 @@ pub async fn run_tool_loop(
     let mut messages = initial_messages;
     let mut last_text = String::new();
     let mut completion: Option<CompletionResult> = None;
+    let mut completed_tool_calls = 0usize;
 
     let conv_label = config
         .persist_to
@@ -115,10 +130,18 @@ pub async fn run_tool_loop(
     );
 
     'outer: for iteration in 0..config.max_iterations {
+        emit_progress(
+            app,
+            config.progress_event.as_ref(),
+            "awaiting_model",
+            completed_tool_calls,
+            None,
+            None,
+        );
         let request = GenerateRequest {
             messages: messages.clone(),
             max_tokens: Some(config.max_tokens),
-            temperature: Some(config.temperature),
+            temperature: config.temperature,
             system: config.system.clone(),
             blackboard_context: None,
             tools: Some(config.tools.clone()),
@@ -304,14 +327,48 @@ pub async fn run_tool_loop(
                 name: tc.name.clone(),
                 arguments: tc.input.clone(),
             };
+            emit_progress(
+                app,
+                config.progress_event.as_ref(),
+                "executing_tool",
+                completed_tool_calls,
+                Some(&tc.name),
+                None,
+            );
             let tc_id = tc.id.clone();
             let result_json = if is_async_tool(&call.name) {
-                let r = execute_async_tool(&call, app).await;
+                let idempotency_scope = config.idempotency_scope.as_deref();
+                let r = Box::pin(crate::ai::functions::execute_async_tool_with_idempotency(
+                    &call,
+                    app,
+                    idempotency_scope,
+                ))
+                .await;
                 serde_json::to_string(&r).unwrap_or_else(|e| format!("\"{}\"", e))
             } else {
+                let idempotency_context = config
+                    .idempotency_scope
+                    .as_deref()
+                    .filter(|_| crate::ai::functions::is_ontology_write_tool(&call.name))
+                    .map(|batch_iri| {
+                        crate::ai::functions::batch::ingestion_action_context(
+                            batch_iri,
+                            &call.name,
+                            &call.arguments,
+                        )
+                    });
+                let app_handle = app.cloned();
                 executor
                     .write(move |conn| {
-                        let r = execute_fn(conn, &call, None, None);
+                        let mut execute = || execute_fn(conn, &call, app_handle.as_ref(), None);
+                        let r = match idempotency_context {
+                            Some(context) => {
+                                crate::ai::functions::batch::with_ingestion_idempotency(
+                                    context, execute,
+                                )
+                            }
+                            None => execute(),
+                        };
                         serde_json::to_string(&r).map_err(|e| e.to_string())
                     })
                     .await
@@ -325,6 +382,15 @@ pub async fn run_tool_loop(
                     error: Some(result_json.clone()),
                     concept: None,
                 });
+            completed_tool_calls += 1;
+            emit_progress(
+                app,
+                config.progress_event.as_ref(),
+                "tool_result_received",
+                completed_tool_calls,
+                Some(&tc.name),
+                Some(tool_result.success),
+            );
 
             let content = if tool_result.success {
                 tool_result
@@ -359,6 +425,30 @@ pub async fn run_tool_loop(
         last_text,
         completion,
     })
+}
+
+fn emit_progress(
+    app: Option<&tauri::AppHandle>,
+    config: Option<&ProgressEventConfig>,
+    stage: &str,
+    completed_tool_calls: usize,
+    tool_name: Option<&str>,
+    tool_succeeded: Option<bool>,
+) {
+    let (Some(app), Some(config)) = (app, config) else {
+        return;
+    };
+    let _ = app.emit(
+        &config.event_name,
+        serde_json::json!({
+            "sessionIri": config.session_iri,
+            "batchIri": config.batch_iri,
+            "stage": stage,
+            "completedToolCalls": completed_tool_calls,
+            "toolName": tool_name,
+            "toolSucceeded": tool_succeeded,
+        }),
+    );
 }
 
 async fn persist_message(

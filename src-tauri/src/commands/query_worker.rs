@@ -61,6 +61,14 @@ fn build_relevant_predicates(entries: &[CachedQueryProperty]) -> HashSet<String>
     for entry in entries {
         for f in &entry.config.filters {
             set.insert(f.property_iri.clone());
+            for value in [&f.value, &f.value_from, &f.value_to].into_iter().flatten() {
+                if let Some(property) = value
+                    .strip_prefix("{{self.")
+                    .and_then(|reference| reference.strip_suffix("}}"))
+                {
+                    set.insert(property.to_string());
+                }
+            }
         }
         for o in &entry.config.order_by {
             set.insert(o.property_iri.clone());
@@ -976,8 +984,8 @@ fn try_collect_affected_jobs(
     for entry in entries {
         let entity_is_target = entity_types.contains(&entry.config.target_class);
 
-        if entity_is_target {
-            // Scenario A: entity is of targetClass → re-eval all owner instances
+        if entity_is_target || entry.property_iri == entity_iri {
+            // Target changes and query definition changes both affect existing owners.
             let owners = try_find_owners_for_domains(conn, &entry.domains)?;
             for owner_iri in owners {
                 if !jobs
@@ -1815,6 +1823,27 @@ mod tests {
         assert!(jobs.iter().any(|(o, p, _)| o == owner && p == prop));
     }
 
+    #[test]
+    fn query_definition_change_only_schedules_its_existing_owners() {
+        let conn = setup_db();
+        let property = "foundation:myQueryProp";
+        let owner = "foundation:proj1";
+        let config = r#"{"targetClass":"foundation:Task","filters":[]}"#;
+
+        for iri in [property, "foundation:otherQueryProp"] {
+            insert_triple_literal(&conn, iri, "foundation:queryConfig", config, 1);
+            insert_triple_iri(&conn, iri, "rdfs:domain", "foundation:Project", 1);
+        }
+        insert_triple_iri(&conn, owner, "rdf:type", "foundation:Project", 1);
+
+        let cache = load_query_property_cache(&conn);
+        let jobs = collect_affected_jobs(&conn, property, &cache);
+
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].0, owner);
+        assert_eq!(jobs[0].1, property);
+    }
+
     /// Invalidação: entity cujo IRI está no cache como property_iri → needs_reload=true.
     #[test]
     fn test_needs_reload_when_entity_is_cached_property() {
@@ -1957,7 +1986,12 @@ mod tests {
         let prop = "foundation:myQueryProp";
         let config_json = r#"{
             "targetClass": "foundation:Task",
-            "filters": [{"propertyIri": "foundation:dueDate", "operator": "exists"}],
+            "filters": [
+                {"propertyIri": "foundation:assignee", "operator": "eq",
+                 "value": "{{self.foundation:holder}}"},
+                {"propertyIri": "foundation:dueDate", "operator": "between",
+                 "valueFrom": "{{self.foundation:startDate}}", "valueTo": "{{self.foundation:endDate}}"}
+            ],
             "orderBy": [{"propertyIri": "foundation:priority", "direction": "asc"}]
         }"#;
         insert_triple_literal(&conn, prop, "foundation:queryConfig", config_json, 1);
@@ -1987,5 +2021,15 @@ mod tests {
             relevant.contains("foundation:priority"),
             "orderBy propertyIri deve estar presente"
         );
+        for property in [
+            "foundation:holder",
+            "foundation:startDate",
+            "foundation:endDate",
+        ] {
+            assert!(
+                relevant.contains(property),
+                "missing owner dependency {property}"
+            );
+        }
     }
 }

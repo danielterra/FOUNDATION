@@ -8,6 +8,21 @@ export type SemanticBindingRequest = {
   projections?: Record<string, string>;
 };
 
+export type SemanticRecordsSourceBinding = {
+  source: 'entity';
+  propertyIri: string;
+  alias: string;
+  label?: string;
+  fields: Record<string, string>;
+  membershipWatch?: {
+    classIri: string;
+    predicate: string;
+    objectBinding: { source: 'entity'; propertyIri: string };
+  };
+};
+
+export type SemanticRecordsBinding = { sources: SemanticRecordsSourceBinding[] };
+
 type RuntimeElement = { props?: Record<string, unknown>; [key: string]: unknown };
 export type RuntimeSemanticSpec = Spec & { elements: Record<string, RuntimeElement> };
 
@@ -235,6 +250,7 @@ export function semanticWidgetEventAction({
 }) {
   if (eventType === 'updated' && eventEntityIri === templateEntityIri) return 'reload-template';
   if (eventType === 'deleted' && eventEntityIri === targetEntityIri) return 'target-deleted';
+  if (eventType === 'deleted' && [...referencedEntityIris].includes(eventEntityIri)) return 'refresh-target';
   if (eventType === 'updated' && eventEntityIri === targetEntityIri && matchesChangedPredicates(changedPredicates, watchedPredicates)) return 'refresh-target';
   if (eventType === 'updated' && [...referencedEntityIris].includes(eventEntityIri)) return 'refresh-target';
   return 'ignore';
@@ -257,6 +273,23 @@ export function buildRuntimeSemanticSpec(source: RuntimeSemanticSpec, requests: 
       element.props.__ontologyProjectionBindings = projectionBindings;
     }
     bindingTargets[request.target] = [...(bindingTargets[request.target] ?? []), request.propertyIri];
+  }
+
+  for (const [elementId, element] of Object.entries(spec.elements)) {
+    if (element.type === 'Records') {
+      element.props ??= {};
+      element.props.__semanticElementId = elementId;
+    }
+    const recordsBinding = (element.bindings as Record<string, unknown> | undefined)?.records as SemanticRecordsBinding | undefined;
+    if (!recordsBinding) continue;
+    element.props ??= {};
+    element.props.__ontologyRecordsBinding = recordsBinding;
+    const watchedIris = recordsBinding.sources.flatMap((recordSource) => [
+      recordSource.propertyIri,
+      ...Object.values(recordSource.fields ?? {}),
+      ...(recordSource.membershipWatch ? [recordSource.membershipWatch.objectBinding.propertyIri] : []),
+    ]);
+    bindingTargets.records = [...new Set([...(bindingTargets.records ?? []), ...watchedIris])];
   }
 
   return { spec, bindingTargets };

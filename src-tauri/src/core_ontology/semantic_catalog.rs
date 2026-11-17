@@ -2196,6 +2196,17 @@ fn validate_json_schema_value(schema: &Value, value: &Value, path: &str) -> Resu
             }
         }
     }
+    if let Some(property_names_schema) = schema.get("propertyNames") {
+        if let Some(object) = value.as_object() {
+            for key in object.keys() {
+                validate_json_schema_value(
+                    property_names_schema,
+                    &Value::String(key.clone()),
+                    &format!("{path} property name '{key}'"),
+                )?;
+            }
+        }
+    }
     if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
         let object = value
             .as_object()
@@ -2261,6 +2272,7 @@ fn validate_json_schema_value(schema: &Value, value: &Value, path: &str) -> Resu
             "oneOf",
             "required",
             "properties",
+            "propertyNames",
             "additionalProperties",
             "items",
             "minItems",
@@ -2542,6 +2554,26 @@ mod tests {
             )
             .is_err());
         }
+    }
+
+    #[test]
+    fn compatibility_proof_validates_object_property_names() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "propertyNames": { "minLength": 2 },
+            "additionalProperties": { "type": "string" }
+        });
+
+        assert!(validate_json_schema_value(
+            &schema,
+            &serde_json::json!({ "ab": "value" }),
+            "props"
+        )
+        .is_ok());
+        assert!(
+            validate_json_schema_value(&schema, &serde_json::json!({ "a": "value" }), "props")
+                .is_err()
+        );
     }
 
     #[test]

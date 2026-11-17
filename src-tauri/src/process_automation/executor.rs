@@ -188,9 +188,22 @@ const STATUS_COMPLETED: &str = "foundation:Completed";
 const STATUS_FAILED: &str = "foundation:Status_1772993026091";
 const STATUS_CANCELLED: &str = "foundation:Status_1772570972069";
 
-fn create_execution_record(conn: &mut rusqlite::Connection, process_iri: &str) -> Result<String> {
+fn deterministic_execution_iri(idempotency_key: &str) -> String {
+    format!(
+        "foundation:WorkflowExecution_{}",
+        crate::files::sha256_hex(idempotency_key.as_bytes()).trim_start_matches("sha256:")
+    )
+}
+
+fn create_execution_record(
+    conn: &mut rusqlite::Connection,
+    process_iri: &str,
+    execution_iri: Option<&str>,
+) -> Result<String> {
     let now_ms = Utc::now().timestamp_millis();
-    let exec_iri = format!("foundation:WorkflowExecution_{}", now_ms);
+    let exec_iri = execution_iri
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("foundation:WorkflowExecution_{}", now_ms));
     let process_label = crate::owl::get_literal_property(conn, process_iri, "rdfs:label")
         .ok()
         .flatten()
@@ -689,6 +702,32 @@ pub async fn run_process(
         .map(|_| ())
 }
 
+/// Runs a process once for a durable caller-provided idempotency key.
+/// Existing executions with the same key are not started again; in-progress ones are
+/// recovered by the normal workflow-execution recovery path after an app restart.
+pub async fn run_process_with_idempotency_key(
+    app: &AppHandle,
+    process_iri: &str,
+    input_iri: Option<String>,
+    dry_run: bool,
+    idempotency_key: &str,
+) -> Result<()> {
+    let mut ctx = ExecutionContext::new();
+    if let Some(iri) = input_iri {
+        ctx.insert("inputIRIs".to_string(), iri);
+    }
+    if dry_run {
+        ctx.insert("dryRun".to_string(), "true".to_string());
+    }
+    ctx.insert(
+        "__executionIdempotencyKey".to_string(),
+        idempotency_key.to_string(),
+    );
+    run_process_with_context(app, process_iri, &mut ctx)
+        .await
+        .map(|_| ())
+}
+
 pub async fn run_process_for_entity_update(
     app: &AppHandle,
     process_iri: &str,
@@ -741,11 +780,24 @@ pub async fn run_process_with_context(
     let executor = app.state::<DbExecutor>();
 
     let triggered_by = ctx.get("inputIRIs").cloned();
+    let idempotency_key = ctx.get("__executionIdempotencyKey").cloned();
     let init_json = executor
         .write({
             let process_iri = process_iri.clone();
             move |conn| {
-                let exec_iri = create_execution_record(conn, &process_iri)?;
+                let deterministic_exec_iri =
+                    idempotency_key.as_deref().map(deterministic_execution_iri);
+                if let Some(existing_iri) = deterministic_exec_iri.as_deref() {
+                    if Individual::get(conn, existing_iri)
+                        .map_err(|error| error.to_string())?
+                        .is_some()
+                    {
+                        return serde_json::to_string(&(existing_iri, "", false))
+                            .map_err(|e| e.to_string());
+                    }
+                }
+                let exec_iri =
+                    create_execution_record(conn, &process_iri, deterministic_exec_iri.as_deref())?;
                 if let Some(iri) = triggered_by {
                     Individual::new(&exec_iri)
                         .add_property(
@@ -764,12 +816,17 @@ pub async fn run_process_with_context(
                             return Err(e);
                         }
                     };
-                serde_json::to_string(&(exec_iri, control_instance_iri)).map_err(|e| e.to_string())
+                serde_json::to_string(&(exec_iri, control_instance_iri, true))
+                    .map_err(|e| e.to_string())
             }
         })
         .await?;
-    let (exec_iri, control_instance_iri): (String, String) =
+    let (exec_iri, control_instance_iri, started): (String, String, bool) =
         serde_json::from_str(&init_json).map_err(|e| e.to_string())?;
+    if !started {
+        wait_for_execution_terminal(&executor, &exec_iri).await?;
+        return Ok(None);
+    }
     ctx.entry("__sourceUpdateId".to_string())
         .or_insert_with(|| exec_iri.clone());
 
@@ -906,6 +963,33 @@ pub async fn run_process_with_context(
     }
 
     run_result
+}
+
+async fn wait_for_execution_terminal(executor: &DbExecutor, execution_iri: &str) -> Result<()> {
+    loop {
+        let iri = execution_iri.to_string();
+        let status = executor
+            .read(move |conn| {
+                crate::owl::get_iri_property(conn, &iri, "foundation:hasStatus")
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| format!("Execution {iri} has no status"))
+            })
+            .await?;
+        match status.as_str() {
+            STATUS_COMPLETED => return Ok(()),
+            STATUS_FAILED | STATUS_CANCELLED => {
+                return Err(format!(
+                    "Execution {execution_iri} ended with status {status}"
+                ));
+            }
+            STATUS_IN_PROGRESS => tokio::time::sleep(std::time::Duration::from_millis(250)).await,
+            other => {
+                return Err(format!(
+                    "Execution {execution_iri} has unexpected status {other}"
+                ));
+            }
+        }
+    }
 }
 
 fn create_failure_notification(

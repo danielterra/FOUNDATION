@@ -436,7 +436,7 @@ fn fetch_tls(account: &AccountConfig) -> Result<Vec<FetchedEmail>, String> {
     let mut session = imap::Client::new(tls_stream)
         .login(&account.username, &account.password)
         .map_err(|(e, _)| format!("login: {}", e))?;
-    let emails = sync_folders(&mut session, &account.monitored_folders)?;
+    let emails = sync_folders(&mut session, &account.iri, &account.monitored_folders)?;
     session.logout().ok();
     Ok(emails)
 }
@@ -450,7 +450,7 @@ fn fetch_plain(account: &AccountConfig) -> Result<Vec<FetchedEmail>, String> {
     let mut session = imap::Client::new(tcp)
         .login(&account.username, &account.password)
         .map_err(|(e, _)| format!("login: {}", e))?;
-    let emails = sync_folders(&mut session, &account.monitored_folders)?;
+    let emails = sync_folders(&mut session, &account.iri, &account.monitored_folders)?;
     session.logout().ok();
     Ok(emails)
 }
@@ -563,6 +563,7 @@ fn idle_plain(account: &AccountConfig) -> Result<(), String> {
 
 fn sync_folders<T: Read + Write>(
     session: &mut imap::Session<T>,
+    account_iri: &str,
     folders: &[String],
 ) -> Result<Vec<FetchedEmail>, String> {
     let folders_to_sync: Vec<&str> = if folders.is_empty() {
@@ -573,15 +574,20 @@ fn sync_folders<T: Read + Write>(
 
     let mut all_emails = vec![];
     for folder in folders_to_sync {
-        session.select(folder).map_err(|e| e.to_string())?;
-        all_emails.extend(fetch_unseen(session, folder)?);
+        let mailbox = session.select(folder).map_err(|e| e.to_string())?;
+        let uid_validity = mailbox
+            .uid_validity
+            .ok_or_else(|| format!("IMAP folder '{}' did not provide UIDVALIDITY", folder))?;
+        all_emails.extend(fetch_unseen(session, account_iri, folder, uid_validity)?);
     }
     Ok(all_emails)
 }
 
 fn fetch_unseen<T: Read + Write>(
     session: &mut imap::Session<T>,
+    account_iri: &str,
     folder: &str,
+    uid_validity: u32,
 ) -> Result<Vec<FetchedEmail>, String> {
     let uids = session.uid_search("UNSEEN").map_err(|e| e.to_string())?;
 
@@ -616,8 +622,12 @@ fn fetch_unseen<T: Read + Write>(
                 continue;
             }
         };
+        let fallback_identity = format!(
+            "imap-uid:{}:{}:{}:{}",
+            account_iri, folder, uid_validity, uid
+        );
         if let Some(body) = msg.body() {
-            match parse_raw_email(body) {
+            match parse_raw_email_with_fallback(body, &fallback_identity) {
                 Ok(parsed) => result.push(FetchedEmail {
                     folder: folder.to_string(),
                     uid,
@@ -634,7 +644,7 @@ fn fetch_unseen<T: Read + Write>(
             combined.extend_from_slice(hdr);
             combined.extend_from_slice(b"\r\n");
             combined.extend_from_slice(txt);
-            match parse_raw_email(&combined) {
+            match parse_raw_email_with_fallback(&combined, &fallback_identity) {
                 Ok(parsed) => result.push(FetchedEmail {
                     folder: folder.to_string(),
                     uid,
@@ -697,7 +707,18 @@ fn parse_addr_list(header: &str) -> Vec<String> {
     }
 }
 
+#[cfg(test)]
 fn parse_raw_email(raw: &[u8]) -> Result<ParsedEmail, String> {
+    parse_raw_email_with_fallback(
+        raw,
+        &format!("gen-{}", chrono::Utc::now().timestamp_millis()),
+    )
+}
+
+fn parse_raw_email_with_fallback(
+    raw: &[u8],
+    fallback_message_id: &str,
+) -> Result<ParsedEmail, String> {
     let parsed = mailparse::parse_mail(raw).map_err(|e| e.to_string())?;
 
     let message_id = parsed
@@ -709,7 +730,33 @@ fn parse_raw_email(raw: &[u8]) -> Result<ParsedEmail, String> {
                 .trim_end_matches('>')
                 .to_string()
         })
-        .unwrap_or_else(|| format!("gen-{}", chrono::Utc::now().timestamp_millis()));
+        .unwrap_or_else(|| fallback_message_id.to_string());
+
+    let conversation_key = parsed
+        .headers
+        .get_first_value("References")
+        .map(|references| {
+            references
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_string()
+        })
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            parsed
+                .headers
+                .get_first_value("In-Reply-To")
+                .map(|value| {
+                    value
+                        .trim()
+                        .trim_start_matches('<')
+                        .trim_end_matches('>')
+                        .to_string()
+                })
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(|| message_id.clone());
 
     let from = extract_first_addr(&parsed.headers.get_first_value("From").unwrap_or_default());
 
@@ -735,6 +782,7 @@ fn parse_raw_email(raw: &[u8]) -> Result<ParsedEmail, String> {
 
     Ok(ParsedEmail {
         message_id,
+        conversation_key,
         from,
         to,
         subject,
@@ -938,6 +986,26 @@ fn load_account_configs(conn: &crate::eavto::Connection) -> Result<Vec<AccountCo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn message_without_message_id_uses_stable_imap_identity() {
+        let raw = b"From: sender@example.com\r\nSubject: No message id\r\n\r\nBody";
+        let first = parse_raw_email_with_fallback(raw, "imap-uid:account:INBOX:42:100").unwrap();
+        let replay = parse_raw_email_with_fallback(raw, "imap-uid:account:INBOX:42:100").unwrap();
+        let other_uid =
+            parse_raw_email_with_fallback(raw, "imap-uid:account:INBOX:42:101").unwrap();
+
+        assert_eq!(first.message_id, replay.message_id);
+        assert_ne!(first.message_id, other_uid.message_id);
+    }
+
+    #[test]
+    fn message_id_header_remains_the_external_email_identity() {
+        let raw = b"Message-ID: <message-42@example.com>\r\nSubject: Has id\r\n\r\nBody";
+        let parsed = parse_raw_email_with_fallback(raw, "imap-uid:account:INBOX:42:100").unwrap();
+
+        assert_eq!(parsed.message_id, "message-42@example.com");
+    }
 
     const MULTIPART_WITH_CSV: &[u8] = b"From: alice@example.com\r\n\
 To: bob@example.com\r\n\

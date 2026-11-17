@@ -8,6 +8,10 @@ export function createSemanticDomIds(instanceId: string) {
     informationTitle: `${instanceId}-information-title`,
     comparisonTitle: `${instanceId}-comparison-title`,
     distributionTitle: `${instanceId}-distribution-title`,
+    recordsTitle: `${instanceId}-records-title`,
+    recordsFilterColumn: `${instanceId}-records-filter-column`,
+    recordsFilterValue: `${instanceId}-records-filter-value`,
+    recordsFilterOperator: `${instanceId}-records-filter-operator`,
     confirmationTitle: `${instanceId}-confirmation-title`,
   };
 }

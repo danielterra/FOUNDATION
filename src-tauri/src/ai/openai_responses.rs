@@ -17,6 +17,91 @@ enum StreamEvent {
     Ignored,
 }
 
+#[derive(Default)]
+struct ResponseStreamAccumulator {
+    buffer: Vec<u8>,
+    text: String,
+    completed: Option<Value>,
+}
+
+impl ResponseStreamAccumulator {
+    fn push(&mut self, bytes: &[u8]) -> Result<Vec<String>, String> {
+        self.buffer.extend_from_slice(bytes);
+        let mut deltas = Vec::new();
+        while let Some((end, separator_len)) = Self::event_separator(&self.buffer) {
+            let event_block = self.buffer[..end].to_vec();
+            self.buffer.drain(..end + separator_len);
+            self.process_event_block(&event_block, &mut deltas)?;
+        }
+        Ok(deltas)
+    }
+
+    fn event_separator(buffer: &[u8]) -> Option<(usize, usize)> {
+        [
+            buffer
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|index| (index, 4)),
+            buffer
+                .windows(2)
+                .position(|window| window == b"\n\n")
+                .map(|index| (index, 2)),
+        ]
+        .into_iter()
+        .flatten()
+        .min_by_key(|(index, _)| *index)
+    }
+
+    fn finish(mut self) -> Result<(GenerateResponse, Vec<String>), String> {
+        let mut trailing_deltas = Vec::new();
+        if self.buffer.iter().any(|byte| !byte.is_ascii_whitespace()) {
+            let event_block = std::mem::take(&mut self.buffer);
+            self.process_event_block(&event_block, &mut trailing_deltas)?;
+        }
+
+        let mut response =
+            OpenAIResponsesProvider::parse_completed(self.completed.as_ref().ok_or_else(
+                || "OpenAI Responses stream ended without response.completed".to_string(),
+            )?)?;
+        if !self.text.is_empty() {
+            response.content = self.text;
+        }
+        Ok((response, trailing_deltas))
+    }
+
+    fn process_event_block(
+        &mut self,
+        event_block: &[u8],
+        deltas: &mut Vec<String>,
+    ) -> Result<(), String> {
+        let event_block = std::str::from_utf8(event_block)
+            .map_err(|error| format!("Invalid UTF-8 in OpenAI Responses stream event: {error}"))?;
+        let data = event_block
+            .lines()
+            .filter_map(|line| line.strip_prefix("data:"))
+            .map(str::trim)
+            .collect::<String>();
+        if data.is_empty() {
+            return Ok(());
+        }
+        if data == "[DONE]" {
+            return Ok(());
+        }
+
+        let event: Value = serde_json::from_str(&data)
+            .map_err(|error| format!("Invalid OpenAI Responses stream event: {error}"))?;
+        match OpenAIResponsesProvider::classify_stream_event(&event)? {
+            StreamEvent::TextDelta(delta) => {
+                self.text.push_str(&delta);
+                deltas.push(delta);
+            }
+            StreamEvent::Completed(response) => self.completed = Some(response),
+            StreamEvent::Ignored => {}
+        }
+        Ok(())
+    }
+}
+
 impl OpenAIResponsesProvider {
     pub fn new(bearer_token: String, model: String, timeout_secs: u64) -> Self {
         let client = reqwest::Client::builder()
@@ -30,7 +115,19 @@ impl OpenAIResponsesProvider {
         }
     }
 
-    fn request_body(&self, request: &GenerateRequest, stream: bool) -> Result<Value, String> {
+    /// Creates a provider client without a request deadline. Background ingestion
+    /// must wait for the real provider result rather than fail after an arbitrary
+    /// elapsed duration.
+    pub fn new_without_request_deadline(bearer_token: String, model: String) -> Self {
+        let client = reqwest::Client::new();
+        Self {
+            bearer_token,
+            model,
+            client,
+        }
+    }
+
+    fn request_body(&self, request: &GenerateRequest) -> Result<Value, String> {
         let mut instructions = Vec::new();
         if let Some(system) = &request.system {
             instructions.push(system.clone());
@@ -72,7 +169,7 @@ impl OpenAIResponsesProvider {
             "model": self.model,
             "input": input,
             "store": false,
-            "stream": stream,
+            "stream": true,
             "max_output_tokens": request.max_tokens.unwrap_or(4096),
         });
         if !instructions.is_empty() {
@@ -111,8 +208,28 @@ impl OpenAIResponsesProvider {
         }
     }
 
+    async fn collect_stream(
+        response: reqwest::Response,
+        mut on_text_delta: impl FnMut(&str),
+    ) -> Result<GenerateResponse, String> {
+        let mut stream = response.bytes_stream();
+        let mut accumulator = ResponseStreamAccumulator::default();
+        while let Some(chunk) = stream.next().await {
+            let chunk =
+                chunk.map_err(|error| format!("OpenAI Responses stream read failed: {error}"))?;
+            for delta in accumulator.push(&chunk)? {
+                on_text_delta(&delta);
+            }
+        }
+        let (response, trailing_deltas) = accumulator.finish()?;
+        for delta in trailing_deltas {
+            on_text_delta(&delta);
+        }
+        Ok(response)
+    }
+
     pub async fn generate(&self, request: GenerateRequest) -> Result<GenerateResponse, String> {
-        let body = self.request_body(&request, false)?;
+        let body = self.request_body(&request)?;
         let response = self
             .client
             .post("https://api.openai.com/v1/responses")
@@ -122,16 +239,14 @@ impl OpenAIResponsesProvider {
             .await
             .map_err(|error| format!("OpenAI Responses request failed: {error}"))?;
         let status = response.status();
-        let payload = response
-            .text()
-            .await
-            .map_err(|error| format!("Could not read OpenAI response: {error}"))?;
         if !status.is_success() {
+            let payload = response
+                .text()
+                .await
+                .map_err(|error| format!("Could not read OpenAI error response: {error}"))?;
             return Err(Self::api_error(status, &payload));
         }
-        let response: Value = serde_json::from_str(&payload)
-            .map_err(|error| format!("Invalid OpenAI Responses payload: {error}"))?;
-        Self::parse_completed(&response)
+        Self::collect_stream(response, |_| {}).await
     }
 
     pub async fn generate_stream(
@@ -140,7 +255,7 @@ impl OpenAIResponsesProvider {
         app: &tauri::AppHandle,
         conversation_id: &str,
     ) -> Result<GenerateResponse, String> {
-        let body = self.request_body(&request, true)?;
+        let body = self.request_body(&request)?;
         let response = self
             .client
             .post("https://api.openai.com/v1/responses")
@@ -154,46 +269,14 @@ impl OpenAIResponsesProvider {
             let payload = response.text().await.unwrap_or_default();
             return Err(Self::api_error(status, &payload));
         }
-        let mut stream = response.bytes_stream();
-        let mut buffer = String::new();
-        let mut content = String::new();
-        let mut completed = None;
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|error| format!("OpenAI stream read failed: {error}"))?;
-            buffer.push_str(&String::from_utf8_lossy(&chunk));
-            while let Some(end) = buffer.find("\n\n") {
-                let event_block = buffer[..end].to_string();
-                buffer.drain(..end + 2);
-                let data = event_block
-                    .lines()
-                    .filter_map(|line| line.strip_prefix("data:"))
-                    .map(str::trim)
-                    .collect::<String>();
-                if data.is_empty() {
-                    continue;
-                }
-                let event: Value = serde_json::from_str(&data).unwrap_or(Value::Null);
-                match Self::classify_stream_event(&event)? {
-                    StreamEvent::TextDelta(delta) => {
-                        content.push_str(&delta);
-                        app.emit(
-                            "chat-ai-delta",
-                            json!({"conversationId":conversation_id,"type":"text","text":delta}),
-                        )
-                        .ok();
-                    }
-                    StreamEvent::Completed(response) => completed = Some(response),
-                    StreamEvent::Ignored => {}
-                }
-            }
-        }
-        let mut result = Self::parse_completed(completed.as_ref().ok_or_else(|| {
-            "OpenAI Responses stream ended without response.completed".to_string()
-        })?)?;
-        if !content.is_empty() {
-            result.content = content;
-        }
-        Ok(result)
+        Self::collect_stream(response, |delta| {
+            app.emit(
+                "chat-ai-delta",
+                json!({"conversationId":conversation_id,"type":"text","text":delta}),
+            )
+            .ok();
+        })
+        .await
     }
 
     fn classify_stream_event(event: &Value) -> Result<StreamEvent, String> {
@@ -207,6 +290,7 @@ impl OpenAIResponsesProvider {
                 "OpenAI Responses failed: {}",
                 event["response"]["error"]["message"]
                     .as_str()
+                    .or(event["error"]["message"].as_str())
                     .or(event["message"].as_str())
                     .unwrap_or("unspecified provider error")
             )),
@@ -291,8 +375,128 @@ impl OpenAIResponsesProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::{OpenAIResponsesProvider, StreamEvent};
+    use super::{OpenAIResponsesProvider, ResponseStreamAccumulator, StreamEvent};
+    use crate::ai::{ChatMessage, GenerateRequest};
     use serde_json::json;
+
+    fn request() -> GenerateRequest {
+        GenerateRequest {
+            messages: vec![ChatMessage::text("user", "Analise as conversas")],
+            max_tokens: Some(512),
+            temperature: None,
+            system: None,
+            blackboard_context: None,
+            tools: None,
+            supports_web_tools: false,
+            thinking: None,
+            tool_choice: None,
+        }
+    }
+
+    fn event(value: serde_json::Value) -> String {
+        format!("data: {}\n\n", value)
+    }
+
+    #[test]
+    fn agent_requests_enable_streaming() {
+        let provider = OpenAIResponsesProvider::new("token".into(), "model".into(), 30);
+        let body = provider.request_body(&request()).unwrap();
+
+        assert_eq!(body["stream"], true);
+    }
+
+    #[test]
+    fn stream_accumulator_returns_completed_tool_calls_and_usage() {
+        let mut accumulator = ResponseStreamAccumulator::default();
+        let text_delta =
+            event(json!({"type":"response.output_text.delta","delta":"Relatório pronto"}));
+        let tool_call = event(json!({
+            "type":"response.completed",
+            "response":{
+                "model":"test-model",
+                "output":[
+                    {"type":"message","content":[{"type":"output_text","text":"Relatório pronto"}]},
+                    {"type":"function_call","call_id":"call-1","name":"task_complete","arguments":"{\"output_iri\":\"foundation:Report_1\"}"}
+                ],
+                "usage":{"input_tokens":41,"output_tokens":12}
+            }
+        }));
+
+        let deltas = accumulator.push(text_delta.as_bytes()).unwrap();
+        assert_eq!(deltas, vec!["Relatório pronto"]);
+        for chunk in tool_call.as_bytes().chunks(7) {
+            accumulator.push(chunk).unwrap();
+        }
+        let (response, trailing_deltas) = accumulator.finish().unwrap();
+
+        assert!(trailing_deltas.is_empty());
+        assert_eq!(response.content, "Relatório pronto");
+        assert_eq!(response.tool_calls.len(), 1);
+        assert_eq!(response.tool_calls[0].name, "task_complete");
+        assert_eq!(
+            response.tool_calls[0].input["output_iri"],
+            "foundation:Report_1"
+        );
+        assert_eq!(response.usage.unwrap().input_tokens, 41);
+        assert_eq!(response.stop_reason.as_deref(), Some("tool_calls"));
+    }
+
+    #[test]
+    fn stream_accumulator_propagates_provider_failure_and_missing_completion() {
+        let mut failed = ResponseStreamAccumulator::default();
+        let error_event = event(json!({
+            "type":"response.failed",
+            "response":{"error":{"message":"provider rejected request"}}
+        }));
+        assert!(failed
+            .push(error_event.as_bytes())
+            .unwrap_err()
+            .contains("provider rejected request"));
+
+        let incomplete = ResponseStreamAccumulator::default().finish().unwrap_err();
+        assert!(incomplete.contains("without response.completed"));
+    }
+
+    #[test]
+    fn stream_accumulator_handles_fragmented_crlf_event_delimiters() {
+        let mut accumulator = ResponseStreamAccumulator::default();
+        let delta =
+            event(json!({"type":"response.output_text.delta","delta":"OK"})).replace('\n', "\r\n");
+        let completed = event(json!({
+            "type":"response.completed",
+            "response":{"output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}]}
+        })).replace('\n', "\r\n");
+        let input = format!("{delta}{completed}");
+        let mut deltas = Vec::new();
+        for chunk in input.as_bytes().chunks(3) {
+            deltas.extend(accumulator.push(chunk).unwrap());
+        }
+
+        let (response, trailing_deltas) = accumulator.finish().unwrap();
+        deltas.extend(trailing_deltas);
+        assert_eq!(deltas, vec!["OK"]);
+        assert_eq!(response.content, "OK");
+    }
+
+    #[test]
+    fn stream_accumulator_preserves_multibyte_text_split_across_chunks() {
+        let mut accumulator = ResponseStreamAccumulator::default();
+        let delta = event(json!({"type":"response.output_text.delta","delta":"ação 🚀"}));
+        let completed = event(json!({
+            "type":"response.completed",
+            "response":{"output":[{"type":"message","content":[{"type":"output_text","text":"ação 🚀"}]}]}
+        }));
+        let input = format!("{delta}{completed}");
+        let mut deltas = Vec::new();
+        for chunk in input.as_bytes().chunks(1) {
+            deltas.extend(accumulator.push(chunk).unwrap());
+        }
+
+        let (response, trailing_deltas) = accumulator.finish().unwrap();
+        deltas.extend(trailing_deltas);
+        assert_eq!(deltas, vec!["ação 🚀"]);
+        assert_eq!(response.content, "ação 🚀");
+    }
 
     #[test]
     fn parses_tool_calls_from_completed_response_only() {

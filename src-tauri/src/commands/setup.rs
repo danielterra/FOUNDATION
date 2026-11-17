@@ -297,6 +297,17 @@ pub async fn initialize_app(app: AppHandle) -> Result<(), String> {
     );
     executor
         .write(|conn| {
+            crate::core_ontology::ingestion::sync_schema(conn)?;
+            Ok(String::new())
+        })
+        .await
+        .map_err(|error| {
+            let message = format!("Failed to synchronize asynchronous ingestion schema: {error}");
+            super::log_backend("error", &message);
+            message
+        })?;
+    executor
+        .write(|conn| {
             crate::commands::migrate_legacy_active_ai_model(conn)?;
             Ok(String::new())
         })
@@ -513,6 +524,7 @@ pub async fn initialize_app(app: AppHandle) -> Result<(), String> {
         app.clone(),
     ));
     tauri::async_runtime::spawn(crate::imap::sync_worker::start_imap_sync(app.clone()));
+    crate::ingestion::start(app.clone());
     crate::data_sync::request_worker::start_request_worker(app.clone());
     super::log_backend(
         "debug",

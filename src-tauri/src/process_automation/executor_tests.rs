@@ -3,6 +3,62 @@ use crate::eavto::test_helpers::setup_test_db;
 use crate::eavto::{store, Object, Triple};
 
 #[test]
+fn ingestion_automation_execution_identity_is_stable_and_scoped_to_the_action() {
+    let first = deterministic_execution_iri("foundation:IngestionAction_a");
+    let repeated = deterministic_execution_iri("foundation:IngestionAction_a");
+    let other_action = deterministic_execution_iri("foundation:IngestionAction_b");
+
+    assert_eq!(first, repeated);
+    assert_ne!(first, other_action);
+}
+
+#[tokio::test]
+async fn idempotent_automation_wait_returns_on_terminal_status_without_a_deadline() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db_path = temp_dir.path().join("ingestion-eval.db");
+    let mut conn = crate::eavto::connection::initialize_db(&db_path).unwrap();
+    store::assert_triples(
+        &mut conn,
+        &[
+            Triple::new(
+                "foundation:WorkflowExecution_eval_completed",
+                "foundation:hasStatus",
+                Object::Iri(STATUS_COMPLETED.to_string()),
+            ),
+            Triple::new(
+                "foundation:WorkflowExecution_eval_failed",
+                "foundation:hasStatus",
+                Object::Iri(STATUS_FAILED.to_string()),
+            ),
+            Triple::new(
+                "foundation:WorkflowExecution_eval_cancelled",
+                "foundation:hasStatus",
+                Object::Iri(STATUS_CANCELLED.to_string()),
+            ),
+        ],
+        "test",
+    )
+    .unwrap();
+    let executor = crate::owl::DbExecutor::new(conn, db_path);
+
+    assert!(
+        wait_for_execution_terminal(&executor, "foundation:WorkflowExecution_eval_completed")
+            .await
+            .is_ok()
+    );
+    assert!(
+        wait_for_execution_terminal(&executor, "foundation:WorkflowExecution_eval_failed")
+            .await
+            .is_err()
+    );
+    assert!(
+        wait_for_execution_terminal(&executor, "foundation:WorkflowExecution_eval_cancelled")
+            .await
+            .is_err()
+    );
+}
+
+#[test]
 fn concurrent_automation_contexts_share_origin_update_id_and_distinguish_later_updates() {
     let mut first_execution = ExecutionContext::new();
     let mut concurrent_execution = ExecutionContext::new();

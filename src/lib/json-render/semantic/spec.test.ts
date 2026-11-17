@@ -115,7 +115,7 @@ test('the exported manifest and runtime use the same component and action contra
   assert.equal(semanticCatalogManifest.version, 2);
   assert.deepEqual(
     semanticCatalogManifest.components.map((component: { id: string }) => component.id).sort(),
-    ['Action', 'Comparison', 'Confirmation', 'Decision', 'Details', 'Distribution', 'Information', 'ValueEntry'].sort(),
+    ['Action', 'Comparison', 'Confirmation', 'Decision', 'Details', 'Distribution', 'Information', 'Records', 'ValueEntry'].sort(),
   );
   for (const component of semanticCatalogManifest.components as Array<{ id: string; contractVersion: number }>) {
     assert.equal(Number.isInteger(component.contractVersion), true, `${component.id} must have an independent integer contract version`);
@@ -230,12 +230,12 @@ test('ontology-published component contract versions match the frontend declarat
   assert.equal(semanticCatalogManifest.version, 2, 'component contract updates must not bump the global manifest version');
   assert.deepEqual(
     { ValueEntry: versions.ValueEntry, Information: versions.Information, Details: versions.Details, Comparison: versions.Comparison, Distribution: versions.Distribution },
-    { ValueEntry: 2, Information: 0, Details: 2, Comparison: 2, Distribution: 2 },
+    { ValueEntry: 2, Information: 0, Details: 2, Comparison: 3, Distribution: 2 },
   );
 });
 
 test('all semantic examples validate against the semantic catalog', () => {
-  assert.deepEqual(Object.keys(semanticExamples).sort(), ['Action', 'Comparison', 'Confirmation', 'Decision', 'Details', 'Distribution', 'Information', 'ValueEntry'].sort());
+  assert.deepEqual(Object.keys(semanticExamples).sort(), ['Action', 'Comparison', 'Confirmation', 'Decision', 'Details', 'Distribution', 'Information', 'Records', 'ValueEntry'].sort());
   for (const [intent, example] of Object.entries(semanticExamples)) {
     assert.equal(semanticCatalog.validate(example).success, true, `${intent} example should match its schema`);
     assert.equal(validateSemanticSpec(example).success, true, `${intent} example should be renderable`);
@@ -777,6 +777,17 @@ test('a target data update refreshes bindings without reloading its template', (
   }), 'refresh-target');
 });
 
+test('deleting a row referenced by a Records collection refreshes the collection', () => {
+  assert.equal(semanticWidgetEventAction({
+    eventType: 'deleted',
+    eventEntityIri: 'foundation:Transaction_42',
+    templateEntityIri: 'foundation:JsonRenderSpec_Statement',
+    targetEntityIri: 'foundation:MonthlyStatement_2026_08',
+    referencedEntityIris: ['foundation:Transaction_42'],
+    watchedPredicates: ['foundation:statementTransactions'],
+  }), 'refresh-target');
+});
+
 test('a target update uses its event transaction as the binding snapshot', () => {
   assert.deepEqual(resolveSemanticRefreshSnapshot(100, 101), { kind: 'event', snapshotTx: 101 });
   assert.deepEqual(resolveSemanticRefreshSnapshot(101, 101), { kind: 'ignore' });
@@ -1094,7 +1105,7 @@ test('semantic component DOM ids are unique per instance and keep accessible rel
   assert.equal(first.value, 'svelte-instance-a-semantic-value');
 
   const adapter = await readFile(new URL('./SemanticComponentAdapter.svelte', import.meta.url), 'utf8');
-  for (const fixedId of ['decision-title', 'decision-search', 'semantic-value', 'information-title', 'confirmation-title']) {
+  for (const fixedId of ['decision-title', 'decision-search', 'semantic-value', 'information-title', 'comparison-title', 'distribution-title', 'records-title', 'records-filter-column', 'records-filter-value', 'records-filter-operator', 'confirmation-title']) {
     assert.doesNotMatch(adapter, new RegExp(`(?:id|for|aria-labelledby)="${fixedId}"`), `${fixedId} must not be a fixed DOM id`);
   }
   assert.match(adapter, /aria-labelledby=\{semanticDomIds\.decisionTitle\}/);
@@ -1103,11 +1114,15 @@ test('semantic component DOM ids are unique per instance and keep accessible rel
   assert.match(adapter, /aria-labelledby=\{semanticDomIds\.valueLabel\}/);
   assert.match(adapter, /aria-describedby=\{props\.description \? semanticDomIds\.valueDescription : undefined\}/);
   assert.match(adapter, /aria-labelledby=\{semanticDomIds\.informationTitle\}/);
+  assert.match(adapter, /aria-labelledby=\{semanticDomIds\.comparisonTitle\}/);
+  assert.match(adapter, /id=\{semanticDomIds\.comparisonTitle\}/);
   assert.match(adapter, /data-layout-columns=\{informationColumns\}/);
   assert.match(adapter, /class:first-child-spans=\{informationPrimaryChildSpans\}/);
   assert.match(adapter, /information-block\.first-child-spans > \.semantic-children > \.semantic-block:first-child/);
   assert.match(adapter, /semantic-children > \.semantic-block:first-child \.fact-list dd/);
-  assert.match(adapter, /role="img" aria-label=\{`\$\{props\.metric\}, \$\{currentPeriodLabel\}/);
+  assert.match(adapter, /aria-label=\{`\$\{props\.metric\}: \$\{comparison\.interpretation/);
+  assert.match(adapter, /comparison-change-divider/);
+  assert.match(adapter, /id=\{semanticDomIds\.recordsTitle\}/);
   assert.match(adapter, /aria-labelledby=\{semanticDomIds\.confirmationTitle\}/);
 });
 

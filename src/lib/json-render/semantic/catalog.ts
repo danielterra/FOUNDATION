@@ -11,6 +11,28 @@ const entityBinding = z.object({
   source: z.literal('entity'),
   propertyIri: text.min(1),
 }).strict();
+const recordFilterOperator = z.enum(['equals', 'contains', 'gt', 'gte', 'lt', 'lte']);
+const recordsColumn = z.object({
+  id: text.min(1),
+  label: text.min(1),
+  valueType: z.enum(['text', 'number', 'currency', 'percentage', 'date', 'date_time', 'reference']),
+  unit: optionalText,
+  sortable: z.boolean().optional(),
+  filterOperators: z.array(recordFilterOperator).optional(),
+}).strict();
+const recordsSource = z.object({
+  source: z.literal('entity'),
+  propertyIri: text.min(1),
+  alias: text.min(1),
+  label: optionalText,
+  fields: z.record(text, text.min(1)),
+  membershipWatch: z.object({
+    classIri: text.min(1),
+    predicate: text.min(1),
+    objectBinding: entityBinding,
+  }).strict().optional(),
+}).strict();
+const recordsBinding = z.object({ sources: z.array(recordsSource).min(1) }).strict();
 const projectionBinding = entityBinding.extend({
   projections: z.object({ measure: text.min(1), groupBy: text.min(1) }).strict(),
 }).strict();
@@ -123,7 +145,7 @@ export const semanticCatalog = defineCatalog(schema, {
       description: 'Torna explícita a consequência antes de confirmar ou cancelar uma ação.',
     },
     Comparison: {
-      contractVersion: 2,
+      contractVersion: 3,
       props: z.object({
         title: text,
         metric: text,
@@ -133,7 +155,7 @@ export const semanticCatalog = defineCatalog(schema, {
         unavailableBaselineMessage: optionalText,
       }).strict(),
       slots: [],
-      description: 'Compara valores de períodos equivalentes com barras pareadas em escala comum, valores, variação e interpretação favorável, desfavorável ou neutra; omite comparação quando período, unidade ou baseline não permitem uma leitura válida.',
+      description: 'Compara valores de períodos equivalentes com números identificados por período e variação absoluta e percentual; a direção e a cor indicam se a mudança é favorável, desfavorável ou neutra. Omite a comparação quando período, unidade ou baseline não permitem uma leitura válida.',
     },
     Distribution: {
       contractVersion: 2,
@@ -144,6 +166,18 @@ export const semanticCatalog = defineCatalog(schema, {
       }).strict(),
       slots: [],
       description: 'Agrupa valores numéricos projetados de uma coleção por valores literais ou referências projetadas, contabiliza itens sem agrupamento e informa total e cobertura da coleção paginada.',
+    },
+    Records: {
+      contractVersion: 1,
+      props: z.object({
+        title: text,
+        columns: z.array(recordsColumn).min(1),
+        defaultSort: z.object({ columnId: text.min(1), direction: z.enum(['asc', 'desc']) }).strict(),
+        pageSize: z.number().int().min(1).max(100).optional(),
+        emptyMessage: optionalText,
+      }).strict(),
+      slots: [],
+      description: 'Permite inspecionar uma coleção estruturada, comparar seus campos e refinar o conjunto com filtros, ordenação e paginação, sem ocultar registros.',
     },
   },
   actions: {
@@ -172,6 +206,7 @@ const componentBindingTargets: Record<string, string[]> = {
   Details: ['details'],
   Comparison: ['current', 'reference', 'periodStart', 'periodEnd'],
   Distribution: ['collection'],
+  Records: ['records'],
 };
 
 export function semanticComponentPropsContract(componentId: string) {
@@ -185,6 +220,8 @@ export function semanticComponentPropsContract(componentId: string) {
       additionalProperties: false,
       properties: Object.fromEntries(targets.map((target) => [target, componentId === 'Distribution' && target === 'collection'
         ? projectionBinding.toJSONSchema()
+        : componentId === 'Records' && target === 'records'
+          ? recordsBinding.toJSONSchema()
         : entityBindingContract])),
       description: 'Bindings declarados no elemento JSON, ao lado de type/props. O valor é lido da entidade em foundation:rendersEntity e nunca copiado para specSource.',
     };

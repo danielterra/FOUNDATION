@@ -14,6 +14,7 @@
 - ALWAYS name skills as `entity-action` (e.g. `ontology-create`, `ontology-change`, `widget-remove`, `release-create`). NEVER use other naming patterns.
 
 ## Foundation principles — non-negotiable
+- ALWAYS calculate derived values directly from source facts with ontology queries when possible; avoid chaining derived records across periods, including monthly budget balances.
 - **OWNERSHIP** — local-first; data lives on the user's machine; no Big Tech servers; AGPL-3.0 prevents closed cloud forks. ALWAYS reject designs that require a centralized backend, hosted SaaS dependency or telemetry/exfiltration.
 - **ONTOLOGY-FIRST** — model via classes/properties/individuals in the live DB (via MCP), never via ad-hoc tables. ALWAYS use `foundation:*`/`anthropic:*` vocabulary; NEVER hardcode IRIs that didn't come from `search`/`describe_*`.
 - ALWAYS store ChatGPT OAuth credentials through FOUNDATION's local ontology-backed secret-storage pattern; NEVER depend on the macOS Keychain for this integration.
@@ -22,6 +23,24 @@
 - ALWAYS retain at most one FOUNDATION-managed database backup at a time; verify a replacement backup before removing the previous FOUNDATION-managed copy, and never remove user-created backups.
 - **IMMUTABLE STORE** — Datomic-style append-only triples with monotonic `tx`. ALWAYS update by writing a new triple with higher tx; NEVER `UPDATE` rows; `retracted=1` only to permanently delete a fact.
 - **AUTOMATION-REACTIVE** — data acts on itself: writes notify, readevopsrs run, widgets refresh. ALWAYS route entity writes through the notify→emit path so readevopsrs and UI converge automatically; NEVER bypass with direct `app.emit` or out-of-band SQL. ALWAYS reflect persisted changes in every affected open widget in real time.
+- ALWAYS send received content through an ontology-aware AI agent for structuring and persistence; use deterministic checks for identity, deduplication, and safe execution, not to bypass semantic memory.
+- NEVER maintain parallel BPMN email-triage automations as an ingestion path; the asynchronous AI ingestion subsystem is the single canonical ingestion method. The agent may explicitly invoke a general automation only when the content itself warrants it.
+- ALWAYS let the AI agent decide whether to invoke an automation when one message contains high-volume structured data or large attachments; the automation executor must not be the primary router that decides whether content reaches AI.
+- ALWAYS design ingestion for sustained high volume with idempotent processing, durable state, recovery, minimal repeated work, and measurable throughput/latency; use batch automations for large payloads when the AI agent judges them beneficial, without arbitrary thresholds.
+- ALWAYS implement ingestion as a dedicated critical subsystem independent of the general automation executor, with its own durable queue and processing state; invoke the general automation executor only through an explicit agent decision and contract.
+- ALWAYS process ingestion asynchronously through a durable queue; never block the UI, email/message synchronization, or unrelated conversations while an ingestion session is waiting, batching, or being processed.
+- ALWAYS expose truthful per-session ingestion progress and terminal state to the process waiting on it; report completed work/current stage without fabricated percentages, ETAs, or arbitrary processing deadlines.
+- NEVER apply a fixed provider request timeout to ingestion; rely on real provider/task completion or failure signals and preserve the durable session state while work is pending.
+- ALWAYS model ingestion around the received content as the primary payload; treat email, WhatsApp, and other origins as provenance/context metadata rather than the content being ingested.
+- ALWAYS ingest emails from their text/Markdown body and subject; NEVER send the full HTML rendering to the Ontologist when a text body is available, because it contains presentation markup, tracking links, and boilerplate unrelated to the message facts.
+- ALWAYS group ingestion context by source conversation: one ingestion session per email thread or messaging conversation, so the agent can connect facts across messages before persisting them.
+- ALWAYS use the Ontologist or an equivalent ontology-aware agent to record all relevant facts consistently and evolve classes/properties when needed; do not reduce ingestion to summaries that omit facts.
+- ALWAYS debounce message bursts per conversation/thread and process them as a batch rather than invoking the agent once per message; persist a per-session processed-through cursor/watermark so the agent receives only new content while retaining conversation context.
+- ALWAYS give the ingestion agent the content and relevant context together (for example sender plus attachment set); never route solely by transport/source when the content carries the actual meaning.
+- NEVER require user interaction, approval, or confirmation for routine ingestion; ingest in the background with no interruption to the user's workflow.
+- ALWAYS preserve received content and provenance when interpretation is uncertain; defer unresolved processing internally instead of prompting the user or discarding the content.
+- ALWAYS validate ingestion behavior against representative local email and message examples when available, using isolated copies/fixtures and keeping personal content out of reports.
+- ALWAYS validate ingestion with unit tests and representative real-content fixtures against expected ontology facts, using explicit tolerances for extracted numeric/date values; run provider-backed evaluations with the least-cost suitable model available to the configured account.
 - ALWAYS make authentication initiation, callback handling, and credential persistence idempotent; duplicate or retried callbacks must not create competing active sessions or duplicate credentials.
 - ALWAYS evaluate every design/code decision against these four pillars. A change that violates one is a blocker.
 
@@ -34,6 +53,11 @@
 - ALWAYS present Settings as a dedicated full screen, not a modal; use a left vertical navigation menu instead of top tabs, with AI model selection first and remaining settings grouped by task, and use the available horizontal space well.
 
 ## Visual language
+- ALWAYS calculate monthly statement balances directly from the account opening balance plus cumulative posted movements through the cutoff; use zero when the opening balance is unset and surface reconciliation gaps.
+- ALWAYS keep the monthly statement summary visible while validating its calculations, with a clear validation label.
+- ALWAYS treat monthly statement totals and balance as application-level ontology and widget configuration; do not route this change through platform architecture.
+- ALWAYS show total inflows, total expenses, and the account balance at the end of the selected month in the monthly statement widget.
+- ALWAYS center the target widget at 100% zoom when a user opens an entity reference on the blackboard.
 - ALWAYS derive every visual decision from this chain: user goal and UI context → semantic role and state → design-system token → reusable component variant.
 - ALWAYS use the same minimal Design System spacing between every Inspector label and its value or reference chip; field-specific spacing must not make related label-value pairs look disconnected.
 - ALWAYS render ontology entity references with the shared `OntologyEntityReferenceChip`; keep dimensions, typography, icon sizing, and interaction affordance consistent across class and individual variants, changing only semantic colors.
@@ -52,9 +76,16 @@
 - ALWAYS let semantic components resolve their presentation from intent and context; keep low-level visual primitives such as Card, Select, RadioGroup, Dialog, and Button inside the rendering implementation rather than exposing them as the primary product vocabulary in generated UI specs.
 - ALWAYS make reusable semantic components infer information hierarchy and responsive grouping from declared roles, context, and ordering; avoid screen-specific size/layout instructions when the information itself can express priority.
 - ALWAYS treat ordering inside a semantic metric group as meaningful: the first item is the primary focus and following items support it; fixed-width widgets may use deliberately declared rows and columns rather than automatic responsive reflow.
+- ALWAYS order a monthly financial overview as opening balance, income, expenses, and result, followed by unpaid/unreceived obligations, category breakdown, and a transaction ledger.
 - ALWAYS define each proposed semantic component's intent, user problem, inputs, states, and concrete widget example for user approval before implementation; implement only after explicit approval.
+- ALWAYS present comparison outcomes without redundant visible favorable/unfavorable wording when direction and semantic color already communicate the interpretation; keep the explanation available to assistive technology.
+- ALWAYS show comparisons with clearly labeled period values and a distinct change row for absolute and percentage deltas; prefer direct numerical comparison over decorative bars when bars do not clarify magnitude or direction.
 - ALWAYS migrate existing custom-widget consumers one at a time; propose a new semantic intent only when a concrete existing consumer requires it, then obtain user approval before adding it.
 - ALWAYS model a user's intent to find matching items as `Search`; treat query, filters, ranking, sorting, pagination, result count, and opening a result as context for that intent, not as an `ExploreCollection` intent.
+- ALWAYS use the semantic `Records` component when a widget presents a collection for inspection; declare live entity sources, projected fields, and relevant filter/sort options, and make total count and pagination state visible so results are never silently hidden.
+- ALWAYS place related `Records` collections on separate full-width rows when side-by-side columns make their content cramped or hard to scan.
+- ALWAYS keep numeric and date values in `Records` cells on one line; omit the source-type column when a collection has only one source.
+- ALWAYS keep detailed transaction ledgers out of the MonthlyBudget overview; link to a dedicated monthly statement entity so users open the full list only when needed.
 - ALWAYS model a complex single decision with its domain, available candidates, comparison factors, and selected value; the semantic component chooses an appropriate presentation, such as a compact control, comparative choices, or a searchable detailed chooser, based on context and scale.
 - ALWAYS add new semantic components as separate implementations alongside existing components; keep existing components working while each screen is migrated and validated, then remove old components only after every consumer has moved.
 - ALWAYS keep the Inspector read-only on open; enter global edit mode only through its explicit edit action, and save or discard the complete draft explicitly.
@@ -127,6 +158,7 @@
 - ALWAYS distinguish semantic groups with the shared group-surface role when spacing alone does not provide enough separation; do not invent local borders or colors.
 - ALWAYS style message timestamps, token counts, model cost, Inspector relative dates, and equivalent contextual information with the shared metadata role rather than label styling.
 - ALWAYS format relative dates and times using the operating system's locale so metadata follows the user's system language.
+- ALWAYS display ontology dates in a concise, localized absolute format; for date-times and date-only values where recency helps, show localized relative time as secondary metadata, never raw ISO strings.
 - ALWAYS use one monospaced font family across the entire application, including headings, body content, controls, labels, metadata, and widgets; typography hierarchy may vary by semantic size, color, spacing, and weight, but never by font family.
 - NEVER define a label/metadata visual language specifically for one widget when the same semantic role appears elsewhere; consume the shared Design System role.
 - NEVER use low-contrast gray secondary text for labels on dark surfaces; use the shared high-contrast metadata color, distinct in intent from interactive/focus styling.
@@ -137,6 +169,31 @@
 - ALWAYS animate floating widgets menu expansion and collapse smoothly; align the compact icon and count; constrain the panel to a maximum width and wrap long widget names within it.
 
 ## Product communication
+- ALWAYS ask which specific personal data may appear in public-facing screenshots when a real capture would expose it.
+- ALWAYS state that the Claude integration requires an Anthropic API key and does not accept Claude subscriptions.
+- ALWAYS state that Foundation is free, open source, and requires no subscription; distinguish external AI service pricing.
+- ALWAYS frame each product benefit with a short promise, a familiar situation, and a concrete outcome the user and their AI achieve.
+- ALWAYS lead blackboard copy with “Mais do que palavras” and use a concrete spending example to show how AI-generated visuals support decisions.
+- ALWAYS write the initial website and README copy in Brazilian Portuguese; add English and Spanish as separate versions later.
+- ALWAYS refer to the personal knowledge graph as “seu grafo de conhecimento (ontologia)” in Portuguese product copy and emphasize that it lives on the user’s own computer.
+- ALWAYS describe automatic memory in terms of the outcome across chat, WhatsApp, and email and storage in a knowledge graph; omit recurrence and ingestion-routing details from the README overview.
+- ALWAYS refer to the user’s AI as “sua IA” in Portuguese product copy.
+- ALWAYS describe automatic memory in plain language and present tense in README benefit copy; reserve internal feature names for product and technical records.
+- ALWAYS introduce each README benefit directly with its own headline; omit a generic Overview heading.
+- ALWAYS describe the planned WhatsApp integration as AI automatically saving important details and linking them to the relevant person or subject.
+- ALWAYS include WhatsApp as a major source of scattered personal information in overview copy; treat its integration as the next product focus and planned until shipped.
+- ALWAYS lead the personal knowledge overview with a benefit headline, then show the scattered-information problem and how Foundation lets the person and their AI return to saved details.
+- ALWAYS convey the founding vision of one place for personal knowledge, usable by both the person and their AI; show everyday details connected to people and ongoing matters.
+- ALWAYS lead overview copy with the outcome people want, using concise Apple-inspired language; treat finding information as a means to that outcome.
+- ALWAYS focus the overview on user benefits and the product promise; reserve implementation details for deeper sections.
+- ALWAYS favor “A fundação para construir seus próprios sistemas com IA” with a single sentence naming finances, documents, and routine work; avoid repeating the examples or the build-with-AI call in the opening.
+- ALWAYS make opening pitches concrete by naming what people can build with their AI.
+- ALWAYS use “A fundação para construir com sua IA” as the reference opening when exploring related pitches.
+- ALWAYS favor “build” as the active verb when pitching Foundation as the shared foundation for people and their AI.
+- ALWAYS favor opening pitches that use Foundation as the shared foundation for people and their AI to work together on their own computer.
+- ALWAYS consider “AI OS” as the preferred positioning direction and distinguish it through ontology, reactive automation, and the shared blackboard.
+- NEVER position local execution or data ownership alone as Foundation's differentiator against other local agent harnesses.
+- ALWAYS test a distinctive opening line before detailing the vision; treat sovereignty as a founding conviction and express efficiency through concrete outcomes.
 - ALWAYS ground positioning in sovereignty/privacy/security, efficiency, and visual collaboration; start with the founding purpose.
 - ALWAYS explain ontology as structured, connected knowledge; explain reactive automation as avoiding repeated agent work and Subconscious as surfacing relevant context.
 - ALWAYS present the blackboard as a shared visual workspace for people and agents, reducing text overload.
@@ -252,6 +309,8 @@
 - Loaded by `load_base_system_prompt(conn)` in `src-tauri/src/commands/chat/settings.rs`, called from `load_agent_config` and `AgentTask`/`Task` executors.
 - Fallback: empty string if setting missing.
 - Agent persona prompt (e.g. NOVA personality) lives in `foundation:basePrompt` on the agent individual; concatenated after base prompt.
+- ALWAYS store ontology calculation-modeling principles in the Ontologist's ontology-backed prompt; NOVA delegates schema-level calculations to the Ontologist, while Automator uses existing modeled properties and handles BPMN workflows. AGENTS.md is only a development mirror, never the sole source.
+- ALWAYS prefer calculations directly from authoritative source records over chaining calculated values across related records when both designs can answer the question.
 
 ## Project structure
 - Frontend: Svelte + TypeScript (`src/`).
@@ -348,6 +407,7 @@ Layers top-to-bottom: `Frontend → Commands → Core-Ontology → OWL → EAVTO
 - ALWAYS check Foundation email and attachments for bank statements already sent before asking the user to resend them.
 - ALWAYS use foundation:MonthlyBudget to verify financial reconciliation totals and opening/closing balances.
 - ALWAYS treat C6 Bank PF and C6 Bank - Conta Corrente as the same bank account; use a single canonical account for imports and budgets.
+- ALWAYS reconcile C6 cash using the statement's accounting date and official daily balance; preserve the original posting date and distinguish accounting-period cutoff from a balance printed beside a differently dated row.
 - ALWAYS reconcile C6 card endings 1748, 5715, 5862, and 6108 under the same credit account and shared statement; preserve the card ending on each imported line.
 - ALWAYS automate recurring credit-card statement imports and matching with deterministic rules to avoid manual work and repeated AI token use.
 - ALWAYS use the bank statement's transaction identifier and description as the source of truth for transaction classification; count card bill payments once as bank transfers.

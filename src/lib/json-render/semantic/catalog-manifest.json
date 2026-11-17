@@ -9,7 +9,8 @@
     "Details",
     "Confirmation",
     "Comparison",
-    "Distribution"
+    "Distribution",
+    "Records"
   ],
   "actionIds": [
     "announce",
@@ -581,8 +582,8 @@
     },
     {
       "id": "Comparison",
-      "contractVersion": 2,
-      "description": "Compara valores de períodos equivalentes com barras pareadas em escala comum, valores, variação e interpretação favorável, desfavorável ou neutra; omite comparação quando período, unidade ou baseline não permitem uma leitura válida.",
+      "contractVersion": 3,
+      "description": "Compara valores de períodos equivalentes com números identificados por período e variação absoluta e percentual; a direção e a cor indicam se a mudança é favorável, desfavorável ou neutra. Omite a comparação quando período, unidade ou baseline não permitem uma leitura válida.",
       "propsSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -770,6 +771,206 @@
                 "source",
                 "propertyIri",
                 "projections"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "description": "Bindings declarados no elemento JSON, ao lado de type/props. O valor é lido da entidade em foundation:rendersEntity e nunca copiado para specSource."
+        }
+      },
+      "slots": []
+    },
+    {
+      "id": "Records",
+      "contractVersion": 1,
+      "description": "Permite inspecionar uma coleção estruturada, comparar seus campos e refinar o conjunto com filtros, ordenação e paginação, sem ocultar registros.",
+      "propsSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "columns": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "valueType": {
+                  "type": "string",
+                  "enum": [
+                    "text",
+                    "number",
+                    "currency",
+                    "percentage",
+                    "date",
+                    "date_time",
+                    "reference"
+                  ]
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "sortable": {
+                  "type": "boolean"
+                },
+                "filterOperators": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "equals",
+                      "contains",
+                      "gt",
+                      "gte",
+                      "lt",
+                      "lte"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "label",
+                "valueType"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "defaultSort": {
+            "type": "object",
+            "properties": {
+              "columnId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "direction": {
+                "type": "string",
+                "enum": [
+                  "asc",
+                  "desc"
+                ]
+              }
+            },
+            "required": [
+              "columnId",
+              "direction"
+            ],
+            "additionalProperties": false
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "emptyMessage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "columns",
+          "defaultSort"
+        ],
+        "additionalProperties": false,
+        "x-foundation-element-bindings": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "records": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "object",
+              "properties": {
+                "sources": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "const": "entity"
+                      },
+                      "propertyIri": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "alias": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "fields": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "membershipWatch": {
+                        "type": "object",
+                        "properties": {
+                          "classIri": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "predicate": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "objectBinding": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "const": "entity"
+                              },
+                              "propertyIri": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "propertyIri"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "classIri",
+                          "predicate",
+                          "objectBinding"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "propertyIri",
+                      "alias",
+                      "fields"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "sources"
               ],
               "additionalProperties": false
             }
@@ -1140,6 +1341,74 @@
                 "measure": "foundation:exampleMeasure",
                 "groupBy": "foundation:exampleGroup"
               }
+            }
+          }
+        }
+      }
+    },
+    "Records": {
+      "root": "ledger",
+      "elements": {
+        "ledger": {
+          "type": "Records",
+          "children": [],
+          "props": {
+            "title": "Movimentações",
+            "columns": [
+              {
+                "id": "date",
+                "label": "Data",
+                "valueType": "date",
+                "sortable": true,
+                "filterOperators": [
+                  "equals",
+                  "gt",
+                  "lt"
+                ]
+              },
+              {
+                "id": "description",
+                "label": "Detalhe",
+                "valueType": "text",
+                "sortable": true,
+                "filterOperators": [
+                  "contains",
+                  "equals"
+                ]
+              },
+              {
+                "id": "amount",
+                "label": "Valor",
+                "valueType": "currency",
+                "unit": "BRL",
+                "sortable": true,
+                "filterOperators": [
+                  "gt",
+                  "lt",
+                  "equals"
+                ]
+              }
+            ],
+            "defaultSort": {
+              "columnId": "date",
+              "direction": "desc"
+            },
+            "pageSize": 25
+          },
+          "bindings": {
+            "records": {
+              "sources": [
+                {
+                  "source": "entity",
+                  "alias": "payments",
+                  "propertyIri": "foundation:examplePayments",
+                  "fields": {
+                    "date": "foundation:hasStartTime",
+                    "description": "foundation:transactionDescription",
+                    "amount": "foundation:transactionAmount"
+                  }
+                }
+              ]
             }
           }
         }

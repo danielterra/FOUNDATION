@@ -64,4 +64,33 @@ export const semanticExamples: Record<string, Spec & { elements: Record<string, 
       },
     },
   },
+  Records: {
+    root: 'ledger',
+    elements: {
+      ledger: {
+        type: 'Records',
+        children: [],
+        props: {
+          title: 'Movimentações',
+          columns: [
+            { id: 'date', label: 'Data', valueType: 'date', sortable: true, filterOperators: ['equals', 'gt', 'lt'] },
+            { id: 'description', label: 'Detalhe', valueType: 'text', sortable: true, filterOperators: ['contains', 'equals'] },
+            { id: 'amount', label: 'Valor', valueType: 'currency', unit: 'BRL', sortable: true, filterOperators: ['gt', 'lt', 'equals'] },
+          ],
+          defaultSort: { columnId: 'date', direction: 'desc' },
+          pageSize: 25,
+        },
+        bindings: {
+          records: {
+            sources: [{
+              source: 'entity',
+              alias: 'payments',
+              propertyIri: 'foundation:examplePayments',
+              fields: { date: 'foundation:hasStartTime', description: 'foundation:transactionDescription', amount: 'foundation:transactionAmount' },
+            }],
+          },
+        },
+      },
+    },
+  },
 };

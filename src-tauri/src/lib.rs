@@ -23,6 +23,7 @@ pub mod core_ontology;
 pub mod data_sync;
 pub mod files;
 pub mod imap;
+pub mod ingestion;
 mod mcp;
 pub mod process_automation;
 pub mod realtime;
@@ -231,6 +232,7 @@ pub fn run() {
             commands::inspector__get_property_value_page,
             commands::widget_inspector__get_entity_property_snapshot,
             commands::widget_inspector__get_entity_property_page,
+            commands::widget_inspector__get_entity_records_page,
             commands::inspector__get_applicable_properties,
             commands::inspector__record_criterion_validation,
             commands::inspector__list_criterion_validations,

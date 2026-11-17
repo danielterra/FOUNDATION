@@ -1,10 +1,643 @@
 use crate::owl::{self, Connection, PropertyValueCursor};
-use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
+use chrono::{DateTime, NaiveDate};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 const MAX_PROPERTIES_PER_SNAPSHOT: usize = 100;
 const MAX_PROPERTY_PAGE_SIZE: usize = 100;
 const MAX_PROJECTED_PROPERTIES_PER_REFERENCE: usize = 25;
+const MAX_RECORD_SOURCES: usize = 20;
+const MAX_RECORD_FIELDS_PER_SOURCE: usize = 25;
+const MAX_RECORD_FILTERS: usize = 25;
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityRecordsSource {
+    pub source: String,
+    pub alias: String,
+    pub property_iri: String,
+    pub fields: BTreeMap<String, String>,
+    #[serde(default)]
+    pub membership_watch: Option<EntityRecordsMembershipWatch>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityRecordsMembershipWatch {
+    pub class_iri: String,
+    pub predicate: String,
+    pub object_binding: EntityRecordsMembershipBinding,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityRecordsMembershipBinding {
+    pub source: String,
+    pub property_iri: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityRecordsFilter {
+    pub column_id: String,
+    pub operator: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityRecordsSort {
+    pub column_id: String,
+    pub direction: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityRecordsPageRequest {
+    pub entity_iri: String,
+    pub snapshot_tx: Option<i64>,
+    pub sources: Vec<EntityRecordsSource>,
+    #[serde(default)]
+    pub filters: Vec<EntityRecordsFilter>,
+    pub sort: EntityRecordsSort,
+    pub page_size: Option<usize>,
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityRecordsPage {
+    pub entity_iri: String,
+    pub snapshot_tx: i64,
+    pub sources: Vec<EntityRecordsSourceInfo>,
+    pub rows: Vec<EntityRecordRow>,
+    pub page_info: EntityRecordsPageInfo,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityRecordsSourceInfo {
+    pub alias: String,
+    pub property_iri: String,
+    pub source_class_iri: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityRecordRow {
+    pub entity_iri: String,
+    pub source_alias: String,
+    pub values: BTreeMap<String, Vec<SnapshotPropertyValue>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityRecordsPageInfo {
+    pub returned_count: usize,
+    pub total_count: usize,
+    pub has_more: bool,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EntityRecordsCursor {
+    entity_iri: String,
+    snapshot_tx: i64,
+    criteria_hash: String,
+    next_offset: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EntityRecordsCriteria<'a> {
+    entity_iri: &'a str,
+    sources: &'a [EntityRecordsSource],
+    filters: &'a [EntityRecordsFilter],
+    sort: &'a EntityRecordsSort,
+    page_size: usize,
+}
+
+/// Reads all configured record sources at one immutable revision, applies filters and
+/// a stable global ordering, then returns the requested page. The cost is proportional
+/// to the full matching source collections because filtering and sorting precede paging.
+pub fn get_entity_records_page(
+    conn: &Connection,
+    request: &EntityRecordsPageRequest,
+) -> Result<EntityRecordsPage, String> {
+    let page_size = request.page_size.unwrap_or(20);
+    validate_records_request(request, page_size)?;
+
+    let criteria = EntityRecordsCriteria {
+        entity_iri: &request.entity_iri,
+        sources: &request.sources,
+        filters: &request.filters,
+        sort: &request.sort,
+        page_size,
+    };
+    let criteria_json = serde_json::to_vec(&criteria).map_err(|error| error.to_string())?;
+    let criteria_hash = Sha256::digest(criteria_json)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+
+    let decoded_cursor = request
+        .cursor
+        .as_deref()
+        .map(decode_records_cursor)
+        .transpose()?;
+    let snapshot_tx = match (request.snapshot_tx, decoded_cursor.as_ref()) {
+        (Some(snapshot_tx), Some(cursor)) if snapshot_tx != cursor.snapshot_tx => {
+            return Err("Records cursor does not match the requested snapshot".to_string())
+        }
+        (Some(snapshot_tx), _) => snapshot_tx,
+        (None, Some(cursor)) => cursor.snapshot_tx,
+        (None, None) => owl::current_snapshot_tx(conn)?,
+    };
+    let current_snapshot_tx = owl::current_snapshot_tx(conn)?;
+    if snapshot_tx < 0 || snapshot_tx > current_snapshot_tx {
+        return Err(format!("Invalid records snapshot revision: {snapshot_tx}"));
+    }
+
+    let offset = match decoded_cursor {
+        Some(cursor) => {
+            if cursor.entity_iri != request.entity_iri
+                || cursor.snapshot_tx != snapshot_tx
+                || cursor.criteria_hash != criteria_hash
+            {
+                return Err(
+                    "Records cursor does not match the requested entity, sources, filters, sort, page size, and snapshot"
+                        .to_string(),
+                );
+            }
+            cursor.next_offset
+        }
+        None => 0,
+    };
+
+    let mut source_info = Vec::with_capacity(request.sources.len());
+    let mut rows = Vec::new();
+    for source in &request.sources {
+        let source_class_iri = owl::get_all_iri_properties_as_of(
+            conn,
+            &source.property_iri,
+            "rdfs:range",
+            snapshot_tx,
+        )?
+        .into_iter()
+        .next();
+        source_info.push(EntityRecordsSourceInfo {
+            alias: source.alias.clone(),
+            property_iri: source.property_iri.clone(),
+            source_class_iri,
+        });
+
+        let mut source_cursor = None;
+        loop {
+            let page = owl::get_property_values_page(
+                conn,
+                &request.entity_iri,
+                &source.property_iri,
+                MAX_PROPERTY_PAGE_SIZE,
+                snapshot_tx,
+                source_cursor.as_ref(),
+            )?;
+            for triple in page.items {
+                let entity_iri = triple
+                    .object
+                    .as_iri()
+                    .ok_or_else(|| {
+                        format!(
+                            "Records source '{}' contains a non-entity value",
+                            source.alias
+                        )
+                    })?
+                    .to_string();
+                let mut values = BTreeMap::new();
+                for (column_id, property_iri) in &source.fields {
+                    values.insert(
+                        column_id.clone(),
+                        read_all_property_values(conn, &entity_iri, property_iri, snapshot_tx)?,
+                    );
+                }
+                let row = EntityRecordRow {
+                    entity_iri,
+                    source_alias: source.alias.clone(),
+                    values,
+                };
+                if records_row_matches_filters(&row, &request.filters)? {
+                    rows.push(row);
+                }
+            }
+            source_cursor = page.next_cursor;
+            if source_cursor.is_none() {
+                break;
+            }
+        }
+    }
+
+    rows.sort_by(|left, right| {
+        let left_value = left
+            .values
+            .get(&request.sort.column_id)
+            .and_then(|values| values.first());
+        let right_value = right
+            .values
+            .get(&request.sort.column_id)
+            .and_then(|values| values.first());
+        let comparison = compare_optional_snapshot_values(left_value, right_value);
+        let comparison = if request.sort.direction == "desc" {
+            comparison.reverse()
+        } else {
+            comparison
+        };
+        comparison
+            .then_with(|| left.source_alias.cmp(&right.source_alias))
+            .then_with(|| left.entity_iri.cmp(&right.entity_iri))
+    });
+
+    let total_count = rows.len();
+    if offset > total_count {
+        return Err("Records cursor offset exceeds the current snapshot result count".to_string());
+    }
+    let end = offset.saturating_add(page_size).min(total_count);
+    let page_rows = rows
+        .into_iter()
+        .skip(offset)
+        .take(end - offset)
+        .collect::<Vec<_>>();
+    let has_more = end < total_count;
+    let next_cursor = if has_more {
+        Some(encode_records_cursor(&EntityRecordsCursor {
+            entity_iri: request.entity_iri.clone(),
+            snapshot_tx,
+            criteria_hash,
+            next_offset: end,
+        })?)
+    } else {
+        None
+    };
+
+    Ok(EntityRecordsPage {
+        entity_iri: request.entity_iri.clone(),
+        snapshot_tx,
+        sources: source_info,
+        rows: page_rows.clone(),
+        page_info: EntityRecordsPageInfo {
+            returned_count: page_rows.len(),
+            total_count,
+            has_more,
+            next_cursor,
+        },
+    })
+}
+
+fn validate_records_request(
+    request: &EntityRecordsPageRequest,
+    page_size: usize,
+) -> Result<(), String> {
+    if request.entity_iri.trim().is_empty() {
+        return Err("Records owner entity IRI cannot be empty".to_string());
+    }
+    if request.sources.is_empty() || request.sources.len() > MAX_RECORD_SOURCES {
+        return Err(format!(
+            "Records source count must be between 1 and {MAX_RECORD_SOURCES}"
+        ));
+    }
+    if page_size == 0 || page_size > MAX_PROPERTY_PAGE_SIZE {
+        return Err(format!(
+            "Records page size must be between 1 and {MAX_PROPERTY_PAGE_SIZE}"
+        ));
+    }
+    if request.filters.len() > MAX_RECORD_FILTERS {
+        return Err(format!(
+            "A records request supports at most {MAX_RECORD_FILTERS} filters"
+        ));
+    }
+    if request.sort.column_id.trim().is_empty()
+        || !matches!(request.sort.direction.as_str(), "asc" | "desc")
+    {
+        return Err("Records sort requires a column and direction 'asc' or 'desc'".to_string());
+    }
+    let mut aliases = HashSet::with_capacity(request.sources.len());
+    let mut all_columns = HashSet::new();
+    for source in &request.sources {
+        if source.source != "entity" {
+            return Err(format!(
+                "Unsupported records source '{}' for alias '{}'",
+                source.source, source.alias
+            ));
+        }
+        if let Some(watch) = &source.membership_watch {
+            if watch.class_iri.trim().is_empty()
+                || watch.predicate.trim().is_empty()
+                || watch.object_binding.source != "entity"
+                || watch.object_binding.property_iri.trim().is_empty()
+            {
+                return Err(format!(
+                    "Records source '{}' has an invalid membership watch",
+                    source.alias
+                ));
+            }
+        }
+        if source.alias.trim().is_empty() || source.property_iri.trim().is_empty() {
+            return Err("Records source alias and property IRI cannot be empty".to_string());
+        }
+        if !aliases.insert(source.alias.as_str()) {
+            return Err(format!("Duplicate records source alias: {}", source.alias));
+        }
+        if source.fields.is_empty() || source.fields.len() > MAX_RECORD_FIELDS_PER_SOURCE {
+            return Err(format!(
+                "Records source '{}' must project between 1 and {MAX_RECORD_FIELDS_PER_SOURCE} fields",
+                source.alias
+            ));
+        }
+        for (column_id, property_iri) in &source.fields {
+            if column_id.trim().is_empty() || property_iri.trim().is_empty() {
+                return Err(format!(
+                    "Records source '{}' contains an empty field ID or property IRI",
+                    source.alias
+                ));
+            }
+            all_columns.insert(column_id.as_str());
+        }
+    }
+    if !all_columns.contains(request.sort.column_id.as_str()) {
+        return Err(format!(
+            "Records sort column '{}' is not projected by any source",
+            request.sort.column_id
+        ));
+    }
+    for filter in &request.filters {
+        if !all_columns.contains(filter.column_id.as_str()) {
+            return Err(format!(
+                "Records filter column '{}' is not projected by any source",
+                filter.column_id
+            ));
+        }
+        if !matches!(
+            filter.operator.as_str(),
+            "equals" | "contains" | "gt" | "gte" | "lt" | "lte"
+        ) {
+            return Err(format!(
+                "Unsupported records filter operator: {}",
+                filter.operator
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn decode_records_cursor(value: &str) -> Result<EntityRecordsCursor, String> {
+    let bytes = URL_SAFE_NO_PAD
+        .decode(value)
+        .map_err(|_| "Invalid records cursor encoding".to_string())?;
+    serde_json::from_slice(&bytes).map_err(|_| "Invalid records cursor payload".to_string())
+}
+
+fn encode_records_cursor(cursor: &EntityRecordsCursor) -> Result<String, String> {
+    let bytes = serde_json::to_vec(cursor).map_err(|error| error.to_string())?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+fn read_all_property_values(
+    conn: &Connection,
+    entity_iri: &str,
+    property_iri: &str,
+    snapshot_tx: i64,
+) -> Result<Vec<SnapshotPropertyValue>, String> {
+    let mut values = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = get_property_page_with_projection(
+            conn,
+            entity_iri,
+            property_iri,
+            MAX_PROPERTY_PAGE_SIZE,
+            snapshot_tx,
+            cursor.as_ref(),
+            None,
+        )?;
+        values.extend(page.items);
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            return Ok(values);
+        }
+    }
+}
+
+fn records_row_matches_filters(
+    row: &EntityRecordRow,
+    filters: &[EntityRecordsFilter],
+) -> Result<bool, String> {
+    for filter in filters {
+        let Some(values) = row.values.get(&filter.column_id) else {
+            return Ok(false);
+        };
+        let mut matched = false;
+        for value in values {
+            if record_value_matches_filter(value, &filter.operator, &filter.value)? {
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn record_value_matches_filter(
+    value: &SnapshotPropertyValue,
+    operator: &str,
+    target: &str,
+) -> Result<bool, String> {
+    if operator == "contains" {
+        let target = target.to_lowercase();
+        return Ok(value.value.to_lowercase().contains(&target)
+            || value
+                .label
+                .as_deref()
+                .is_some_and(|label| label.to_lowercase().contains(&target)));
+    }
+    if operator == "equals" {
+        return Ok(value.value.eq_ignore_ascii_case(target)
+            || value
+                .label
+                .as_deref()
+                .is_some_and(|label| label.eq_ignore_ascii_case(target)));
+    }
+    let ordering = compare_value_to_filter(value, target)?;
+    Ok(match operator {
+        "gt" => ordering == Ordering::Greater,
+        "gte" => ordering != Ordering::Less,
+        "lt" => ordering == Ordering::Less,
+        "lte" => ordering != Ordering::Greater,
+        _ => false,
+    })
+}
+
+fn compare_value_to_filter(
+    value: &SnapshotPropertyValue,
+    target: &str,
+) -> Result<Ordering, String> {
+    if is_numeric_datatype(value.datatype.as_deref()) {
+        return decimal_cmp(&value.value, target)
+            .ok_or_else(|| format!("Invalid numeric records filter value: {target}"));
+    }
+    if is_date_datatype(value.datatype.as_deref()) {
+        return compare_dates(&value.value, target)
+            .ok_or_else(|| format!("Invalid date records filter value: {target}"));
+    }
+    Ok(value
+        .label
+        .as_deref()
+        .unwrap_or(&value.value)
+        .to_lowercase()
+        .cmp(&target.to_lowercase()))
+}
+
+fn compare_optional_snapshot_values(
+    left: Option<&SnapshotPropertyValue>,
+    right: Option<&SnapshotPropertyValue>,
+) -> Ordering {
+    match (left, right) {
+        (Some(left), Some(right)) => compare_snapshot_values(left, right),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+}
+
+fn compare_snapshot_values(
+    left: &SnapshotPropertyValue,
+    right: &SnapshotPropertyValue,
+) -> Ordering {
+    if is_numeric_datatype(left.datatype.as_deref())
+        && is_numeric_datatype(right.datatype.as_deref())
+    {
+        if let Some(ordering) = decimal_cmp(&left.value, &right.value) {
+            return ordering;
+        }
+    }
+    if is_date_datatype(left.datatype.as_deref()) && is_date_datatype(right.datatype.as_deref()) {
+        if let Some(ordering) = compare_dates(&left.value, &right.value) {
+            return ordering;
+        }
+    }
+    left.label
+        .as_deref()
+        .unwrap_or(&left.value)
+        .to_lowercase()
+        .cmp(
+            &right
+                .label
+                .as_deref()
+                .unwrap_or(&right.value)
+                .to_lowercase(),
+        )
+}
+
+fn is_numeric_datatype(datatype: Option<&str>) -> bool {
+    matches!(
+        datatype,
+        Some(
+            "xsd:decimal"
+                | "xsd:integer"
+                | "xsd:long"
+                | "xsd:int"
+                | "xsd:double"
+                | "xsd:float"
+                | "http://www.w3.org/2001/XMLSchema#decimal"
+                | "http://www.w3.org/2001/XMLSchema#integer"
+                | "http://www.w3.org/2001/XMLSchema#double"
+                | "http://www.w3.org/2001/XMLSchema#float"
+        )
+    )
+}
+
+fn is_date_datatype(datatype: Option<&str>) -> bool {
+    matches!(
+        datatype,
+        Some(
+            "xsd:date"
+                | "xsd:dateTime"
+                | "http://www.w3.org/2001/XMLSchema#date"
+                | "http://www.w3.org/2001/XMLSchema#dateTime"
+        )
+    )
+}
+
+fn decimal_cmp(left: &str, right: &str) -> Option<Ordering> {
+    let left = decimal_parts(left)?;
+    let right = decimal_parts(right)?;
+    if left.0 != right.0 {
+        return Some(if left.0 {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        });
+    }
+    let magnitude = left
+        .1
+        .len()
+        .cmp(&right.1.len())
+        .then_with(|| left.1.cmp(&right.1))
+        .then_with(|| {
+            let width = left.2.len().max(right.2.len());
+            let left_fraction = format!("{:0<width$}", left.2, width = width);
+            let right_fraction = format!("{:0<width$}", right.2, width = width);
+            left_fraction.cmp(&right_fraction)
+        });
+    Some(if left.0 {
+        magnitude.reverse()
+    } else {
+        magnitude
+    })
+}
+
+fn decimal_parts(value: &str) -> Option<(bool, String, String)> {
+    let value = value.trim();
+    let negative = value.starts_with('-');
+    let unsigned = value.strip_prefix(['-', '+']).unwrap_or(value);
+    let mut parts = unsigned.split('.');
+    let integer = parts.next()?;
+    let fraction = parts.next().unwrap_or_default();
+    if parts.next().is_some()
+        || (integer.is_empty() && fraction.is_empty())
+        || !integer.chars().all(|character| character.is_ascii_digit())
+        || !fraction.chars().all(|character| character.is_ascii_digit())
+    {
+        return None;
+    }
+    let integer = integer.trim_start_matches('0');
+    let integer = if integer.is_empty() { "0" } else { integer };
+    let fraction = fraction.trim_end_matches('0');
+    let is_zero = integer == "0" && fraction.is_empty();
+    Some((
+        negative && !is_zero,
+        integer.to_string(),
+        fraction.to_string(),
+    ))
+}
+
+fn compare_dates(left: &str, right: &str) -> Option<Ordering> {
+    let left_datetime = DateTime::parse_from_rfc3339(left).ok();
+    let right_datetime = DateTime::parse_from_rfc3339(right).ok();
+    match (left_datetime, right_datetime) {
+        (Some(left), Some(right)) => Some(left.cmp(&right)),
+        _ => {
+            let left = NaiveDate::parse_from_str(left, "%Y-%m-%d").ok()?;
+            let right = NaiveDate::parse_from_str(right, "%Y-%m-%d").ok()?;
+            Some(left.cmp(&right))
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

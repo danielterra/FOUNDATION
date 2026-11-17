@@ -4,7 +4,15 @@ import { semanticCatalog } from './catalog';
 
 type ActionBinding = { action?: string; params?: Record<string, unknown> };
 type EntityPropertyBinding = { source?: string; propertyIri?: string; projections?: Record<string, string> };
-type ElementWithActions = { type?: string; children?: string[]; on?: Record<string, ActionBinding | ActionBinding[]>; bindings?: Record<string, EntityPropertyBinding> };
+type RecordsSourceBinding = {
+  source?: string;
+  propertyIri?: string;
+  alias?: string;
+  fields?: Record<string, string>;
+  membershipWatch?: { classIri?: string; predicate?: string; objectBinding?: EntityPropertyBinding };
+};
+type RecordsBinding = { sources?: RecordsSourceBinding[] };
+type ElementWithActions = { type?: string; children?: string[]; on?: Record<string, ActionBinding | ActionBinding[]>; bindings?: Record<string, EntityPropertyBinding | RecordsBinding> };
 
 const allowedEvents: Record<string, string[]> = {
   Decision: ['change'],
@@ -15,6 +23,7 @@ const allowedEvents: Record<string, string[]> = {
   Confirmation: ['confirm', 'cancel'],
   Comparison: [],
   Distribution: [],
+  Records: [],
 };
 
 export type SemanticSpecValidation = { success: true; spec: Spec } | { success: false; message: string };
@@ -127,20 +136,63 @@ export function validateSemanticSpec(input: unknown): SemanticSpecValidation {
       Details: ['details'],
       Comparison: ['current', 'reference', 'periodStart', 'periodEnd'],
       Distribution: ['collection'],
+      Records: ['records'],
     };
-    const allowedBindingKeys = type === 'Distribution' ? ['source', 'propertyIri', 'projections'] : ['source', 'propertyIri'];
     for (const [target, binding] of Object.entries(propertyBindings)) {
+      if (type === 'Records') {
+        if (target !== 'records' || !binding || typeof binding !== 'object' || Array.isArray(binding)
+          || Object.keys(binding).some((key) => key !== 'sources')) {
+          return { success: false, message: 'Um vínculo de Records precisa declarar uma única lista de coleções.' };
+        }
+        const sources = (binding as RecordsBinding).sources;
+        if (!Array.isArray(sources) || sources.length === 0) {
+          return { success: false, message: 'Records precisa vincular ao menos uma coleção da entidade.' };
+        }
+        const aliases = new Set<string>();
+        const columnIds = new Set((Array.isArray(props.columns) ? props.columns : []).map((column) => String((column as { id?: unknown }).id ?? '')));
+        for (const source of sources) {
+          if (!source || typeof source !== 'object' || Array.isArray(source)
+            || Object.keys(source).some((key) => !['source', 'propertyIri', 'alias', 'label', 'fields', 'membershipWatch'].includes(key))
+            || source.source !== 'entity'
+            || typeof source.propertyIri !== 'string' || !source.propertyIri.trim()
+            || typeof source.alias !== 'string' || !source.alias.trim() || aliases.has(source.alias)
+            || !source.fields || typeof source.fields !== 'object' || Array.isArray(source.fields)) {
+            return { success: false, message: 'Uma coleção de Records precisa de propriedade, alias único e projeções válidas.' };
+          }
+          aliases.add(source.alias);
+          for (const [columnId, propertyIri] of Object.entries(source.fields)) {
+            if (!columnIds.has(columnId) || typeof propertyIri !== 'string' || !propertyIri.trim()) {
+              return { success: false, message: 'Uma projeção de Records referencia uma coluna inexistente ou não informa a propriedade.' };
+            }
+          }
+          if (source.membershipWatch) {
+            const watch = source.membershipWatch;
+            const objectBinding = watch.objectBinding;
+            if (Object.keys(watch).some((key) => !['classIri', 'predicate', 'objectBinding'].includes(key))
+              || typeof watch.classIri !== 'string' || !watch.classIri.trim()
+              || typeof watch.predicate !== 'string' || !watch.predicate.trim()
+              || !objectBinding || objectBinding.source !== 'entity'
+              || typeof objectBinding.propertyIri !== 'string' || !objectBinding.propertyIri.trim()
+              || Object.keys(objectBinding).some((key) => !['source', 'propertyIri'].includes(key))) {
+              return { success: false, message: 'A observação de entrada em Records precisa declarar classe, propriedade e vínculo ao objeto do titular.' };
+            }
+          }
+        }
+        continue;
+      }
+      const allowedBindingKeys = type === 'Distribution' ? ['source', 'propertyIri', 'projections'] : ['source', 'propertyIri'];
+      const entityBinding = binding as EntityPropertyBinding;
       if (!bindingTargets[type]?.includes(target)
         || !binding
         || typeof binding !== 'object'
         || Object.keys(binding).some((key) => !allowedBindingKeys.includes(key))
-        || binding.source !== 'entity'
-        || typeof binding.propertyIri !== 'string'
-        || !binding.propertyIri.trim()) {
+        || entityBinding.source !== 'entity'
+        || typeof entityBinding.propertyIri !== 'string'
+        || !entityBinding.propertyIri.trim()) {
         return { success: false, message: 'Um vínculo de dados não é compatível com a intenção ou não informa uma propriedade da entidade.' };
       }
       if (type === 'Distribution') {
-        const projections = binding.projections;
+        const projections = entityBinding.projections;
         if (!projections || typeof projections !== 'object' || Array.isArray(projections)
           || Object.keys(projections).sort().join(',') !== 'groupBy,measure'
           || Object.values(projections).some((iri) => typeof iri !== 'string' || !iri.trim())) {
@@ -156,6 +208,28 @@ export function validateSemanticSpec(input: unknown): SemanticSpecValidation {
     }
     if (type === 'Distribution' && !propertyBindings.collection) {
       return { success: false, message: 'A intenção Distribution precisa vincular uma coleção da entidade.' };
+    }
+    if (type === 'Records') {
+      const recordsBinding = propertyBindings.records as RecordsBinding | undefined;
+      if (!recordsBinding || !Array.isArray(recordsBinding.sources) || !recordsBinding.sources.length) {
+        return { success: false, message: 'A intenção Records precisa vincular uma coleção da entidade.' };
+      }
+      const columns = Array.isArray(props.columns) ? props.columns as Array<{ id: string; sortable?: boolean; filterOperators?: string[] }> : [];
+      const columnIds = new Set<string>();
+      for (const column of columns) {
+        if (columnIds.has(column.id)) return { success: false, message: 'Cada coluna de Records precisa de um identificador único.' };
+        columnIds.add(column.id);
+      }
+      const defaultSort = props.defaultSort as { columnId?: unknown; direction?: unknown } | undefined;
+      const sortableDefault = columns.find((column) => column.id === defaultSort?.columnId);
+      if (!sortableDefault || sortableDefault.sortable === false) {
+        return { success: false, message: 'A ordenação inicial de Records precisa usar uma coluna ordenável.' };
+      }
+      for (const source of recordsBinding.sources) {
+        for (const columnId of Object.keys(source.fields ?? {})) {
+          if (!columnIds.has(columnId)) return { success: false, message: 'Uma projeção de Records referencia uma coluna inexistente.' };
+        }
+      }
     }
 
     for (const [eventName, bindingValue] of Object.entries(element.on ?? {})) {

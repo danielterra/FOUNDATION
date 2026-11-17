@@ -15,6 +15,9 @@ import { buildRuntimeSemanticSpec, createSemanticLoadController, formatSemanticS
     type BoundPropertyItem,
     type BoundPropertyState,
     type EntityBindingContext,
+    type SemanticRecordsCriteria,
+    type SemanticRecordsPageState,
+    type SemanticRecordsRow,
   } from '$lib/json-render/semantic/entityBindingContext';
 
   type PropertyValue = {
@@ -47,6 +50,22 @@ import { buildRuntimeSemanticSpec, createSemanticLoadController, formatSemanticS
     snapshotTx: number;
     componentCompatibility: ComponentCompatibility[];
   };
+  type RecordsSourceBinding = {
+    source: 'entity';
+    alias: string;
+    label?: string;
+    propertyIri: string;
+    fields: Record<string, string>;
+    membershipWatch?: { classIri: string; predicate: string; objectBinding: { propertyIri: string } };
+  };
+  type RecordsBinding = { sources: RecordsSourceBinding[] };
+  type RecordsPageResponse = {
+    entityIri: string;
+    snapshotTx: number;
+    sources: Array<{ alias: string; sourceClassIri?: string }>;
+    rows: Array<{ entityIri: string; sourceAlias: string; values: Record<string, SnapshotItem[]> }>;
+    pageInfo: { returnedCount: number; totalCount: number; hasMore: boolean; nextCursor?: string };
+  };
 
   let { widgetId, entityId = '', specTemplateIri = null, conversationIri = null, windowState = 'normal', onWindowStateChange } = $props<{
     widgetId: string;
@@ -66,6 +85,8 @@ import { buildRuntimeSemanticSpec, createSemanticLoadController, formatSemanticS
   let componentContractVersions = $state<Record<string, number | null>>({});
   let compatibility = $derived(partitionSemanticComponentCompatibility(componentCompatibility));
   let bindingStates = $state<Record<string, BoundPropertyState>>({});
+  let recordsStates = $state<Record<string, SemanticRecordsPageState>>({});
+  const recordsRequestGeneration: Record<string, number> = {};
   let sourceEntityIri = '';
   let sourceSnapshotTx = 0;
   let templateEntityIri = '';
@@ -103,6 +124,12 @@ import { buildRuntimeSemanticSpec, createSemanticLoadController, formatSemanticS
     loadMore: (propertyIri) => { void loadMoreProperty(propertyIri); },
     retry: (propertyIri) => { void loadProperty(propertyIri, true); },
     openEntity: (iri) => { void import('$lib/blackboard').then(({ openEntity }) => openEntity(iri, conversationIri)); },
+    getRecords: (elementId) => recordsStates[elementId],
+    loadRecords: (elementId, criteria, cursor) => { void loadRecordsPage(elementId, criteria, cursor); },
+    retryRecords: (elementId) => {
+      const current = recordsStates[elementId];
+      if (current) void loadRecordsPage(elementId, current.criteria);
+    },
   };
   setContext(ENTITY_BINDING_CONTEXT, entityBindingContext);
   setContext(SEMANTIC_COMPONENT_CONTRACT_VERSIONS, componentContractVersions);
@@ -129,6 +156,19 @@ import { buildRuntimeSemanticSpec, createSemanticLoadController, formatSemanticS
       changedPredicates: event.changedPredicates,
       watchedPredicates: Object.values(bindingTargets).flat(),
     });
+    const changedRecordMembership = event.type === 'joined-set'
+      && getRecordsBindings().some(({ sources }) => sources.some(({ membershipWatch }) => {
+        if (!membershipWatch
+          || membershipWatch.classIri !== event.classIri
+          || membershipWatch.predicate !== event.predicate
+          || !event.objectValue) return false;
+        return (bindingStates[membershipWatch.objectBinding.propertyIri]?.items ?? [])
+          .some((item) => item.isObjectProperty && item.value === event.objectValue);
+      }));
+    if (action === 'ignore' && changedRecordMembership) {
+      void refreshSourceSnapshot(event.tx);
+      return;
+    }
     if (action === 'reload-template' && shouldReloadSemanticTemplate(event.tx, templateSnapshotTx)) {
       console.info('[SemanticJsonRenderWidget] Template event requested a reload:', {
         eventTx: event.tx ?? null,
@@ -192,6 +232,15 @@ import { buildRuntimeSemanticSpec, createSemanticLoadController, formatSemanticS
     const requests: SemanticBindingRequest[] = [];
     for (const [elementId, element] of Object.entries(parsed.elements)) {
       for (const [target, binding] of Object.entries(element.bindings ?? {})) {
+        if (element.type === 'Records' && target === 'records') {
+          const recordsBinding = binding as unknown as RecordsBinding;
+          for (const source of recordsBinding.sources ?? []) {
+            if (source.membershipWatch?.objectBinding.propertyIri) {
+              requests.push({ elementId, target: 'records', propertyIri: source.membershipWatch.objectBinding.propertyIri });
+            }
+          }
+          continue;
+        }
         if (binding?.source === 'entity' && binding.propertyIri) {
           requests.push({ elementId, target, propertyIri: binding.propertyIri, projections: binding.projections });
         }
@@ -221,15 +270,95 @@ import { buildRuntimeSemanticSpec, createSemanticLoadController, formatSemanticS
     const sortedIris = [...iris].filter(Boolean).sort();
     const snapshots = [templateSnapshotTx, sourceSnapshotTx].filter((tx) => tx > 0);
     const sinceTx = snapshots.length ? Math.min(...snapshots) : 0;
-    const replayKey = JSON.stringify([sortedIris, sinceTx]);
+    const recordsBindings = getRecordsBindings();
+    const recordsSourceTypes = [...new Set([
+      ...Object.values(recordsStates).flatMap((state) => state.sources.map((source) => source.classIri ?? '')),
+      ...recordsBindings.flatMap(({ sources }) => sources.map((source) => source.membershipWatch?.classIri ?? '')),
+    ])].filter(Boolean).sort();
+    const creationQueries = recordsBindings.flatMap(({ sources }) => sources.flatMap((source) => {
+      const watch = source.membershipWatch;
+      if (!watch) return [];
+      return (bindingStates[watch.objectBinding.propertyIri]?.items ?? [])
+        .filter((item) => item.isObjectProperty)
+        .map((item) => ({ classIri: watch.classIri, predicate: watch.predicate, objectValue: item.value }));
+    }));
+    const replayKey = JSON.stringify([sortedIris, recordsSourceTypes, creationQueries, sinceTx]);
     if (replayKey === subscriptionReplayKey) return;
     subscriptionReplayKey = replayKey;
     entitySubscription.setIris(sortedIris);
+    entitySubscription.setPatterns(recordsSourceTypes);
+    entitySubscription.setCreationQueries(creationQueries);
     entitySubscription.setSinceTx(sinceTx);
     console.debug('[SemanticJsonRenderWidget] Replaying entity events for subscription snapshot:', { iris: sortedIris, sinceTx });
     void entitySubscription.synchronize()
       .then(() => entitySubscription.replayMissed())
       .catch((error) => console.error('[SemanticJsonRenderWidget] Could not synchronize entity subscription:', error));
+  }
+
+  function getRecordsBindings() {
+    return Object.entries(spec?.elements ?? {}).flatMap(([elementId, element]) => {
+      const bindings = element.props?.__ontologyRecordsBinding as { sources?: RecordsSourceBinding[] } | undefined;
+      return bindings?.sources ? [{ elementId, sources: bindings.sources }] : [];
+    });
+  }
+
+  function recordsBindingFor(elementId: string) {
+    const element = spec?.elements[elementId];
+    return element?.props?.__ontologyRecordsBinding as RecordsBinding | undefined;
+  }
+
+  async function loadRecordsPage(elementId: string, criteria: SemanticRecordsCriteria, cursor?: string) {
+    if (!sourceEntityIri) return;
+    const recordsBinding = recordsBindingFor(elementId);
+    if (!recordsBinding) return;
+    const requestGeneration = (recordsRequestGeneration[elementId] ?? 0) + 1;
+    recordsRequestGeneration[elementId] = requestGeneration;
+    const previousState = recordsStates[elementId];
+    recordsStates[elementId] = {
+      rows: previousState?.rows ?? [],
+      sources: previousState?.sources ?? recordsBinding.sources.map(({ alias, label }) => ({ alias, label })),
+      pageInfo: previousState?.pageInfo ?? { returnedCount: 0, totalCount: 0, hasMore: false },
+      loading: true,
+      error: '',
+      criteria,
+    };
+    try {
+      const columns = (spec?.elements[elementId]?.props?.columns as Array<{ id: string }> | undefined) ?? [];
+      const raw = await invoke<string>('widget_inspector__get_entity_records_page', {
+        request: {
+          entityIri: sourceEntityIri,
+          snapshotTx: sourceSnapshotTx,
+          sources: recordsBinding.sources.map(({ source, alias, propertyIri, fields, membershipWatch }) => ({ source, alias, propertyIri, fields, membershipWatch })),
+          filters: criteria.filters,
+          sort: criteria.sort,
+          pageSize: Number(spec?.elements[elementId]?.props?.pageSize ?? 25),
+          cursor,
+        },
+      });
+      const response = JSON.parse(raw) as RecordsPageResponse;
+      if (recordsRequestGeneration[elementId] !== requestGeneration) return;
+      const rows: SemanticRecordsRow[] = response.rows.map((row) => ({
+        entityIri: row.entityIri,
+        sourceAlias: row.sourceAlias,
+        values: Object.fromEntries(columns.map(({ id }) => [id, normalizeSnapshotItems(row.values[id] ?? [])])),
+      }));
+      recordsStates[elementId] = {
+        rows: cursor ? [...(previousState?.rows ?? []), ...rows] : rows,
+        sources: recordsBinding.sources.map(({ alias, label }) => ({ alias, label, classIri: response.sources?.find((source) => source.alias === alias)?.sourceClassIri })),
+        pageInfo: response.pageInfo,
+        loading: false,
+        error: '',
+        criteria,
+      };
+      syncReferenceSubscriptions();
+    } catch (error) {
+      if (recordsRequestGeneration[elementId] !== requestGeneration) return;
+      recordsStates[elementId] = {
+        ...recordsStates[elementId],
+        loading: false,
+        error: error instanceof Error ? error.message : 'Não foi possível carregar os registros.',
+      };
+    }
   }
 
   async function loadProperty(
@@ -345,6 +474,14 @@ import { buildRuntimeSemanticSpec, createSemanticLoadController, formatSemanticS
         current = next;
       }
     }));
+    const recordElements = Object.entries(spec?.elements ?? {}).filter(([, element]) => element.type === 'Records');
+    await Promise.all(recordElements.map(([elementId, element]) => {
+      const criteria = recordsStates[elementId]?.criteria ?? {
+        filters: [],
+        sort: (element.props?.defaultSort as SemanticRecordsCriteria['sort']) ?? { columnId: '', direction: 'desc' },
+      };
+      return loadRecordsPage(elementId, criteria);
+    }));
   }
 
   async function refreshSourceSnapshot(eventTx?: number) {
@@ -376,7 +513,10 @@ import { buildRuntimeSemanticSpec, createSemanticLoadController, formatSemanticS
     referencedEntityIris = new Set(Object.values(bindingStates).flatMap((state) => [
       ...state.items.filter((item) => item.isObjectProperty).map((item) => item.value),
       ...state.items.flatMap((item) => (item.projectedProperties ?? []).flatMap((page) => page.items.filter((child) => child.isObjectProperty).map((child) => child.value))),
-    ]));
+    ]).concat(Object.values(recordsStates).flatMap((state) => [
+      ...state.rows.map((row) => row.entityIri),
+      ...state.rows.flatMap((row) => Object.values(row.values).flat().filter((item) => item.isObjectProperty).map((item) => item.value)),
+    ])));
     setSubscriptionIris();
   }
 
@@ -507,6 +647,7 @@ import { buildRuntimeSemanticSpec, createSemanticLoadController, formatSemanticS
       sourceEntityIri = targetEntityIri;
       propertyLabelByIri = Object.fromEntries(jsonProperties(targetEntity).map((property) => [property.property, property.propertyLabel ?? property.property]));
       bindingStates = {};
+      recordsStates = {};
       for (const propertyIri of new Set(requests.map((request) => request.propertyIri))) {
         bindingStates[propertyIri] = {
           propertyIri,
@@ -518,6 +659,11 @@ import { buildRuntimeSemanticSpec, createSemanticLoadController, formatSemanticS
       bindingTargets = runtime.bindingTargets;
       spec = runtime.spec;
       setSubscriptionIris();
+      const initialRecords = Object.entries(runtime.spec.elements).filter(([, element]) => element.type === 'Records');
+      for (const [elementId, element] of initialRecords) {
+        const criteria = { filters: [], sort: (element.props?.defaultSort as SemanticRecordsCriteria['sort']) ?? { columnId: '', direction: 'desc' as const } };
+        void loadRecordsPage(elementId, criteria);
+      }
       void Promise.all([
         ...[...new Set(requests.map((request) => request.propertyIri))].map((propertyIri) => loadProperty(propertyIri)),
       ]).then(async () => {
@@ -573,6 +719,7 @@ import { buildRuntimeSemanticSpec, createSemanticLoadController, formatSemanticS
     propertyLabelByIri = {};
     bindingTargets = {};
     bindingStates = {};
+    recordsStates = {};
     referencedEntityIris = new Set();
     setSubscriptionIris();
     void loadSpec(true);

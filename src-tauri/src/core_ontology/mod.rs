@@ -4,6 +4,7 @@ pub mod chat;
 pub mod conversation;
 pub mod data_sync;
 pub mod entity_kind;
+pub mod ingestion;
 pub mod inspector_property_order;
 pub mod materialization;
 pub mod property_configuration;

@@ -378,12 +378,84 @@
     message: string;
   };
 
+  type IngestionProgressEvent = {
+    sessionIri: string;
+    batchIri?: string | null;
+    stage: string;
+    completedToolCalls?: number;
+    toolName?: string | null;
+    toolSucceeded?: boolean | null;
+  };
+
+  type IngestionProgress = {
+    sessionIri: string;
+    status: 'running' | 'done' | 'error';
+    stage: string;
+    completedToolCalls: number;
+  };
+
   let imapSyncs = $state<ImapSyncToast[]>([]);
   let imapExtractions = $state<ImapExtractionToast[]>([]);
+  let ingestionProgress = $state<IngestionProgress[]>([]);
+  let ingestionProgressDismissTimer: ReturnType<typeof setTimeout> | undefined;
   let unlistenImapSyncStarted: (() => void) | undefined;
   let unlistenImapSyncFinished: (() => void) | undefined;
   let unlistenImapExtractionStarted: (() => void) | undefined;
   let unlistenImapExtractionFinished: (() => void) | undefined;
+  let unlistenIngestionProgress: (() => void) | undefined;
+
+  function ingestionProgressMessage() {
+    const running = ingestionProgress.filter(item => item.status === 'running');
+    const failed = ingestionProgress.filter(item => item.status === 'error');
+    if (running.length > 0) {
+      const calls = running.reduce((total, item) => total + item.completedToolCalls, 0);
+      const count = running.length > 1 ? ` (${running.length} conversas)` : '';
+      return {
+        status: 'running' as const,
+        label: `Organizando conteúdo${count}`,
+        detail: calls > 0 ? `${calls} ações concluídas` : 'A IA está lendo e registrando os fatos',
+      };
+    }
+    if (failed.length > 0) {
+      return {
+        status: 'error' as const,
+        label: `Falha ao organizar ${failed.length === 1 ? 'conteúdo' : `${failed.length} conversas`}`,
+        detail: 'A ingestão não foi confirmada; o conteúdo continua pendente.',
+      };
+    }
+    return { status: 'done' as const, label: 'Conteúdo organizado', detail: '' };
+  }
+
+  function dismissIngestionProgress() {
+    if (ingestionProgressDismissTimer) clearTimeout(ingestionProgressDismissTimer);
+    ingestionProgressDismissTimer = undefined;
+    ingestionProgress = [];
+  }
+
+  function handleIngestionProgress(event: { payload: IngestionProgressEvent }) {
+    const payload = event.payload;
+    if (!payload.sessionIri) return;
+    if (ingestionProgressDismissTimer) clearTimeout(ingestionProgressDismissTimer);
+    ingestionProgressDismissTimer = undefined;
+    const status = payload.stage === 'cursor_confirmed'
+      ? 'done'
+      : payload.stage === 'failed'
+        ? 'error'
+        : 'running';
+    const existing = ingestionProgress.findIndex(item => item.sessionIri === payload.sessionIri);
+    const entry: IngestionProgress = {
+      sessionIri: payload.sessionIri,
+      status,
+      stage: payload.stage,
+      completedToolCalls: payload.completedToolCalls ?? 0,
+    };
+    if (existing >= 0) ingestionProgress[existing] = entry;
+    else ingestionProgress = [...ingestionProgress, entry];
+
+    if (ingestionProgress.length > 0 && ingestionProgress.every(item => item.status === 'done')) {
+      ingestionProgressDismissTimer = setTimeout(dismissIngestionProgress, 5000);
+    }
+  }
 
   let retentionRunning = $state(false);
   let unlistenRetentionStarted: (() => void) | undefined;
@@ -489,6 +561,8 @@
       }, dismissAfter);
     });
 
+    unlistenIngestionProgress = await listen<IngestionProgressEvent>('ingestion-progress', handleIngestionProgress);
+
     unlistenRecalc = await listen<FormulaProgressEvent>('formula-recalc-progress', (event) => {
       const { jobId, classLabel, percent, status, sourceEntityIri, error } = event.payload;
       const sourceUpdateId = requireSourceUpdateId(event.payload.sourceUpdateId, 'formula-recalc-progress');
@@ -526,6 +600,8 @@
     unlistenImapSyncFinished?.();
     unlistenImapExtractionStarted?.();
     unlistenImapExtractionFinished?.();
+    unlistenIngestionProgress?.();
+    if (ingestionProgressDismissTimer) clearTimeout(ingestionProgressDismissTimer);
   });
 </script>
 
@@ -538,7 +614,7 @@
 
 <GlobalModal />
 
-{#if automationUpdates.length > 0 || retentionRunning || taskNotifications.length > 0 || imapSyncs.length > 0 || imapExtractions.length > 0}
+{#if automationUpdates.length > 0 || retentionRunning || taskNotifications.length > 0 || imapSyncs.length > 0 || imapExtractions.length > 0 || ingestionProgress.length > 0}
   <div class="toast-stack">
     {#each automationUpdates as update (update.sourceUpdateId)}
       {@const status = automationUpdateStatus(update)}
@@ -682,6 +758,24 @@
         {/if}
       </div>
     {/each}
+
+    {#if ingestionProgress.length > 0}
+      {@const progress = ingestionProgressMessage()}
+      <section class="automation-toast" class:failed={progress.status === 'error'} class:done={progress.status === 'done'} class:running={progress.status === 'running'} role="status" aria-live={progress.status === 'error' ? 'assertive' : 'polite'}>
+        {#if progress.status === 'running'}
+          <div class="toast-thinking"><ThinkingDots /></div>
+        {:else}
+          <span class="material-symbols-outlined toast-icon">{progress.status === 'done' ? 'task_alt' : 'error'}</span>
+        {/if}
+        <div class="toast-body">
+          <span class="toast-label">{progress.label}</span>
+          {#if progress.detail}<span class="toast-detail">{progress.detail}</span>{/if}
+        </div>
+        <Button variant="ghost" size="icon-sm" class="toast-close" aria-label="Fechar aviso de ingestão" onclick={dismissIngestionProgress}>
+          <span class="material-symbols-outlined">close</span>
+        </Button>
+      </section>
+    {/if}
 
   </div>
 {/if}

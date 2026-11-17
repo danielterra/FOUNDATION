@@ -121,9 +121,12 @@
     );
   }
 
-  async function focusWidget(widgetId) {
+  async function focusWidget(widgetId, atActualSize = false) {
+    const blackboardIri = activeBlackboardIri;
     await tick();
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+    if (blackboardIri !== activeBlackboardIri) return;
 
     const element = [...(canvasElement?.querySelectorAll('.widget-container') ?? [])]
       .find(candidate => candidate.dataset.widgetId === widgetId);
@@ -137,7 +140,7 @@
     const margin = 32;
     const availableWidth = Math.max(1, canvasRect.width - margin * 2);
     const availableHeight = Math.max(1, canvasRect.height - margin * 2);
-    const scale = Math.max(
+    const scale = atActualSize ? 1 : Math.max(
       MIN_CANVAS_SCALE,
       Math.min(MAX_CANVAS_SCALE, availableWidth / widgetWidth, availableHeight / widgetHeight)
     );
@@ -151,14 +154,14 @@
     };
   }
 
-  function entityOpenKey(entityIri) {
-    return `${activeBlackboardIri ?? 'default'}:${entityIri}`;
+  function entityOpenKey(blackboardIri, entityIri) {
+    return JSON.stringify([blackboardIri, entityIri]);
   }
 
   async function openReferencedEntity(entityIri) {
     if (!entityIri) return;
 
-    const key = entityOpenKey(entityIri);
+    const key = entityOpenKey(activeBlackboardIri, entityIri);
     if (pendingEntityOpens.has(key)) {
       widgetAnnouncement = 'Entidade já está sendo aberta.';
       return;
@@ -169,10 +172,9 @@
     try {
       await openEntity(entityIri, activeConversationIri);
     } catch (error) {
+      pendingEntityOpens.delete(key);
       widgetAnnouncement = 'Não foi possível abrir a entidade.';
       console.error('Failed to open referenced entity:', error);
-    } finally {
-      pendingEntityOpens.delete(key);
     }
   }
 
@@ -341,7 +343,7 @@
     });
   }
 
-  function restoreFromMinimized(widgetId) {
+  function restoreFromMinimized(widgetId, atActualSize = false) {
     const widget = widgets.find(w => w.id === widgetId);
     if (!widget) return;
 
@@ -355,7 +357,7 @@
       console.error('Failed to update widget window state:', error);
     });
     bringToFront(widgetId);
-    focusWidget(widgetId);
+    focusWidget(widgetId, atActualSize);
   }
 
   function onSidebarSelect(widgetId) {
@@ -371,10 +373,12 @@
 
   function handleWidgetAdded(event) {
     const w = event.payload;
+    const atActualSize = Boolean(
+      w.entity_id && pendingEntityOpens.delete(entityOpenKey(w.blackboard_iri, w.entity_id))
+    );
     if (w.blackboard_iri !== activeBlackboardIri) return;
 
     if (w.entity_id) {
-      pendingEntityOpens.delete(entityOpenKey(w.entity_id));
       widgetAnnouncement = `Entidade aberta: ${entityResolutionByIri.get(w.entity_id)?.label ?? w.entity_id}`;
     }
 
@@ -382,10 +386,10 @@
     const existingIdx = widgets.findIndex(existing => existing.id === w.id);
     if (existingIdx >= 0) {
       const existing = widgets[existingIdx];
-      if (existing.window_state === 'minimized') restoreFromMinimized(w.id);
+      if (existing.window_state === 'minimized') restoreFromMinimized(w.id, atActualSize);
       else {
         bringToFront(w.id);
-        focusWidget(w.id);
+        focusWidget(w.id, atActualSize);
       }
       return;
     }
@@ -393,7 +397,7 @@
     topZIndex = Math.min(topZIndex + 1, MAX_WIDGET_Z_INDEX);
     const newWidget = { ...w, zIndex: topZIndex };
     widgets = [...widgets, newWidget];
-    focusWidget(w.id);
+    focusWidget(w.id, atActualSize);
   }
 
   function handleWidgetRemoved(event) {

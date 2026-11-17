@@ -8,7 +8,24 @@ export function getSystemLocale(): string {
 function toDate(value: TimestampInput): Date {
 	if (value instanceof Date) return value;
 	if (typeof value === 'string' && /^\d+$/.test(value)) return new Date(Number(value));
+	if (typeof value === 'string') {
+		const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+		if (dateOnly) return new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]), 12);
+	}
 	return new Date(value);
+}
+
+export function formatRelativeCalendarDate(
+	value: TimestampInput,
+	referenceTime = Date.now(),
+	style: Intl.RelativeTimeFormatStyle = 'long'
+): string {
+	const date = toDate(value);
+	const reference = new Date(referenceTime);
+	if (!Number.isFinite(date.getTime()) || !Number.isFinite(reference.getTime())) return '';
+	const calendarDay = (item: Date) => Date.UTC(item.getFullYear(), item.getMonth(), item.getDate());
+	const days = Math.round((calendarDay(date) - calendarDay(reference)) / 86400000);
+	return new Intl.RelativeTimeFormat(getSystemLocale(), { numeric: 'auto', style }).format(days, 'day');
 }
 
 export function formatRelativeTime(

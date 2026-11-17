@@ -299,6 +299,24 @@ pub(crate) async fn create_message(
             crate::owl::batch_insert_triples(conn, &triples, "ai")
                 .map_err(|e| format!("Failed to create message: {}", e))?;
 
+            if role_str == "user"
+                && crate::owl::get_iri_property(
+                    conn,
+                    &conversation_iri,
+                    "foundation:ingestionInternalSession",
+                )
+                .map_err(|error| error.to_string())?
+                .is_none()
+            {
+                crate::core_ontology::ingestion::enqueue_source_item(
+                    conn,
+                    "ai_conversation",
+                    &conversation_iri,
+                    &msg_iri_clone,
+                    &msg_iri_clone,
+                )?;
+            }
+
             crate::owl::touch(conn, &conversation_iri);
 
             Ok(msg_iri_clone)

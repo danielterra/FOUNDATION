@@ -1,5 +1,6 @@
 use chrono::Utc;
 use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use crate::files::{assert_file_individual, FileMetadata};
 use crate::owl::{DbExecutor, Individual, Object};
@@ -75,49 +76,76 @@ pub async fn stage_raw_record(
 
     let data_source_iri = data_source_iri.to_string();
     let now_ms = Utc::now().timestamp_millis();
-    let record_iri = format!("foundation:RawDataRecord_{}", now_ms);
+    let record_iri = external_id
+        .as_deref()
+        .map(|external_id| deterministic_record_iri(&data_source_iri, external_id))
+        .unwrap_or_else(|| format!("foundation:RawDataRecord_{}", Uuid::new_v4()));
 
-    if external_id.is_none() {
-        let record_iri_clone = record_iri.clone();
-        let data_source_iri_clone = data_source_iri.clone();
-        let source_ref_clone = source_ref.clone();
-        executor
-            .write(move |conn| {
-                write_record_header(
-                    conn,
-                    &record_iri_clone,
-                    &data_source_iri_clone,
-                    None,
-                    &source_ref_clone,
-                    now_ms,
-                    STATUS_SKIPPED,
-                )?;
-                Ok(record_iri_clone)
-            })
-            .await?;
-        return Ok(record_iri);
+    if external_id.is_some() {
+        let record_iri_for_read = record_iri.clone();
+        if executor
+            .read(move |conn| raw_record_exists(conn, &record_iri_for_read))
+            .await
+            .unwrap_or(false)
+        {
+            return Ok(record_iri);
+        }
     }
 
-    let ext_id = external_id.unwrap();
+    let large_payload = (payload.len() > INLINE_LIMIT_BYTES)
+        .then(|| persist_raw_file(&payload))
+        .transpose()?;
+    let payload_str = if large_payload.is_none() {
+        Some(String::from_utf8_lossy(&payload).into_owned())
+    } else {
+        None
+    };
+    let payload_hash = large_payload
+        .as_ref()
+        .map(|_| format!("sha256:{:x}", Sha256::digest(&payload)));
+    let payload_size = payload.len() as i64;
+    let status_iri = if external_id.is_some() {
+        STATUS_PENDING
+    } else {
+        STATUS_SKIPPED
+    };
+    let record_iri_for_write = record_iri.clone();
+    let data_source_for_write = data_source_iri.clone();
+    let source_ref_for_write = source_ref.clone();
+    let external_id_for_write = external_id.clone();
+    let payload_file_for_write = large_payload
+        .as_ref()
+        .map(|(stored_path, _)| stored_path.clone());
+    let payload_hash_for_write = payload_hash.clone();
+    let payload_filename = large_payload
+        .as_ref()
+        .map(|(_, absolute_path)| {
+            absolute_path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .ok_or_else(|| "Raw payload file is missing its file name".to_string())
+        })
+        .transpose()?;
 
-    if payload.len() <= INLINE_LIMIT_BYTES {
-        let payload_str = String::from_utf8_lossy(&payload).into_owned();
-        let record_iri_clone = record_iri.clone();
-        let data_source_iri_clone = data_source_iri.clone();
-        let source_ref_clone = source_ref.clone();
-        let ext_id_clone = ext_id.clone();
-        executor
-            .write(move |conn| {
-                write_record_header(
-                    conn,
-                    &record_iri_clone,
-                    &data_source_iri_clone,
-                    Some(ext_id_clone.as_str()),
-                    &source_ref_clone,
-                    now_ms,
-                    STATUS_PENDING,
-                )?;
-                Individual::new(&record_iri_clone)
+    let write_result = executor
+        .write(move |conn| {
+            if external_id_for_write.is_some() && raw_record_exists(conn, &record_iri_for_write)? {
+                return serde_json::to_string(&(record_iri_for_write, false))
+                    .map_err(|e| e.to_string());
+            }
+
+            write_record_header(
+                conn,
+                &record_iri_for_write,
+                &data_source_for_write,
+                external_id_for_write.as_deref(),
+                &source_ref_for_write,
+                now_ms,
+                status_iri,
+            )?;
+
+            if let Some(payload_str) = payload_str {
+                Individual::new(&record_iri_for_write)
                     .add_property(
                         conn,
                         "foundation:rawPayload",
@@ -125,46 +153,23 @@ pub async fn stage_raw_record(
                         "data_sync",
                     )
                     .map_err(|e| format!("rawPayload: {}", e))?;
-                Ok(record_iri_clone)
-            })
-            .await
-    } else {
-        // Write file to disk before asserting the triple to preserve DB consistency
-        // on a crash between the two operations.
-        let stored_path = persist_raw_file(&payload, now_ms)?;
-        let hash = format!("sha256:{:x}", Sha256::digest(&payload));
-        let size = payload.len() as i64;
+            }
 
-        let record_iri_clone = record_iri.clone();
-        let data_source_iri_clone = data_source_iri.clone();
-        let source_ref_clone = source_ref.clone();
-        let ext_id_clone = ext_id.clone();
-        executor
-            .write(move |conn| {
-                write_record_header(
-                    conn,
-                    &record_iri_clone,
-                    &data_source_iri_clone,
-                    Some(ext_id_clone.as_str()),
-                    &source_ref_clone,
-                    now_ms,
-                    STATUS_PENDING,
-                )?;
-
-                let file_iri = format!("foundation:RawFile_{}", now_ms);
+            if let (Some(stored_path), Some(hash), Some(file_name)) = (
+                payload_file_for_write,
+                payload_hash_for_write,
+                payload_filename,
+            ) {
+                let file_iri = format!("foundation:RawFile_{}", Uuid::new_v4());
                 assert_file_individual(
                     conn,
                     &FileMetadata {
                         iri: &file_iri,
                         class_iri: "foundation:File",
                         icon: "description",
-                        file_name: &format!(
-                            "raw_{}_{}.json",
-                            data_source_iri_clone.replace(':', "_"),
-                            now_ms
-                        ),
+                        file_name: &file_name,
                         stored_path: &stored_path,
-                        size,
+                        size: payload_size,
                         hash: &hash,
                         mime_type: "application/json",
                         timestamp_ms: now_ms,
@@ -172,7 +177,7 @@ pub async fn stage_raw_record(
                     },
                 )?;
 
-                Individual::new(&record_iri_clone)
+                Individual::new(&record_iri_for_write)
                     .add_property(
                         conn,
                         "foundation:rawFile",
@@ -180,10 +185,60 @@ pub async fn stage_raw_record(
                         "data_sync",
                     )
                     .map_err(|e| format!("rawFile: {}", e))?;
+            }
 
-                Ok(record_iri_clone)
-            })
-            .await
+            if let Some(external_id) = external_id_for_write.as_deref() {
+                crate::core_ontology::ingestion::enqueue_source_item(
+                    conn,
+                    "data_sync",
+                    &format!("{data_source_for_write}:{source_ref_for_write}"),
+                    &record_iri_for_write,
+                    &format!("{data_source_for_write}:{external_id}"),
+                )?;
+            }
+
+            serde_json::to_string(&(record_iri_for_write, true)).map_err(|e| e.to_string())
+        })
+        .await;
+
+    match write_result {
+        Ok(serialized) => {
+            let (record_iri, created): (String, bool) =
+                serde_json::from_str(&serialized).map_err(|e| e.to_string())?;
+            if !created {
+                cleanup_persisted_file(&large_payload);
+            }
+            Ok(record_iri)
+        }
+        Err(error) => {
+            cleanup_persisted_file(&large_payload);
+            Err(error)
+        }
+    }
+}
+
+fn deterministic_record_iri(data_source_iri: &str, external_id: &str) -> String {
+    let identity = format!("{data_source_iri}\0{external_id}");
+    format!(
+        "foundation:RawDataRecord_{:x}",
+        Sha256::digest(identity.as_bytes())
+    )
+}
+
+fn raw_record_exists(conn: &crate::owl::Connection, record_iri: &str) -> Result<bool, String> {
+    crate::owl::query_by_entity_predicate(conn, record_iri, "rdf:type")
+        .map(|result| {
+            result
+                .triples
+                .iter()
+                .any(|triple| triple.object.as_iri() == Some("foundation:RawDataRecord"))
+        })
+        .map_err(|e| e.to_string())
+}
+
+fn cleanup_persisted_file(file: &Option<(String, std::path::PathBuf)>) {
+    if let Some((_, absolute_path)) = file {
+        let _ = std::fs::remove_file(absolute_path);
     }
 }
 
@@ -260,11 +315,15 @@ fn write_record_header(
     Ok(())
 }
 
-fn persist_raw_file(payload: &[u8], now_ms: i64) -> Result<String, String> {
+fn persist_raw_file(payload: &[u8]) -> Result<(String, std::path::PathBuf), String> {
     let dir = crate::paths::foundation_dir().join("data_sync_raw");
     std::fs::create_dir_all(&dir).map_err(|e| format!("create data_sync_raw dir: {}", e))?;
-    let file_name = format!("raw_{}.json", now_ms);
+    let file_name = format!("raw_{}.json", Uuid::new_v4());
     let abs_path = dir.join(&file_name);
     std::fs::write(&abs_path, payload).map_err(|e| format!("write raw file: {}", e))?;
-    Ok(crate::paths::to_portable_path(&abs_path))
+    Ok((crate::paths::to_portable_path(&abs_path), abs_path))
 }
+
+#[cfg(test)]
+#[path = "staging_tests.rs"]
+mod staging_tests;

@@ -7,6 +7,7 @@ const STATUS_UNREAD: &str = "foundation:Status_1776975614793";
 
 pub struct ParsedEmail {
     pub message_id: String,
+    pub conversation_key: String,
     pub from: String,
     pub to: Vec<String>,
     pub subject: String,
@@ -166,6 +167,14 @@ fn store_email_inner(
         )
         .map_err(|e| format!("attach link: {}", e))?;
     }
+
+    crate::core_ontology::ingestion::enqueue_source_item(
+        conn,
+        "imap_email",
+        &format!("{account_iri}:{}", email.conversation_key),
+        &email_iri,
+        &format!("{account_iri}:{}", email.message_id),
+    )?;
 
     Ok(email_iri)
 }

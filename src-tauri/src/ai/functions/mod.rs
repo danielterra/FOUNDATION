@@ -2,7 +2,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-mod batch;
+pub(crate) mod batch;
 mod class;
 mod class_graph;
 pub mod data_sync;
@@ -190,7 +190,8 @@ pub fn find_related_processes_for_class(
 pub fn is_async_tool(name: &str) -> bool {
     matches!(
         name,
-        "datasync_create_source"
+        "run_automation"
+            | "datasync_create_source"
             | "datasync_run"
             | "datasync_retry_transform"
             | "datasync_upsert_item"
@@ -203,6 +204,21 @@ pub fn is_async_tool(name: &str) -> bool {
 /// function must be called from an async context (or via Handle::block_on from a
 /// non-async context), NEVER from inside an executor.write() closure.
 pub async fn execute_async_tool(call: &ToolCall, app: Option<&tauri::AppHandle>) -> ToolResult {
+    execute_async_tool_with_idempotency(call, app, None).await
+}
+
+pub(crate) async fn execute_async_tool_with_idempotency(
+    call: &ToolCall,
+    app: Option<&tauri::AppHandle>,
+    idempotency_scope: Option<&str>,
+) -> ToolResult {
+    if call.name == "run_automation" {
+        let action_key = idempotency_scope.map(|batch_iri| {
+            batch::ingestion_action_context(batch_iri, &call.name, &call.arguments).action_iri
+        });
+        return run_automation_tool_async(&call.arguments, app, action_key).await;
+    }
+
     let is_array_mode = get_available_tools()
         .iter()
         .any(|t| t.name == call.name && t.array_mode);
@@ -252,6 +268,25 @@ pub fn is_read_only_tool(name: &str) -> bool {
             | "datasync_list_runs"
             | "datasync_list_raw"
             | "datasync_inspect_raw"
+    )
+}
+
+pub(crate) fn is_ontology_write_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "define_class"
+            | "define_property"
+            | "assert_individual"
+            | "add_property_values"
+            | "replace_property_values"
+            | "remove_property_values"
+            | "clear_property"
+            | "retract_individual"
+            | "retract_class"
+            | "retract_property"
+            | "restore_individual"
+            | "restore_class"
+            | "restore_property"
     )
 }
 
@@ -450,84 +485,102 @@ fn run_automation_tool(
     args: &Value,
     app: Option<&tauri::AppHandle>,
 ) -> ToolResult {
+    let app = match app {
+        Some(app) => app.clone(),
+        None => return tool_error("run_automation requires a running Foundation app"),
+    };
+    let invocation = match validate_automation_invocation(conn, args) {
+        Ok(invocation) => invocation,
+        Err(error) => return tool_error(error),
+    };
+    let ingestion_action_key =
+        batch::active_ingestion_idempotency().map(|context| context.action_iri);
+    tauri::async_runtime::spawn(async move {
+        let result = if let Some(idempotency_key) = ingestion_action_key {
+            crate::process_automation::executor::run_process_with_idempotency_key(
+                &app,
+                &invocation.automation_iri,
+                invocation.input_iri,
+                invocation.dry_run,
+                &idempotency_key,
+            )
+            .await
+        } else {
+            crate::process_automation::executor::run_process(
+                &app,
+                &invocation.automation_iri,
+                invocation.input_iri,
+                invocation.dry_run,
+            )
+            .await
+        };
+        if let Err(e) = result {
+            crate::commands::log_backend(
+                "error",
+                &format!(
+                    "[run_automation] Error running {}: {}",
+                    invocation.automation_iri, e
+                ),
+            );
+        }
+    });
+
+    ToolResult {
+        success: true,
+        result: None,
+        error: None,
+        concept: None,
+    }
+}
+
+#[derive(Clone)]
+struct AutomationInvocation {
+    automation_iri: String,
+    input_iri: Option<String>,
+    dry_run: bool,
+}
+
+fn validate_automation_invocation(
+    conn: &Connection,
+    args: &Value,
+) -> Result<AutomationInvocation, String> {
     use crate::owl::{
         find_entities_with_property, get_iri_property, get_literal_property, Individual,
     };
 
-    let app = match app {
-        Some(a) => a.clone(),
-        None => {
-            return ToolResult {
-                success: false,
-                result: None,
-                error: Some("run_automation requires a running Foundation app".to_string()),
-                concept: None,
-            }
-        }
-    };
-
-    let automation_iri = match args["automation_iri"].as_str() {
-        Some(iri) if !iri.is_empty() => iri.to_string(),
-        _ => {
-            return ToolResult {
-                success: false,
-                result: None,
-                error: Some("automation_iri is required".to_string()),
-                concept: None,
-            }
-        }
-    };
-
+    let automation_iri = args["automation_iri"]
+        .as_str()
+        .filter(|iri| !iri.is_empty())
+        .ok_or_else(|| "automation_iri is required".to_string())?
+        .to_string();
     let input_iri = args["input_iri"]
         .as_str()
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
-
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     let dry_run = args["dry_run"].as_bool().unwrap_or(false);
 
-    match Individual::get(conn, &automation_iri) {
-        Ok(Some(ind)) => {
-            let types: Vec<String> = ind.types.iter().map(|t| t.iri.clone()).collect();
-
-            if !types.iter().any(|t| t == "foundation:Automation") {
-                let type_list = if types.is_empty() {
-                    "none".to_string()
-                } else {
-                    types.join(", ")
-                };
-                return ToolResult {
-                    success: false,
-                    result: None,
-                    error: Some(format!(
-                        "'{}' cannot be executed: it is not an Automation (found types: {}). Only instances of foundation:Automation can be run with this tool.",
-                        automation_iri, type_list
-                    )),
-                    concept: None,
-                };
-            }
-        }
-        Ok(None) => {
-            return ToolResult {
-                success: false,
-                result: None,
-                error: Some(format!("'{}' not found in the ontology.", automation_iri)),
-                concept: None,
-            }
-        }
-        Err(e) => {
-            return ToolResult {
-                success: false,
-                result: None,
-                error: Some(format!("Failed to look up '{}': {}", automation_iri, e)),
-                concept: None,
-            }
-        }
+    let automation = Individual::get(conn, &automation_iri)
+        .map_err(|error| format!("Failed to look up '{automation_iri}': {error}"))?
+        .ok_or_else(|| format!("'{automation_iri}' not found in the ontology."))?;
+    let types: Vec<String> = automation
+        .types
+        .iter()
+        .map(|kind| kind.iri.clone())
+        .collect();
+    if !types.iter().any(|kind| kind == "foundation:Automation") {
+        let type_list = if types.is_empty() {
+            "none".to_string()
+        } else {
+            types.join(", ")
+        };
+        return Err(format!(
+            "'{automation_iri}' cannot be executed: it is not an Automation (found types: {type_list}). Only instances of foundation:Automation can be run with this tool."
+        ));
     }
 
     let input_class_iri: Option<String> = (|| -> Option<String> {
         let node_iris =
             find_entities_with_property(conn, "foundation:partOfProcess", &automation_iri).ok()?;
-
         for node_iri in &node_iris {
             let node_type = get_iri_property(conn, node_iri, "rdf:type").ok()??;
             if node_type.ends_with("automation_StartEvent") {
@@ -541,97 +594,106 @@ fn run_automation_tool(
         None
     })();
 
-    if let Some(ref class_iri) = input_class_iri {
-        let class_label = get_literal_property(conn, class_iri, "rdfs:label")
-            .unwrap_or_default()
+    if let Some(class_iri) = input_class_iri {
+        let class_label = get_literal_property(conn, &class_iri, "rdfs:label")
+            .ok()
+            .flatten()
             .unwrap_or_else(|| class_iri.clone());
-
-        let provided_iri = match &input_iri {
-            Some(iri) => iri.clone(),
-            None => {
-                return ToolResult {
-                    success: false,
-                    result: None,
-                    error: Some(format!(
-                    "This automation requires an input of type '{}' but no input_iri was provided.",
-                    class_label
-                )),
-                    concept: None,
-                }
-            }
-        };
-
-        let individual = match Individual::get(conn, &provided_iri) {
-            Ok(Some(ind)) => ind,
-            Ok(None) => {
-                return ToolResult {
-                    success: false,
-                    result: None,
-                    error: Some(format!(
-                        "Input individual '{}' not found in the ontology.",
-                        provided_iri
-                    )),
-                    concept: None,
-                }
-            }
-            Err(e) => {
-                return ToolResult {
-                    success: false,
-                    result: None,
-                    error: Some(format!(
-                        "Failed to look up input individual '{}': {}",
-                        provided_iri, e
-                    )),
-                    concept: None,
-                }
-            }
-        };
-
-        let matches_expected_type = individual.types.iter().any(|t| t.iri == *class_iri);
-
-        if !matches_expected_type {
+        let provided_iri = input_iri.as_deref().ok_or_else(|| {
+            format!("This automation requires an input of type '{class_label}' but no input_iri was provided.")
+        })?;
+        let individual = Individual::get(conn, provided_iri)
+            .map_err(|error| {
+                format!("Failed to look up input individual '{provided_iri}': {error}")
+            })?
+            .ok_or_else(|| {
+                format!("Input individual '{provided_iri}' not found in the ontology.")
+            })?;
+        if !individual.types.iter().any(|kind| kind.iri == class_iri) {
             let actual_label = if individual.types.is_empty() {
                 "unknown".to_string()
             } else {
                 individual
                     .types
                     .iter()
-                    .map(|t| t.label.clone())
+                    .map(|kind| kind.label.clone())
                     .collect::<Vec<_>>()
                     .join(", ")
             };
-            return ToolResult {
-                success: false,
-                result: None,
-                error: Some(format!(
-                    "Type mismatch: automation expects input of type '{}' but '{}' is of type '{}'.",
-                    class_label, provided_iri, actual_label
-                )),
-                concept: None,
-            };
+            return Err(format!(
+                "Type mismatch: automation expects input of type '{class_label}' but '{provided_iri}' is of type '{actual_label}'."
+            ));
         }
     }
 
-    tauri::async_runtime::spawn(async move {
-        if let Err(e) = crate::process_automation::executor::run_process(
-            &app,
-            &automation_iri,
-            input_iri,
-            dry_run,
-        )
-        .await
-        {
-            crate::commands::log_backend(
-                "error",
-                &format!("[run_automation] Error running {}: {}", automation_iri, e),
-            );
-        }
-    });
+    Ok(AutomationInvocation {
+        automation_iri,
+        input_iri,
+        dry_run,
+    })
+}
 
+fn run_automation_tool_async<'a>(
+    args: &'a Value,
+    app: Option<&'a tauri::AppHandle>,
+    idempotency_key: Option<String>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ToolResult> + Send + 'a>> {
+    Box::pin(async move {
+        use tauri::Manager;
+
+        let Some(app) = app.cloned() else {
+            return tool_error("run_automation requires a running Foundation app");
+        };
+        let executor = app.state::<crate::owl::DbExecutor>().inner().clone();
+        let args = args.clone();
+        let invocation = match executor
+            .read(move |conn| validate_automation_invocation(conn, &args))
+            .await
+        {
+            Ok(invocation) => invocation,
+            Err(error) => return tool_error(error),
+        };
+        let task = tauri::async_runtime::spawn(async move {
+            if let Some(idempotency_key) = idempotency_key {
+                crate::process_automation::executor::run_process_with_idempotency_key(
+                    &app,
+                    &invocation.automation_iri,
+                    invocation.input_iri,
+                    invocation.dry_run,
+                    &idempotency_key,
+                )
+                .await
+            } else {
+                crate::process_automation::executor::run_process(
+                    &app,
+                    &invocation.automation_iri,
+                    invocation.input_iri,
+                    invocation.dry_run,
+                )
+                .await
+            }
+        });
+        let result = match task.await {
+            Ok(result) => result,
+            Err(error) => Err(format!("Automation task ended unexpectedly: {error}")),
+        };
+        match result {
+            Ok(()) => ToolResult {
+                success: true,
+                result: Some(json!({"completed": true})),
+                error: None,
+                concept: None,
+            },
+            Err(error) => tool_error(error),
+        }
+    })
+}
+
+fn tool_error(error: impl Into<String>) -> ToolResult {
     ToolResult {
-        success: true,
+        success: false,
         result: None,
-        error: None,
+        error: Some(error.into()),
         concept: None,
     }
 }
